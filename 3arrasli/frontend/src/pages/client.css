@@ -1,0 +1,173 @@
+.client-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top left, rgba(249, 216, 223, 0.26), transparent 28%),
+    radial-gradient(circle at top right, rgba(242, 225, 188, 0.24), transparent 24%),
+    linear-gradient(180deg, #fff9f8 0%, #fff7f3 52%, #fffaf6 100%);
+  padding-bottom: 60px;
+}
+
+.client-shell {
+  width: min(1240px, calc(100% - 44px));
+  margin: 0 auto;
+}
+
+.client-top {
+  padding-top: 26px;
+  display: grid;
+  gap: 16px;
+}
+
+.client-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.client-panel {
+  grid-column: span 12;
+  border-radius: 26px;
+  background: rgba(255, 255, 255, 0.86);
+  border: 1px solid rgba(117, 66, 84, 0.12);
+  box-shadow: 0 20px 46px rgba(85, 43, 58, 0.12);
+  padding: 22px;
+}
+
+.client-panel h2 {
+  margin: 0 0 10px;
+  color: #472430;
+}
+
+.client-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.client-input,
+.client-select,
+.client-textarea {
+  width: 100%;
+  min-height: 48px;
+  border-radius: 16px;
+  border: 1px solid rgba(117, 66, 84, 0.16);
+  padding: 0 14px;
+  background: #fff;
+}
+
+.client-textarea {
+  min-height: 92px;
+  resize: vertical;
+  padding-top: 12px;
+}
+
+.client-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.client-btn {
+  min-height: 44px;
+  border-radius: 999px;
+  border: 0;
+  padding: 0 16px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.client-btn-primary {
+  color: #fff;
+  background: linear-gradient(135deg, #6b3949 0%, #b67567 54%, #d8b36b 100%);
+}
+
+.client-btn-soft {
+  color: #6c3949;
+  background: rgba(255, 240, 245, 0.86);
+  border: 1px solid rgba(117, 66, 84, 0.18);
+}
+
+.client-message {
+  margin-top: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(240, 255, 241, 0.8);
+  color: #2f6d36;
+}
+
+.client-error {
+  margin-top: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 236, 240, 0.86);
+  color: #8d2f46;
+}
+
+.services-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.service-card.client-service-card {
+  grid-column: auto;
+}
+
+.client-service-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.client-chat-list {
+  display: grid;
+  gap: 10px;
+  max-height: 420px;
+  overflow: auto;
+}
+
+.client-chat-item {
+  border-radius: 14px;
+  padding: 12px;
+  background: rgba(255, 248, 245, 0.84);
+}
+
+.client-chat-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: #6c3949;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.client-planner-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: rgba(255, 248, 245, 0.84);
+}
+
+@media (max-width: 980px) {
+  .client-filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .services-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .client-shell {
+    width: min(100% - 24px, 1240px);
+  }
+
+  .client-filters {
+    grid-template-columns: 1fr;
+  }
+}

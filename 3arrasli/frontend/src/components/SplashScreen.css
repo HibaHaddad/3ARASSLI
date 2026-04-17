@@ -1,0 +1,382 @@
+.splash-screen {
+  --splash-bg: #fdf7f9;
+  --splash-soft: #f3d9e2;
+  --splash-powder: #e7bccb;
+  --splash-deep: #8f3d5a;
+  --splash-text: #4b2c38;
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(243, 217, 226, 0.88), transparent 34%),
+    radial-gradient(circle at 80% 24%, rgba(231, 188, 203, 0.46), transparent 30%),
+    linear-gradient(145deg, #fffdfd 0%, #fdf7f9 45%, #f9eef2 100%);
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity 520ms ease,
+    visibility 520ms ease;
+}
+
+.splash-screen--exit {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.splash-screen__backdrop {
+  position: absolute;
+  inset: -12%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.9), transparent 34%),
+    radial-gradient(circle at 52% 54%, rgba(231, 188, 203, 0.18), transparent 44%);
+  filter: blur(10px);
+  animation: backdropBreath 3.2s ease-in-out infinite alternate;
+}
+
+.splash-screen__blush {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(40px);
+  opacity: 0.75;
+}
+
+.splash-screen__blush--left {
+  width: min(36vw, 360px);
+  height: min(36vw, 360px);
+  top: 14%;
+  left: 10%;
+  background: rgba(243, 217, 226, 0.72);
+  animation: ambientFloat 7s ease-in-out infinite;
+}
+
+.splash-screen__blush--right {
+  width: min(30vw, 320px);
+  height: min(30vw, 320px);
+  right: 12%;
+  bottom: 12%;
+  background: rgba(143, 61, 90, 0.16);
+  animation: ambientFloat 8s ease-in-out infinite reverse;
+}
+
+.splash-screen__content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(78vw, 500px);
+  aspect-ratio: 1;
+}
+
+.splash-screen__halo,
+.splash-screen__halo--secondary {
+  position: absolute;
+  inset: 6%;
+  border-radius: 50%;
+}
+
+.splash-screen__halo {
+  background:
+    radial-gradient(circle, rgba(255, 255, 255, 0.96) 0%, rgba(243, 217, 226, 0.7) 30%, rgba(231, 188, 203, 0.3) 58%, rgba(231, 188, 203, 0) 72%);
+  filter: blur(10px);
+  animation: haloGlow 2.8s ease-in-out infinite;
+}
+
+.splash-screen__halo--secondary {
+  inset: 0;
+  background:
+    conic-gradient(
+      from 180deg,
+      rgba(243, 217, 226, 0.08),
+      rgba(254, 212, 226, 0.696),
+      rgba(254, 190, 213, 0.678),
+      rgba(255, 255, 255, 0.1),
+      rgba(243, 217, 226, 0.9)
+    );
+  filter: blur(22px);
+  animation: haloRotate 8s linear infinite;
+}
+
+.splash-screen__logo-frame {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(56vw, 320px);
+  aspect-ratio: 1;
+  animation: logoReveal 2.6s cubic-bezier(0.21, 0.9, 0.24, 1) forwards;
+}
+
+.splash-screen__heart {
+  position: absolute;
+  inset: -16%;
+  width: calc(100% + 32%);
+  height: calc(100% + 32%);
+  overflow: visible;
+  pointer-events: none;
+  transform-origin: center;
+  opacity: 0;
+  animation:
+    heartFadeIn 1.1s ease-out 0.12s forwards,
+    heartPulse 3.8s ease-in-out 1.1s infinite;
+}
+
+.splash-screen__heart-aura {
+  transform-origin: center;
+}
+
+.splash-screen__heart-aura--outer {
+  fill: url(#splash-heart-gradient);
+  opacity: 0.16;
+  filter: url(#splash-heart-soft-glow);
+  transform: scale(0.78);
+  animation: heartGlowShift 4s ease-in-out 1s infinite;
+}
+
+.splash-screen__heart-aura--inner {
+  fill: url(#splash-heart-gradient);
+  opacity: 0.36;
+  filter: url(#splash-heart-blur);
+  transform: scale(1.01);
+  animation: heartGlowShift 3.3s ease-in-out 1.15s infinite reverse;
+}
+
+.splash-screen__heart-aura--core {
+  fill: url(#splash-heart-core);
+  opacity: 0.42;
+  filter: blur(6px);
+  animation: heartCoreGlow 3s ease-in-out 1.1s infinite;
+}
+
+.splash-screen__logo {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 10px rgba(255, 255, 255, 0.95))
+    drop-shadow(0 0 28px rgba(231, 188, 203, 0.42))
+    drop-shadow(0 10px 28px rgba(143, 61, 90, 0.16));
+}
+
+.splash-screen__shine {
+  position: absolute;
+  inset: -12%;
+  border-radius: 999px;
+  background: linear-gradient(
+    115deg,
+    transparent 26%,
+    rgba(255, 255, 255, 0.08) 38%,
+    rgba(255, 255, 255, 0.74) 49%,
+    rgba(255, 255, 255, 0.1) 60%,
+    transparent 74%
+  );
+  transform: translateX(-180%) skewX(-18deg);
+  opacity: 0;
+  animation: shineSweep 1.8s ease-out 0.45s forwards;
+}
+
+.splash-screen__particle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(243, 217, 226, 0.32) 58%, transparent 76%);
+  filter: blur(1px);
+  opacity: 0;
+  animation: particleFloat 3.8s ease-in-out infinite;
+}
+
+.splash-screen__particle--1 {
+  top: 26%;
+  left: 34%;
+  animation-delay: 0.1s;
+}
+
+.splash-screen__particle--2 {
+  top: 30%;
+  right: 32%;
+  animation-delay: 0.6s;
+}
+
+.splash-screen__particle--3 {
+  right: 24%;
+  bottom: 28%;
+  animation-delay: 1.2s;
+}
+
+.splash-screen__particle--4 {
+  left: 28%;
+  bottom: 24%;
+  animation-delay: 1.7s;
+}
+
+.splash-screen__particle--5 {
+  top: 18%;
+  right: 22%;
+  animation-delay: 0.9s;
+}
+
+.splash-screen__particle--6 {
+  left: 20%;
+  bottom: 20%;
+  animation-delay: 2.1s;
+}
+
+@keyframes logoReveal {
+  0% {
+    opacity: 0;
+    transform: scale(0.84) rotate(-4deg) translateY(18px);
+  }
+  32% {
+    opacity: 1;
+    transform: scale(1.04) rotate(1.2deg) translateY(0);
+  }
+  58% {
+    opacity: 1;
+    transform: scale(1.08) rotate(-0.8deg) translateY(-2px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0.15deg) translateY(0);
+  }
+}
+
+@keyframes heartFadeIn {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes heartPulse {
+  0%,
+  100% {
+    transform: scale(0.985);
+  }
+  50% {
+    transform: scale(1.03);
+  }
+}
+
+@keyframes heartGlowShift {
+  0%,
+  100% {
+    opacity: 0.24;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes heartCoreGlow {
+  0%,
+  100% {
+    opacity: 0.36;
+    transform: scale(0.97);
+  }
+  50% {
+    opacity: 0.52;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes haloGlow {
+  0%,
+  100% {
+    transform: scale(0.94);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 1;
+  }
+}
+
+@keyframes haloRotate {
+  from {
+    transform: rotate(0deg) scale(0.98);
+  }
+  to {
+    transform: rotate(360deg) scale(1.03);
+  }
+}
+
+@keyframes shineSweep {
+  0% {
+    transform: translateX(-180%) skewX(-18deg);
+    opacity: 0;
+  }
+  18% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(180%) skewX(-18deg);
+    opacity: 0;
+  }
+}
+
+@keyframes ambientFloat {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(10px, -18px, 0) scale(1.05);
+  }
+}
+
+@keyframes backdropBreath {
+  from {
+    transform: scale(1);
+    opacity: 0.86;
+  }
+  to {
+    transform: scale(1.04);
+    opacity: 1;
+  }
+}
+
+@keyframes particleFloat {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0) scale(0.8);
+  }
+  25% {
+    opacity: 0.85;
+  }
+  75% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, -26px, 0) scale(1.1);
+  }
+}
+
+@media (max-width: 768px) {
+  .splash-screen__content {
+    width: min(86vw, 400px);
+  }
+
+  .splash-screen__logo-frame {
+    width: min(64vw, 260px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .splash-screen,
+  .splash-screen * {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
