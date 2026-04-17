@@ -166,54 +166,6 @@ const Home = ({ onLogoClick }) => {
             </aside>
           </div>
 
-          <div
-            className={`hero-search-wrap reveal reveal-delay-2 ${isVisible("hero-search")}`}
-            data-reveal-id="hero-search"
-          >
-            <div className="hero-search-intro">
-              <span className="section-kicker">Recherche inspiree</span>
-              <h2>Trouvez vos prestataires en quelques instants</h2>
-            </div>
-
-            <div className="search-box">
-              <div className="search-field">
-                <label htmlFor="city">Ville</label>
-                <select id="city" aria-label="Ville">
-                  <option>Ville</option>
-                  <option>Tunis</option>
-                  <option>Sousse</option>
-                  <option>Sfax</option>
-                  <option>Monastir</option>
-                </select>
-              </div>
-
-              <div className="search-field">
-                <label htmlFor="budget">Budget</label>
-                <select id="budget" aria-label="Budget">
-                  <option>Budget</option>
-                  <option>Moins de 1000 TND</option>
-                  <option>1000 - 3000 TND</option>
-                  <option>3000 - 5000 TND</option>
-                  <option>Plus de 5000 TND</option>
-                </select>
-              </div>
-
-              <div className="search-field">
-                <label htmlFor="service-type">Type de service</label>
-                <select id="service-type" aria-label="Type de service">
-                  <option>Type de service</option>
-                  <option>Photographe</option>
-                  <option>Salle</option>
-                  <option>Traiteur</option>
-                  <option>Decoration</option>
-                </select>
-              </div>
-
-              <button type="button" className="search-action">
-                Rechercher
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 

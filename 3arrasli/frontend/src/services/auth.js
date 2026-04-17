@@ -6,6 +6,14 @@ export const ROLE_ROUTES = {
   Prestataire: "/prestataire",
 };
 
+const normalizeRole = (value) => {
+  const role = String(value || "").trim().toLowerCase();
+  if (role === "admin") return "Admin";
+  if (role === "prestataire") return "Prestataire";
+  if (role === "client") return "Client";
+  return "";
+};
+
 export const getStoredSession = () => {
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -37,6 +45,6 @@ export const clearStoredUser = () => {
   window.localStorage.removeItem(STORAGE_KEY);
 };
 
-export const hasRole = (user, role) => user?.role === role;
+export const hasRole = (user, role) => normalizeRole(user?.role) === normalizeRole(role);
 
-export const getDashboardPathForUser = (user) => ROLE_ROUTES[user?.role] || "/";
+export const getDashboardPathForUser = (user) => ROLE_ROUTES[normalizeRole(user?.role)] || "/";

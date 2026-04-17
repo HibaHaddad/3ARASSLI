@@ -3,8 +3,10 @@ from functools import wraps
 import os
 
 import jwt
+import pymysql
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from sqlalchemy.engine import make_url
 
 from extensions import bcrypt, db
 from models import Favorite, Message, PlannerItem, Reservation, Service, User
@@ -43,20 +45,45 @@ DEFAULT_CLIENT = {
     "role": "client",
 }
 
-DEFAULT_DB_NAME = "3arrasli_db"
+DEFAULT_DB_NAME = "ma_base"
 
 
 def build_database_uri():
-    explicit_uri = os.getenv("DATABASE_URL")
-    if explicit_uri:
-        return explicit_uri
-
     db_user = os.getenv("DB_USER", "root")
     db_password = os.getenv("DB_PASSWORD", "")
     db_host = os.getenv("DB_HOST", "127.0.0.1")
     db_port = os.getenv("DB_PORT", "3306")
-    db_name = os.getenv("DB_NAME", DEFAULT_DB_NAME)
+    # Force ma_base unless DB_NAME is explicitly provided.
+    db_name = os.getenv("DB_NAME") or DEFAULT_DB_NAME
     return f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?charset=utf8mb4"
+
+
+def ensure_mysql_database_exists(database_uri):
+    url = make_url(database_uri)
+    if not url.drivername.startswith("mysql"):
+        return
+
+    db_name = url.database
+    if not db_name:
+        return
+
+    safe_db_name = db_name.replace("`", "``")
+    connection = pymysql.connect(
+        host=url.host or "127.0.0.1",
+        port=int(url.port or 3306),
+        user=url.username or "root",
+        password=url.password or "",
+        charset="utf8mb4",
+        autocommit=True,
+    )
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                f"CREATE DATABASE IF NOT EXISTS `{safe_db_name}` "
+                "CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+            )
+    finally:
+        connection.close()
 
 
 def serialize_user(user):
@@ -140,7 +167,10 @@ def make_token(user_id, role):
 
 def create_app():
     app = Flask(__name__)
-    app.config["SQLALCHEMY_DATABASE_URI"] = build_database_uri()
+    database_uri = build_database_uri()
+    print(f"[DB] Using database URI: {database_uri}")
+    ensure_mysql_database_exists(database_uri)
+    app.config["SQLALCHEMY_DATABASE_URI"] = database_uri
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
@@ -187,10 +217,12 @@ def create_app():
     @app.get("/api/health")
     def health():
         engine_name = db.session.get_bind().dialect.name
+        current_db_name = make_url(app.config["SQLALCHEMY_DATABASE_URI"]).database
         return jsonify(
             {
                 "status": "ok",
                 "database": engine_name,
+                "database_name": current_db_name,
                 "users_total": User.query.count(),
                 "services_total": Service.query.count(),
             }
@@ -245,13 +277,16 @@ def create_app():
     def login():
         payload = request.get_json(silent=True) or {}
 
-        email = (payload.get("email") or "").strip().lower()
+        login_value = (payload.get("email") or payload.get("username") or "").strip()
         password = payload.get("password") or ""
 
-        if not email or not password:
-            return jsonify({"success": False, "message": "Email et mot de passe requis."}), 400
+        if not login_value or not password:
+            return jsonify({"success": False, "message": "Email/nom et mot de passe requis."}), 400
 
-        user = User.query.filter_by(email=email).first()
+        normalized_login = login_value.lower()
+        user = User.query.filter(db.func.lower(User.email) == normalized_login).first()
+        if not user:
+            user = User.query.filter(db.func.lower(User.username) == normalized_login).first()
         if not user:
             return jsonify({"success": False, "message": "Utilisateur introuvable."}), 404
 
