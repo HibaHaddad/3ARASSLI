@@ -177,7 +177,7 @@ body {
 .hero-text {
   max-width: 620px;
   margin: 0;
-  color: #ffffff;
+  color: rgba(255, 248, 247, 0.88)!important;
   font-size: clamp(1.06rem, 1.8vw, 1.24rem);
   line-height: 1.85;
 }
