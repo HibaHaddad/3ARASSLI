@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from functools import wraps
-from pathlib import Path
+import os
 
 import jwt
 from flask import Flask, jsonify, request
@@ -42,6 +42,21 @@ DEFAULT_CLIENT = {
     "password": "Client123!",
     "role": "client",
 }
+
+DEFAULT_DB_NAME = "3arrasli_db"
+
+
+def build_database_uri():
+    explicit_uri = os.getenv("DATABASE_URL")
+    if explicit_uri:
+        return explicit_uri
+
+    db_user = os.getenv("DB_USER", "root")
+    db_password = os.getenv("DB_PASSWORD", "")
+    db_host = os.getenv("DB_HOST", "127.0.0.1")
+    db_port = os.getenv("DB_PORT", "3306")
+    db_name = os.getenv("DB_NAME", DEFAULT_DB_NAME)
+    return f"mysql+pymysql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}?charset=utf8mb4"
 
 
 def serialize_user(user):
@@ -125,9 +140,7 @@ def make_token(user_id, role):
 
 def create_app():
     app = Flask(__name__)
-    db_path = Path(__file__).resolve().parent / "instance" / "ma_base.db"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
-    app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{db_path.as_posix()}"
+    app.config["SQLALCHEMY_DATABASE_URI"] = build_database_uri()
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
@@ -173,10 +186,11 @@ def create_app():
 
     @app.get("/api/health")
     def health():
+        engine_name = db.session.get_bind().dialect.name
         return jsonify(
             {
                 "status": "ok",
-                "database": "ma_base.db",
+                "database": engine_name,
                 "users_total": User.query.count(),
                 "services_total": Service.query.count(),
             }

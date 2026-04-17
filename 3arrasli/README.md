@@ -2,7 +2,7 @@
 
 Wedding services platform with:
 - React frontend (Home + Login + Sign Up)
-- Flask backend (auth API + SQLite with SQLAlchemy)
+- Flask backend (auth API + MySQL/XAMPP with SQLAlchemy)
 
 ## Project structure
 
@@ -21,7 +21,17 @@ Wedding services platform with:
 2. `python -m venv .venv`
 3. `.venv\Scripts\activate`
 4. `pip install -r requirements.txt`
-5. `python app.py`
+5. Start XAMPP and make sure `Apache` and `MySQL` are running.
+6. Create database `3arrasli_db` in phpMyAdmin (or set your own name in env vars below).
+7. (Optional) set env vars:
+   - `DB_HOST=127.0.0.1`
+   - `DB_PORT=3306`
+   - `DB_USER=root`
+   - `DB_PASSWORD=`
+   - `DB_NAME=3arrasli_db`
+   Or set one full URI with:
+   - `DATABASE_URL=mysql+pymysql://root:@127.0.0.1:3306/3arrasli_db?charset=utf8mb4`
+8. `python app.py`
 
 Backend URLs:
 - `GET http://localhost:5000/api/health`
