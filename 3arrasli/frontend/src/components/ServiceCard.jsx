@@ -1,10 +1,11 @@
 import React from "react";
+import { resolveAssetUrl } from "../services/assets";
 
 const ServiceCard = ({ service }) => {
   return (
     <article className="service-card carousel-service-card">
       <div className="service-media">
-        <img src={service.image} alt={service.title} />
+        <img src={resolveAssetUrl(service.image)} alt={service.title} />
         <div className="service-media-overlay" />
         <div className="service-badges">
           <span className="service-badge">Selection premium</span>

@@ -1,12 +1,16 @@
 from datetime import datetime, timedelta
 from functools import wraps
 import os
+from uuid import uuid4
 
 import jwt
 import pymysql
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from sqlalchemy.engine import make_url
+from sqlalchemy import inspect, text
+from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db
 from models import Favorite, Message, PlannerItem, Reservation, Service, User
@@ -46,6 +50,8 @@ DEFAULT_CLIENT = {
 }
 
 DEFAULT_DB_NAME = "ma_base"
+ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
+MAX_IMAGE_SIZE = 2 * 1024 * 1024
 
 
 def build_database_uri():
@@ -97,24 +103,30 @@ def serialize_user(user):
 
 
 def serialize_service(service, client_id=None):
+    provider_id = service.provider_id or service.prestataire_id
     favorite = None
-    if client_id:
-        favorite = Favorite.query.filter_by(client_id=client_id, prestataire_id=service.prestataire_id).first()
+    if client_id and provider_id:
+        favorite = Favorite.query.filter_by(client_id=client_id, prestataire_id=provider_id).first()
 
-    prestataire = User.query.get(service.prestataire_id)
+    prestataire = User.query.get(provider_id) if provider_id else None
     return {
         "id": service.id,
         "title": service.title,
         "description": service.description,
         "price": service.price,
         "city": service.city,
-        "type": service.type,
-        "image": service.image_url,
+        "type": service.category or service.type,
+        "category": service.category or service.type,
+        "image": service.image or service.image_url,
         "rating": service.rating,
-        "prestataire_id": service.prestataire_id,
+        "status": service.status or "Actif",
+        "provider_id": provider_id,
+        "prestataire_id": provider_id,
         "prestataire_name": prestataire.username if prestataire else "Prestataire",
         "is_favorite": bool(favorite),
         "favorite_id": favorite.id if favorite else None,
+        "created_at": service.created_at.isoformat() if service.created_at else None,
+        "updated_at": service.updated_at.isoformat() if getattr(service, "updated_at", None) else None,
     }
 
 
@@ -165,6 +177,104 @@ def make_token(user_id, role):
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
+def allowed_image_file(filename):
+    return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_IMAGE_EXTENSIONS
+
+
+def is_local_upload_path(path):
+    return str(path or "").replace("\\", "/").startswith("uploads/services/")
+
+
+def delete_uploaded_file(app, relative_path):
+    if not is_local_upload_path(relative_path):
+        return
+
+    absolute_path = os.path.join(app.root_path, relative_path.replace("/", os.sep))
+    if os.path.isfile(absolute_path):
+        os.remove(absolute_path)
+
+
+def ensure_service_schema():
+    inspector = inspect(db.engine)
+    if "services" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("services")}
+    statements = []
+
+    if "provider_id" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN provider_id INTEGER NULL")
+    if "category" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN category VARCHAR(120) NULL")
+    if "image" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN image TEXT NULL")
+    if "status" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN status VARCHAR(40) NULL")
+    if "updated_at" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN updated_at DATETIME NULL")
+
+    for statement in statements:
+        db.session.execute(text(statement))
+
+    if statements:
+        db.session.commit()
+
+    refresh_needed = bool(statements)
+    if refresh_needed:
+        inspector = inspect(db.engine)
+        columns = {column["name"] for column in inspector.get_columns("services")}
+
+    if "prestataire_id" in columns and "provider_id" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET provider_id = prestataire_id "
+                "WHERE provider_id IS NULL AND prestataire_id IS NOT NULL"
+            )
+        )
+    if "provider_id" in columns and "prestataire_id" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET prestataire_id = provider_id "
+                "WHERE prestataire_id IS NULL AND provider_id IS NOT NULL"
+            )
+        )
+    if "type" in columns and "category" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET category = type "
+                "WHERE (category IS NULL OR category = '') AND type IS NOT NULL"
+            )
+        )
+    if "image_url" in columns and "image" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET image = image_url "
+                "WHERE (image IS NULL OR image = '') AND image_url IS NOT NULL"
+            )
+        )
+    if "status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET status = 'Actif' "
+                "WHERE status IS NULL OR status = ''"
+            )
+        )
+    if "updated_at" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET updated_at = COALESCE(updated_at, created_at, NOW()) "
+                "WHERE updated_at IS NULL"
+            )
+        )
+    db.session.commit()
+
+
 def create_app():
     app = Flask(__name__)
     database_uri = build_database_uri()
@@ -172,6 +282,11 @@ def create_app():
     ensure_mysql_database_exists(database_uri)
     app.config["SQLALCHEMY_DATABASE_URI"] = database_uri
     app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+    app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_SIZE
+    app.config["UPLOAD_ROOT"] = os.path.join(app.root_path, "uploads")
+    app.config["SERVICE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "services")
+
+    os.makedirs(app.config["SERVICE_UPLOAD_FOLDER"], exist_ok=True)
 
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
 
@@ -180,7 +295,90 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        ensure_service_schema()
         seed_data()
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def handle_file_too_large(_error):
+        return jsonify({"success": False, "message": "Image trop volumineuse. Taille max: 2 MB."}), 413
+
+    @app.get("/uploads/<path:filename>")
+    def uploaded_file(filename):
+        return send_from_directory(app.config["UPLOAD_ROOT"], filename)
+
+    def save_service_image(image_file):
+        filename = secure_filename(image_file.filename or "")
+        if not filename:
+            return None, "Nom de fichier invalide."
+        if not allowed_image_file(filename):
+            return None, "Format image invalide. Utilisez JPG, JPEG ou PNG."
+
+        extension = filename.rsplit(".", 1)[1].lower()
+        unique_filename = f"{uuid4().hex}.{extension}"
+        absolute_path = os.path.join(app.config["SERVICE_UPLOAD_FOLDER"], unique_filename)
+        image_file.save(absolute_path)
+        return f"uploads/services/{unique_filename}", None
+
+    def validate_service_payload(payload, image_file=None, existing_image=None):
+        errors = {}
+
+        title = str(payload.get("title") or "").strip()
+        price_raw = payload.get("price")
+        category = str(payload.get("category") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        status = str(payload.get("status") or "Actif").strip() or "Actif"
+
+        if not title:
+            errors["title"] = "title est requis."
+
+        if price_raw in (None, ""):
+            errors["price"] = "price est requis."
+            price = None
+        else:
+            try:
+                price = float(price_raw)
+                if price <= 0:
+                    errors["price"] = "price doit etre superieur a 0."
+            except (TypeError, ValueError):
+                errors["price"] = "price doit etre numerique."
+                price = None
+
+        if not category:
+            errors["category"] = "category est requis."
+
+        if not image_file and not str(existing_image or "").strip():
+            errors["image"] = "image est requis."
+        elif image_file:
+            filename = image_file.filename or ""
+            if not filename or not allowed_image_file(filename):
+                errors["image"] = "Formats acceptes: jpg, jpeg, png."
+
+        if not description:
+            errors["description"] = "description est requis."
+
+        return errors, {
+            "title": title,
+            "price": price,
+            "category": category,
+            "description": description,
+            "status": status,
+        }
+
+    def get_provider_service_or_404(service_id):
+        service = Service.query.filter_by(id=service_id, provider_id=request.user_id).first()
+        if not service:
+            service = Service.query.filter_by(id=service_id, prestataire_id=request.user_id).first()
+        if not service:
+            return None, (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Service introuvable ou non autorise.",
+                    }
+                ),
+                404,
+            )
+        return service, None
 
     def auth_required(allowed_roles=None):
         def decorator(view_func):
@@ -308,7 +506,12 @@ def create_app():
         if city:
             query = query.filter(db.func.lower(Service.city) == city)
         if service_type:
-            query = query.filter(db.func.lower(Service.type).contains(service_type))
+            query = query.filter(
+                db.or_(
+                    db.func.lower(Service.type).contains(service_type),
+                    db.func.lower(Service.category).contains(service_type),
+                )
+            )
         if min_price:
             try:
                 query = query.filter(Service.price >= float(min_price))
@@ -322,6 +525,127 @@ def create_app():
 
         services = query.order_by(Service.rating.desc(), Service.title.asc()).all()
         return jsonify({"success": True, "services": [serialize_service(item, request.user_id) for item in services]})
+
+    @app.get("/api/provider/services")
+    @auth_required(allowed_roles={"prestataire"})
+    def list_provider_services():
+        services = (
+            Service.query.filter(
+                db.or_(
+                    Service.provider_id == request.user_id,
+                    Service.prestataire_id == request.user_id,
+                )
+            )
+            .order_by(Service.created_at.desc(), Service.id.desc())
+            .all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "message": "Services recuperes avec succes.",
+                "services": [serialize_service(item) for item in services],
+            }
+        )
+
+    @app.post("/api/provider/services")
+    @auth_required(allowed_roles={"prestataire"})
+    def create_provider_service():
+        payload = request.form or {}
+        image_file = request.files.get("image")
+        errors, normalized = validate_service_payload(payload, image_file=image_file)
+
+        if errors:
+            return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
+
+        image_path, image_error = save_service_image(image_file)
+        if image_error:
+            return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
+
+        service = Service(
+            provider_id=request.user_id,
+            prestataire_id=request.user_id,
+            title=normalized["title"],
+            price=normalized["price"],
+            category=normalized["category"],
+            type=normalized["category"],
+            image=image_path,
+            image_url=image_path,
+            description=normalized["description"],
+            status=normalized["status"],
+            rating=4.5,
+            city="",
+        )
+        db.session.add(service)
+        db.session.commit()
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": "Service ajoute avec succes.",
+                    "service": serialize_service(service),
+                }
+            ),
+            201,
+        )
+
+    @app.put("/api/provider/services/<int:service_id>")
+    @app.patch("/api/provider/services/<int:service_id>")
+    @auth_required(allowed_roles={"prestataire"})
+    def update_provider_service(service_id):
+        service, error_response = get_provider_service_or_404(service_id)
+        if error_response:
+            return error_response
+
+        payload = request.form or {}
+        image_file = request.files.get("image")
+        errors, normalized = validate_service_payload(
+            payload,
+            image_file=image_file,
+            existing_image=service.image,
+        )
+
+        if errors:
+            return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
+
+        image_path = service.image
+        if image_file:
+            image_path, image_error = save_service_image(image_file)
+            if image_error:
+                return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
+            delete_uploaded_file(app, service.image)
+
+        service.title = normalized["title"]
+        service.price = normalized["price"]
+        service.category = normalized["category"]
+        service.type = normalized["category"]
+        service.image = image_path
+        service.image_url = image_path
+        service.description = normalized["description"]
+        service.status = normalized["status"]
+        service.provider_id = request.user_id
+        service.prestataire_id = request.user_id
+        service.updated_at = datetime.utcnow()
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Service mis a jour avec succes.",
+                "service": serialize_service(service),
+            }
+        )
+
+    @app.delete("/api/provider/services/<int:service_id>")
+    @auth_required(allowed_roles={"prestataire"})
+    def delete_provider_service(service_id):
+        service, error_response = get_provider_service_or_404(service_id)
+        if error_response:
+            return error_response
+
+        delete_uploaded_file(app, service.image)
+        db.session.delete(service)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Service supprime avec succes."})
 
     @app.get("/api/services/<int:service_id>")
     @auth_required(allowed_roles={"client"})
@@ -556,23 +880,31 @@ def seed_data():
         db.session.add_all(
             [
                 Service(
+                    provider_id=studio.id,
                     title="Studio Lumiere - Photographe",
                     description="Couverture photo premium du mariage.",
                     price=1200,
                     city="Tunis",
+                    category="Photographe",
                     type="photographer",
+                    image="https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=1400&q=90",
                     rating=4.9,
                     image_url="https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=1400&q=90",
+                    status="Actif",
                     prestataire_id=studio.id,
                 ),
                 Service(
+                    provider_id=studio.id,
                     title="Saveurs Royales - Traiteur",
                     description="Menu sur mesure pour evenements mariage.",
                     price=1800,
                     city="Tunis",
+                    category="Traiteur",
                     type="traiteur",
+                    image="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1400&q=90",
                     rating=4.7,
                     image_url="https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1400&q=90",
+                    status="Actif",
                     prestataire_id=studio.id,
                 ),
             ]
@@ -581,13 +913,17 @@ def seed_data():
     if palais and Service.query.filter_by(prestataire_id=palais.id).count() == 0:
         db.session.add(
             Service(
+                provider_id=palais.id,
                 title="Palais Jasmine - Salle de fete",
                 description="Salle elegante pour ceremonies et receptions.",
                 price=3500,
                 city="Sousse",
+                category="Salle",
                 type="salle",
+                image="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1400&q=90",
                 rating=4.8,
                 image_url="https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1400&q=90",
+                status="Actif",
                 prestataire_id=palais.id,
             )
         )
