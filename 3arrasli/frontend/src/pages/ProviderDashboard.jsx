@@ -7,6 +7,8 @@ import ProviderDashboardHome from "./provider/ProviderDashboardHome";
 import ProviderLayout from "./provider/ProviderLayout";
 import ProviderProfile from "./provider/ProviderProfile";
 import ProviderServices from "./provider/ProviderServices";
+import { resolveAssetUrl } from "../services/assets";
+import { validateServiceForm } from "./provider/serviceForm";
 import {
   emptyServiceForm,
   initialCalendarDates,
@@ -14,9 +16,14 @@ import {
   initialProfile,
   initialPriorityActions,
   initialReservations,
-  initialServices,
   providerSections,
 } from "./provider/providerData";
+import {
+  createProviderService,
+  deleteProviderService,
+  getProviderServices,
+  updateProviderService,
+} from "../services/providerServices";
 
 const getDayStatus = (slots) => {
   const reservedCount = slots.filter((slot) => slot.status === "reserved").length;
@@ -43,9 +50,16 @@ const ProviderDashboard = () => {
   const [selectedReservationId, setSelectedReservationId] = useState(initialReservations[0].id);
   const [profileForm, setProfileForm] = useState(initialProfile);
   const [profileMessage, setProfileMessage] = useState("");
-  const [services, setServices] = useState(initialServices);
+  const [services, setServices] = useState([]);
   const [serviceForm, setServiceForm] = useState(emptyServiceForm);
   const [editingServiceId, setEditingServiceId] = useState(null);
+  const [serviceFormErrors, setServiceFormErrors] = useState({});
+  const [serviceFeedback, setServiceFeedback] = useState({ type: "", text: "" });
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [serviceSubmitting, setServiceSubmitting] = useState(false);
+  const [serviceImageFile, setServiceImageFile] = useState(null);
+  const [serviceImagePreview, setServiceImagePreview] = useState("");
+  const [imageInputKey, setImageInputKey] = useState(0);
   const [calendarDates, setCalendarDates] = useState(initialCalendarDates);
   const [selectedCalendarDateId, setSelectedCalendarDateId] = useState(null);
   const [calendarFilterMode, setCalendarFilterMode] = useState("all");
@@ -56,6 +70,37 @@ const ProviderDashboard = () => {
   useEffect(() => {
     setSidebarOpen(false);
   }, [activeSection]);
+
+  const loadProviderServices = async (options = {}) => {
+    const { silent = false } = options;
+
+    if (!silent) {
+      setServicesLoading(true);
+    }
+
+    try {
+      const response = await getProviderServices();
+      setServices(response.services || []);
+      if (!silent) {
+        setServiceFeedback((current) => (current.type === "error" ? { type: "", text: "" } : current));
+      }
+    } catch (error) {
+      setServiceFeedback({
+        type: "error",
+        text:
+          error.response?.data?.message ||
+          "Impossible de charger vos services pour le moment.",
+      });
+    } finally {
+      if (!silent) {
+        setServicesLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadProviderServices();
+  }, []);
 
   const selectedReservation =
     reservations.find((item) => item.id === selectedReservationId) || reservations[0];
@@ -124,48 +169,152 @@ const ProviderDashboard = () => {
 
   const onServiceChange = (event) => {
     const { name, value } = event.target;
+    setServiceFormErrors((prev) => ({ ...prev, [name]: "" }));
     setServiceForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const resetServiceEditing = () => {
-    setEditingServiceId(null);
-    setServiceForm(emptyServiceForm);
-  };
+  const onServiceImageChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    setServiceFormErrors((prev) => ({ ...prev, image: "" }));
 
-  const submitService = (event) => {
-    event.preventDefault();
-
-    if (!serviceForm.title || !serviceForm.price || !serviceForm.description || !serviceForm.image) {
+    if (!file) {
+      setServiceImageFile(null);
+      setServiceImagePreview(editingServiceId ? serviceForm.image || "" : "");
       return;
     }
 
-    if (editingServiceId) {
-      setServices((prev) =>
-        prev.map((item) => (item.id === editingServiceId ? { ...item, ...serviceForm } : item))
-      );
-    } else {
-      setServices((prev) => [{ id: Date.now(), ...serviceForm }, ...prev]);
+    setServiceImageFile(file);
+    setServiceImagePreview(URL.createObjectURL(file));
+    setServiceFeedback({ type: "success", text: "Image chargee avec succes." });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (serviceImagePreview?.startsWith("blob:")) {
+        URL.revokeObjectURL(serviceImagePreview);
+      }
+    };
+  }, [serviceImagePreview]);
+
+  const resetServiceEditing = () => {
+    if (serviceImagePreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(serviceImagePreview);
+    }
+    setEditingServiceId(null);
+    setServiceFormErrors({});
+    setServiceImageFile(null);
+    setServiceImagePreview("");
+    setImageInputKey((prev) => prev + 1);
+    setServiceForm(emptyServiceForm);
+  };
+
+  const submitService = async (event) => {
+    event.preventDefault();
+
+    const validationErrors = validateServiceForm(serviceForm, {
+      imageFile: serviceImageFile,
+      hasExistingImage: Boolean(serviceForm.image),
+    });
+    if (Object.keys(validationErrors).length > 0) {
+      setServiceFormErrors(validationErrors);
+      setServiceFeedback({
+        type: "error",
+        text: "Merci de corriger les champs obligatoires du formulaire.",
+      });
+      return;
     }
 
-    resetServiceEditing();
+    setServiceSubmitting(true);
+    setServiceFeedback({ type: "", text: "" });
+
+    const payload = new FormData();
+    payload.append("title", serviceForm.title.trim());
+    payload.append("price", String(Number(serviceForm.price)));
+    payload.append("category", serviceForm.category.trim());
+    payload.append("description", serviceForm.description.trim());
+    payload.append("status", serviceForm.status?.trim() || "Actif");
+    if (serviceImageFile) {
+      payload.append("image", serviceImageFile);
+    }
+
+    try {
+      if (editingServiceId) {
+        const response = await updateProviderService(editingServiceId, payload);
+        setServiceFeedback({
+          type: "success",
+          text: response.message || "Service mis a jour avec succes.",
+        });
+      } else {
+        const response = await createProviderService(payload);
+        setServiceFeedback({
+          type: "success",
+          text: response.message || "Service ajoute avec succes.",
+        });
+      }
+
+      resetServiceEditing();
+      await loadProviderServices({ silent: true });
+    } catch (error) {
+      setServiceFeedback({
+        type: "error",
+        text:
+          error.response?.data?.message ||
+          "Une erreur est survenue lors de l'enregistrement du service.",
+      });
+    } finally {
+      setServiceSubmitting(false);
+    }
   };
 
   const editService = (service) => {
+    if (serviceImagePreview?.startsWith("blob:")) {
+      URL.revokeObjectURL(serviceImagePreview);
+    }
     setServiceForm({
       title: service.title,
-      price: service.price,
+      price: String(service.price),
       description: service.description,
-      image: service.image,
+      image: service.image || "",
       category: service.category,
+      status: service.status || "Actif",
     });
+    setServiceFormErrors({});
+    setServiceImageFile(null);
+    setServiceImagePreview(resolveAssetUrl(service.image));
+    setImageInputKey((prev) => prev + 1);
+    setServiceFeedback({ type: "", text: "" });
     setEditingServiceId(service.id);
     setActiveSection("services");
   };
 
-  const deleteService = (serviceId) => {
-    setServices((prev) => prev.filter((item) => item.id !== serviceId));
-    if (editingServiceId === serviceId) {
-      resetServiceEditing();
+  const deleteService = async (serviceId) => {
+    const confirmed = window.confirm("Voulez-vous vraiment supprimer ce service ?");
+    if (!confirmed) {
+      return;
+    }
+
+    setServiceSubmitting(true);
+    setServiceFeedback({ type: "", text: "" });
+
+    try {
+      const response = await deleteProviderService(serviceId);
+      if (editingServiceId === serviceId) {
+        resetServiceEditing();
+      }
+      await loadProviderServices({ silent: true });
+      setServiceFeedback({
+        type: "success",
+        text: response.message || "Service supprime avec succes.",
+      });
+    } catch (error) {
+      setServiceFeedback({
+        type: "error",
+        text:
+          error.response?.data?.message ||
+          "La suppression du service a echoue.",
+      });
+    } finally {
+      setServiceSubmitting(false);
     }
   };
 
@@ -316,7 +465,14 @@ const ProviderDashboard = () => {
           <ProviderServices
             editingServiceId={editingServiceId}
             serviceForm={serviceForm}
+            serviceFormErrors={serviceFormErrors}
+            serviceFeedback={serviceFeedback}
+            servicesLoading={servicesLoading}
+            serviceSubmitting={serviceSubmitting}
+            imagePreviewUrl={serviceImagePreview}
+            imageInputKey={imageInputKey}
             onServiceChange={onServiceChange}
+            onServiceImageChange={onServiceImageChange}
             onSubmitService={submitService}
             onResetEditing={resetServiceEditing}
             services={services}

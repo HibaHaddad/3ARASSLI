@@ -406,6 +406,7 @@ export const emptyServiceForm = {
   description: "",
   image: "",
   category: "Photographe",
+  status: "Actif",
 };
 
 export const initialPriorityActions = [

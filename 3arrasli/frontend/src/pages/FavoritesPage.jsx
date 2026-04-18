@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
+import { resolveAssetUrl } from "../services/assets";
 import "../Home.css";
 import "./client.css";
 
@@ -91,7 +92,7 @@ const FavoritesPage = () => {
                   {services.map((service) => (
                     <article key={service.id} className="service-card client-service-card">
                       <div className="service-media">
-                        <img src={service.image} alt={service.title} />
+                        <img src={resolveAssetUrl(service.image)} alt={service.title} />
                         <div className="service-media-overlay" />
                       </div>
                       <div className="service-body">
