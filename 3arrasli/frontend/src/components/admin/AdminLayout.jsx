@@ -57,13 +57,7 @@ const AdminLayout = ({
               </div>
             </header>
 
-            <SectionTabs
-              sections={sections}
-              activeSection={activeSection}
-              onSectionChange={onSectionChange}
-            />
-
-            {children}
+{children}
           </section>
         </section>
       </main>
