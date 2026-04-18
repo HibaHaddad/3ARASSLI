@@ -1,7 +1,15 @@
 import React from "react";
 import CalendarLegend from "./CalendarLegend";
 
-const CalendarMonth = ({ days, selectedDateId, onSelectDate }) => {
+const monthLabel = (monthMeta) => {
+  const formatter = new Intl.DateTimeFormat("fr-FR", {
+    month: "long",
+    year: "numeric",
+  });
+  return formatter.format(new Date(monthMeta.year, monthMeta.month - 1, 1));
+};
+
+const CalendarMonth = ({ days, selectedDateId, onSelectDate, monthMeta }) => {
   return (
     <article className="provider-panel provider-month-panel" id="provider-month-panel">
       <div className="provider-panel-head provider-panel-head-inline">
@@ -9,7 +17,7 @@ const CalendarMonth = ({ days, selectedDateId, onSelectDate }) => {
           <h3>Vue mensuelle</h3>
           <p>Cliquez sur une date pour voir les heures disponibles ou deja prises.</p>
         </div>
-        <span className="provider-calendar-month">Mai - Juillet 2026</span>
+        <span className="provider-calendar-month">{monthLabel(monthMeta)}</span>
       </div>
 
       <CalendarLegend

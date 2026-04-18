@@ -1,4 +1,5 @@
-from datetime import datetime, timedelta
+from calendar import monthrange
+from datetime import date, datetime, time, timedelta
 from functools import wraps
 import os
 from uuid import uuid4
@@ -13,7 +14,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db
-from models import Favorite, Message, PlannerItem, Reservation, Service, User
+from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, Reservation, Service, User
 
 
 JWT_SECRET = "change-this-secret-in-production"
@@ -52,6 +53,37 @@ DEFAULT_CLIENT = {
 DEFAULT_DB_NAME = "ma_base"
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
 MAX_IMAGE_SIZE = 2 * 1024 * 1024
+STANDARD_SLOT_TIMES = [
+    "08:00",
+    "09:00",
+    "10:00",
+    "11:00",
+    "12:00",
+    "13:00",
+    "14:00",
+    "15:00",
+    "16:00",
+    "17:00",
+    "18:00",
+    "19:00",
+    "20:00",
+]
+FRENCH_WEEKDAYS = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi", "Dimanche"]
+FRENCH_MONTHS = [
+    "",
+    "Janvier",
+    "Fevrier",
+    "Mars",
+    "Avril",
+    "Mai",
+    "Juin",
+    "Juillet",
+    "Aout",
+    "Septembre",
+    "Octobre",
+    "Novembre",
+    "Decembre",
+]
 
 
 def build_database_uri():
@@ -99,6 +131,14 @@ def serialize_user(user):
         "username": user.username,
         "email": user.email,
         "role": user.role.capitalize(),
+        "phone": user.phone,
+        "city": user.city,
+        "category": user.category,
+        "instagram": user.instagram,
+        "website": user.website,
+        "description": user.description,
+        "profilePhoto": user.profile_photo,
+        "coverPhoto": user.cover_photo,
     }
 
 
@@ -174,6 +214,49 @@ def make_token(user_id, role):
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXP_HOURS),
         "iat": datetime.utcnow(),
     }
+
+
+def get_day_status_from_slots(slots):
+    if not slots:
+        return "free", "Libre"
+
+    busy_count = sum(1 for slot in slots if slot["status"] in {"occupied", "reserved"})
+    if busy_count == 0:
+        return "free", "Libre"
+    if busy_count == len(slots):
+        return "occupied", "Complete"
+    return "partial", "Partiellement occupee"
+
+
+def serialize_calendar_day(day_date, slots):
+    status, status_label = get_day_status_from_slots(slots)
+    return {
+        "id": day_date.isoformat(),
+        "date": day_date.isoformat(),
+        "day": day_date.day,
+        "weekDay": FRENCH_WEEKDAYS[day_date.weekday()],
+        "month": FRENCH_MONTHS[day_date.month],
+        "status": status,
+        "statusLabel": status_label,
+        "slots": slots,
+    }
+
+
+def parse_reservation_datetime(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+
+    parsed_date = parse_date_value(raw)
+    if parsed_date:
+        return datetime.combine(parsed_date, time.min)
+    return None
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
@@ -192,6 +275,88 @@ def delete_uploaded_file(app, relative_path):
     absolute_path = os.path.join(app.root_path, relative_path.replace("/", os.sep))
     if os.path.isfile(absolute_path):
         os.remove(absolute_path)
+
+
+def parse_date_value(value):
+    if isinstance(value, date):
+        return value
+
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_time_value(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(raw, fmt).time()
+        except ValueError:
+            continue
+    return None
+
+
+def plus_one_hour(time_label):
+    start = parse_time_value(time_label)
+    if not start:
+        return time_label
+    end_dt = datetime.combine(date.today(), start) + timedelta(hours=1)
+    return end_dt.strftime("%H:%M")
+
+
+def ensure_user_schema():
+    inspector = inspect(db.engine)
+    if "users" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("users")}
+    statements = []
+
+    if "phone" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN phone VARCHAR(40) NULL")
+    if "city" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN city VARCHAR(120) NULL")
+    if "category" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN category VARCHAR(120) NULL")
+    if "instagram" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN instagram VARCHAR(160) NULL")
+    if "website" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN website VARCHAR(255) NULL")
+    if "description" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN description TEXT NULL")
+    if "profile_photo" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN profile_photo TEXT NULL")
+    if "cover_photo" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN cover_photo TEXT NULL")
+    if "updated_at" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN updated_at DATETIME NULL")
+
+    for statement in statements:
+        db.session.execute(text(statement))
+
+    if statements:
+        db.session.commit()
+
+    columns = {column["name"] for column in inspect(db.engine).get_columns("users")}
+    if "updated_at" in columns:
+        db.session.execute(
+            text(
+                "UPDATE users "
+                "SET updated_at = COALESCE(updated_at, created_at, NOW()) "
+                "WHERE updated_at IS NULL"
+            )
+        )
+        db.session.commit()
 
 
 def ensure_service_schema():
@@ -285,8 +450,12 @@ def create_app():
     app.config["MAX_CONTENT_LENGTH"] = MAX_IMAGE_SIZE
     app.config["UPLOAD_ROOT"] = os.path.join(app.root_path, "uploads")
     app.config["SERVICE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "services")
+    app.config["PROFILE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "profile")
+    app.config["COVER_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "cover")
 
     os.makedirs(app.config["SERVICE_UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["PROFILE_UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["COVER_UPLOAD_FOLDER"], exist_ok=True)
 
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
 
@@ -295,6 +464,7 @@ def create_app():
 
     with app.app_context():
         db.create_all()
+        ensure_user_schema()
         ensure_service_schema()
         seed_data()
 
@@ -318,6 +488,249 @@ def create_app():
         absolute_path = os.path.join(app.config["SERVICE_UPLOAD_FOLDER"], unique_filename)
         image_file.save(absolute_path)
         return f"uploads/services/{unique_filename}", None
+
+    def save_provider_profile_image(image_file, target_folder):
+        filename = secure_filename(image_file.filename or "")
+        if not filename:
+            return None, "Nom de fichier invalide."
+        if not allowed_image_file(filename):
+            return None, "Format image invalide. Utilisez JPG, JPEG ou PNG."
+
+        extension = filename.rsplit(".", 1)[1].lower()
+        unique_filename = f"{uuid4().hex}.{extension}"
+        folder_path = app.config[target_folder]
+        absolute_path = os.path.join(folder_path, unique_filename)
+        image_file.save(absolute_path)
+        relative_dir = os.path.relpath(folder_path, app.root_path).replace("\\", "/")
+        return f"{relative_dir}/{unique_filename}", None
+
+    def validate_provider_profile_payload(payload, profile_photo=None, cover_photo=None):
+        errors = {}
+
+        name = str(payload.get("name") or "").strip()
+        email = str(payload.get("email") or "").strip().lower()
+        phone = str(payload.get("phone") or "").strip()
+        city = str(payload.get("city") or "").strip()
+        category = str(payload.get("category") or "").strip()
+        instagram = str(payload.get("instagram") or "").strip()
+        website = str(payload.get("website") or "").strip()
+        description = str(payload.get("description") or "").strip()
+
+        if not name:
+            errors["name"] = "Le nom est obligatoire."
+
+        if not email:
+            errors["email"] = "L'email est obligatoire."
+        elif "@" not in email or "." not in email.split("@")[-1]:
+            errors["email"] = "L'email est invalide."
+
+        for field_name, image_file in {
+            "profilePhoto": profile_photo,
+            "coverPhoto": cover_photo,
+        }.items():
+            if image_file and not allowed_image_file(image_file.filename or ""):
+                errors[field_name] = "Formats acceptes: jpg, jpeg, png."
+
+        return errors, {
+            "name": name,
+            "email": email,
+            "phone": phone,
+            "city": city,
+            "category": category,
+            "instagram": instagram,
+            "website": website,
+            "description": description,
+        }
+
+    def validate_calendar_request(month_value, year_value):
+        try:
+            month_int = int(month_value)
+            year_int = int(year_value)
+        except (TypeError, ValueError):
+            return None, None, (
+                jsonify({"success": False, "message": "month et year doivent etre numeriques."}),
+                400,
+            )
+
+        if month_int < 1 or month_int > 12:
+            return None, None, (
+                jsonify({"success": False, "message": "month doit etre compris entre 1 et 12."}),
+                400,
+            )
+
+        if year_int < 2000 or year_int > 2100:
+            return None, None, (
+                jsonify({"success": False, "message": "year est invalide."}),
+                400,
+            )
+
+        return month_int, year_int, None
+
+    def generate_provider_slots_for_month(provider_id, year_value, month_value):
+        days_in_month = monthrange(year_value, month_value)[1]
+        month_start = date(year_value, month_value, 1)
+        month_end = date(year_value, month_value, days_in_month)
+
+        existing_slots = ProviderAvailabilitySlot.query.filter(
+            ProviderAvailabilitySlot.provider_id == provider_id,
+            ProviderAvailabilitySlot.date >= month_start,
+            ProviderAvailabilitySlot.date <= month_end,
+        ).all()
+        existing_keys = {(slot.date.isoformat(), slot.start_time) for slot in existing_slots}
+
+        slots_to_create = []
+        for day_number in range(1, days_in_month + 1):
+            slot_date = date(year_value, month_value, day_number)
+            for slot_time in STANDARD_SLOT_TIMES:
+                key = (slot_date.isoformat(), slot_time)
+                if key in existing_keys:
+                    continue
+                slots_to_create.append(
+                    ProviderAvailabilitySlot(
+                        provider_id=provider_id,
+                        date=slot_date,
+                        start_time=slot_time,
+                        end_time=plus_one_hour(slot_time),
+                        status="free",
+                    )
+                )
+
+        if slots_to_create:
+            db.session.add_all(slots_to_create)
+            db.session.commit()
+
+    def sync_provider_reservations_for_month(provider_id, year_value, month_value):
+        days_in_month = monthrange(year_value, month_value)[1]
+        month_start = date(year_value, month_value, 1)
+        month_end = date(year_value, month_value, days_in_month)
+
+        slots = ProviderAvailabilitySlot.query.filter(
+            ProviderAvailabilitySlot.provider_id == provider_id,
+            ProviderAvailabilitySlot.date >= month_start,
+            ProviderAvailabilitySlot.date <= month_end,
+        ).all()
+
+        slots_by_day = {}
+        slots_by_day_time = {}
+        for slot in slots:
+            day_key = slot.date.isoformat()
+            slots_by_day.setdefault(day_key, []).append(slot)
+            slots_by_day_time[(day_key, slot.start_time)] = slot
+            if slot.status == "reserved" or slot.reservation_id:
+                slot.status = "free"
+                slot.reservation_id = None
+                slot.note = None
+
+        services = Service.query.filter(
+            db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
+        ).all()
+        service_ids = [service.id for service in services]
+        if not service_ids:
+            db.session.commit()
+            return
+
+        reservations = Reservation.query.filter(Reservation.service_id.in_(service_ids)).all()
+        services_by_id = {service.id: service for service in services}
+
+        for reservation in reservations:
+            if reservation.status in {"cancelled", "refused", "refusee"}:
+                continue
+
+            service = services_by_id.get(reservation.service_id)
+            if not service:
+                continue
+
+            reservation_dt = parse_reservation_datetime(reservation.date)
+            if not reservation_dt:
+                continue
+            reservation_date = reservation_dt.date()
+            if reservation_date < month_start or reservation_date > month_end:
+                continue
+
+            client = User.query.get(reservation.client_id)
+            slot_time_label = reservation_dt.strftime("%H:%M") if reservation_dt.time() != time.min else None
+            slots_to_reserve = []
+            day_key = reservation_date.isoformat()
+
+            if slot_time_label:
+                targeted_slot = slots_by_day_time.get((day_key, slot_time_label))
+                if targeted_slot:
+                    slots_to_reserve = [targeted_slot]
+            if not slots_to_reserve:
+                slots_to_reserve = slots_by_day.get(day_key, [])
+
+            for slot in slots_to_reserve:
+                slot.status = "reserved"
+                slot.reservation_id = reservation.id
+                slot.note = (
+                    f"{client.username if client else 'Client'} | {service.title}"
+                )
+
+        db.session.commit()
+
+    def build_provider_calendar_days(provider_id, year_value, month_value):
+        generate_provider_slots_for_month(provider_id, year_value, month_value)
+        sync_provider_reservations_for_month(provider_id, year_value, month_value)
+
+        days_in_month = monthrange(year_value, month_value)[1]
+        month_start = date(year_value, month_value, 1)
+        month_end = date(year_value, month_value, days_in_month)
+        services = Service.query.filter(
+            db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
+        ).all()
+        service_ids = [service.id for service in services]
+        reservations_by_id = {
+            reservation.id: reservation
+            for reservation in (
+                Reservation.query.filter(Reservation.service_id.in_(service_ids)).all() if service_ids else []
+            )
+        }
+        services_by_id = {service.id: service for service in services}
+        clients_by_id = {
+            user.id: user
+            for user in User.query.filter(
+                User.id.in_([reservation.client_id for reservation in reservations_by_id.values()])
+            ).all()
+        } if reservations_by_id else {}
+
+        slots = (
+            ProviderAvailabilitySlot.query.filter(
+                ProviderAvailabilitySlot.provider_id == provider_id,
+                ProviderAvailabilitySlot.date >= month_start,
+                ProviderAvailabilitySlot.date <= month_end,
+            )
+            .order_by(ProviderAvailabilitySlot.date.asc(), ProviderAvailabilitySlot.start_time.asc())
+            .all()
+        )
+
+        grouped = {date(year_value, month_value, day_number): [] for day_number in range(1, days_in_month + 1)}
+        for slot in slots:
+            reservation = reservations_by_id.get(slot.reservation_id)
+            service = services_by_id.get(reservation.service_id) if reservation else None
+            client = clients_by_id.get(reservation.client_id) if reservation else None
+            grouped.setdefault(slot.date, []).append(
+                {
+                    "id": slot.id,
+                    "time": slot.start_time,
+                    "status": slot.status,
+                    "client": client.username if client else None,
+                    "clientName": client.username if client else None,
+                    "service": service.title if service else None,
+                    "serviceTitle": service.title if service else None,
+                    "reservationId": slot.reservation_id,
+                }
+            )
+
+        return [serialize_calendar_day(day_date, grouped.get(day_date, [])) for day_date in grouped]
+
+    def get_provider_slot_or_404(slot_id):
+        slot = ProviderAvailabilitySlot.query.filter_by(id=slot_id, provider_id=request.user_id).first()
+        if not slot:
+            return None, (
+                jsonify({"success": False, "message": "Creneau introuvable."}),
+                404,
+            )
+        return slot, None
 
     def validate_service_payload(payload, image_file=None, existing_image=None):
         errors = {}
@@ -493,6 +906,223 @@ def create_app():
 
         token = make_token(user.id, user.role)
         return jsonify({"success": True, "message": "Connexion reussie.", "token": token, "user": serialize_user(user)})
+
+    @app.get("/api/provider/profile")
+    @auth_required(allowed_roles={"prestataire"})
+    def get_provider_profile():
+        user = User.query.filter_by(id=request.user_id, role="prestataire").first()
+        if not user:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Profil recupere avec succes.",
+                "user": serialize_user(user),
+            }
+        )
+
+    @app.put("/api/provider/profile")
+    @app.post("/api/provider/profile")
+    @auth_required(allowed_roles={"prestataire"})
+    def update_provider_profile():
+        user = User.query.filter_by(id=request.user_id, role="prestataire").first()
+        if not user:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        payload = request.form or {}
+        profile_photo = request.files.get("profilePhoto")
+        cover_photo = request.files.get("coverPhoto")
+        errors, normalized = validate_provider_profile_payload(
+            payload,
+            profile_photo=profile_photo,
+            cover_photo=cover_photo,
+        )
+
+        if User.query.filter(User.email == normalized["email"], User.id != request.user_id).first():
+            errors["email"] = "Cet email est deja utilise."
+
+        if errors:
+            return jsonify({"success": False, "message": "Erreur de validation", "errors": errors}), 400
+
+        previous_profile_photo = user.profile_photo
+        previous_cover_photo = user.cover_photo
+
+        if profile_photo:
+            profile_photo_path, image_error = save_provider_profile_image(
+                profile_photo,
+                "PROFILE_UPLOAD_FOLDER",
+            )
+            if image_error:
+                return jsonify({"success": False, "message": image_error, "errors": {"profilePhoto": image_error}}), 400
+            user.profile_photo = profile_photo_path
+
+        if cover_photo:
+            cover_photo_path, image_error = save_provider_profile_image(
+                cover_photo,
+                "COVER_UPLOAD_FOLDER",
+            )
+            if image_error:
+                return jsonify({"success": False, "message": image_error, "errors": {"coverPhoto": image_error}}), 400
+            user.cover_photo = cover_photo_path
+
+        user.username = normalized["name"]
+        user.email = normalized["email"]
+        user.phone = normalized["phone"]
+        user.city = normalized["city"]
+        user.category = normalized["category"]
+        user.instagram = normalized["instagram"]
+        user.website = normalized["website"]
+        user.description = normalized["description"]
+        user.updated_at = datetime.utcnow()
+
+        db.session.commit()
+
+        if profile_photo and previous_profile_photo and previous_profile_photo != user.profile_photo:
+            delete_uploaded_file(app, previous_profile_photo)
+        if cover_photo and previous_cover_photo and previous_cover_photo != user.cover_photo:
+            delete_uploaded_file(app, previous_cover_photo)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Profil mis a jour avec succes.",
+                "user": serialize_user(user),
+            }
+        )
+
+    @app.get("/api/provider/calendar")
+    @auth_required(allowed_roles={"prestataire"})
+    def get_provider_calendar():
+        today = datetime.utcnow().date()
+        month_int, year_int, error_response = validate_calendar_request(
+            request.args.get("month", today.month),
+            request.args.get("year", today.year),
+        )
+        if error_response:
+            return error_response
+
+        days = build_provider_calendar_days(request.user_id, year_int, month_int)
+        return jsonify(
+            {
+                "success": True,
+                "message": "Calendrier recupere avec succes.",
+                "month": month_int,
+                "year": year_int,
+                "days": days,
+            }
+        )
+
+    @app.post("/api/provider/calendar/generate")
+    @auth_required(allowed_roles={"prestataire"})
+    def generate_provider_calendar():
+        payload = request.get_json(silent=True) or {}
+        today = datetime.utcnow().date()
+        month_int, year_int, error_response = validate_calendar_request(
+            payload.get("month", today.month),
+            payload.get("year", today.year),
+        )
+        if error_response:
+            return error_response
+
+        generate_provider_slots_for_month(request.user_id, year_int, month_int)
+        days = build_provider_calendar_days(request.user_id, year_int, month_int)
+        return jsonify(
+            {
+                "success": True,
+                "message": "Creneaux generes avec succes.",
+                "month": month_int,
+                "year": year_int,
+                "days": days,
+            }
+        ), 201
+
+    @app.patch("/api/provider/calendar/slots/<int:slot_id>/toggle")
+    @auth_required(allowed_roles={"prestataire"})
+    def toggle_provider_calendar_slot(slot_id):
+        slot, error_response = get_provider_slot_or_404(slot_id)
+        if error_response:
+            return error_response
+        if slot.status == "reserved":
+            return jsonify({"success": False, "message": "Un creneau reserve ne peut pas etre modifie manuellement."}), 409
+
+        slot.status = "occupied" if slot.status == "free" else "free"
+        slot.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Creneau mis a jour.",
+                "slot": {
+                    "id": slot.id,
+                    "date": slot.date.isoformat(),
+                    "time": slot.start_time,
+                    "status": slot.status,
+                },
+            }
+        )
+
+    @app.patch("/api/provider/calendar/days/<string:day_value>/occupy")
+    @auth_required(allowed_roles={"prestataire"})
+    def occupy_provider_calendar_day(day_value):
+        parsed_date = parse_date_value(day_value)
+        if not parsed_date:
+            return jsonify({"success": False, "message": "Date invalide."}), 400
+
+        slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
+        if not slots:
+            generate_provider_slots_for_month(request.user_id, parsed_date.year, parsed_date.month)
+            sync_provider_reservations_for_month(request.user_id, parsed_date.year, parsed_date.month)
+            slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
+
+        updated_count = 0
+        for slot in slots:
+            if slot.status == "reserved":
+                continue
+            if slot.status != "occupied":
+                slot.status = "occupied"
+                slot.updated_at = datetime.utcnow()
+                updated_count += 1
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Journee marquee comme occupee.",
+                "updatedSlots": updated_count,
+            }
+        )
+
+    @app.patch("/api/provider/calendar/days/<string:day_value>/free")
+    @auth_required(allowed_roles={"prestataire"})
+    def free_provider_calendar_day(day_value):
+        parsed_date = parse_date_value(day_value)
+        if not parsed_date:
+            return jsonify({"success": False, "message": "Date invalide."}), 400
+
+        slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
+        if not slots:
+            generate_provider_slots_for_month(request.user_id, parsed_date.year, parsed_date.month)
+            sync_provider_reservations_for_month(request.user_id, parsed_date.year, parsed_date.month)
+            slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
+
+        updated_count = 0
+        for slot in slots:
+            if slot.status == "reserved":
+                continue
+            if slot.status != "free":
+                slot.status = "free"
+                slot.updated_at = datetime.utcnow()
+                updated_count += 1
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Journee liberee.",
+                "updatedSlots": updated_count,
+            }
+        )
 
     @app.get("/api/services")
     @auth_required(allowed_roles={"client"})
@@ -875,6 +1505,40 @@ def seed_data():
 
     studio = User.query.filter_by(email="studio@3arrasli.com").first()
     palais = User.query.filter_by(email="palais@3arrasli.com").first()
+    client = User.query.filter_by(email=DEFAULT_CLIENT["email"]).first()
+
+    if studio:
+        studio.phone = studio.phone or "+216 55 123 456"
+        studio.city = studio.city or "Tunis"
+        studio.category = studio.category or "Photographe"
+        studio.instagram = studio.instagram or "@studio.lumiere.weddings"
+        studio.website = studio.website or "www.studiolumiere.tn"
+        studio.description = studio.description or (
+            "Prestataire mariage premium specialise dans les reportages editoriaux, "
+            "les portraits lumineux et les histoires visuelles elegantes."
+        )
+        studio.profile_photo = studio.profile_photo or (
+            "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=900&q=90"
+        )
+        studio.cover_photo = studio.cover_photo or (
+            "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1400&q=90"
+        )
+
+    if palais:
+        palais.phone = palais.phone or "+216 73 900 320"
+        palais.city = palais.city or "Sousse"
+        palais.category = palais.category or "Salle"
+        palais.instagram = palais.instagram or "@palais.jasmine.events"
+        palais.website = palais.website or "www.palaisjasmine.tn"
+        palais.description = palais.description or (
+            "Lieu de reception raffine pour mariages, ceremonies et experiences haut de gamme."
+        )
+        palais.profile_photo = palais.profile_photo or (
+            "https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?auto=format&fit=crop&w=900&q=90"
+        )
+        palais.cover_photo = palais.cover_photo or (
+            "https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1400&q=90"
+        )
 
     if studio and Service.query.count() == 0:
         db.session.add_all(
@@ -929,6 +1593,39 @@ def seed_data():
         )
 
     db.session.commit()
+
+    if client and Reservation.query.count() == 0:
+        studio_service = Service.query.filter(
+            db.or_(Service.provider_id == (studio.id if studio else None), Service.prestataire_id == (studio.id if studio else None))
+        ).first()
+        palais_service = Service.query.filter(
+            db.or_(Service.provider_id == (palais.id if palais else None), Service.prestataire_id == (palais.id if palais else None))
+        ).first()
+
+        reservations_to_add = []
+        if studio_service:
+            reservations_to_add.append(
+                Reservation(
+                    client_id=client.id,
+                    service_id=studio_service.id,
+                    date=f"{datetime.utcnow().date().replace(day=12).isoformat()} 10:00",
+                    notes="Reservation de demonstration pour le calendrier prestataire.",
+                    status="paid",
+                )
+            )
+        if palais_service:
+            reservations_to_add.append(
+                Reservation(
+                    client_id=client.id,
+                    service_id=palais_service.id,
+                    date=f"{datetime.utcnow().date().replace(day=18).isoformat()} 15:00",
+                    notes="Reservation de demonstration pour le calendrier prestataire.",
+                    status="pending",
+                )
+            )
+        if reservations_to_add:
+            db.session.add_all(reservations_to_add)
+            db.session.commit()
 
 
 app = create_app()

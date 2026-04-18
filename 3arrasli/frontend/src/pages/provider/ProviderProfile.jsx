@@ -1,6 +1,79 @@
 import React from "react";
 
-const ProviderProfile = ({ profileForm, onProfileChange, onSaveProfile, profileMessage }) => {
+const UploadZone = ({
+  fieldName,
+  title,
+  subtitle,
+  note,
+  preview,
+  inputKey,
+  disabled,
+  error,
+  onFileSelect,
+}) => {
+  const handleDrop = (event) => {
+    event.preventDefault();
+    if (disabled) {
+      return;
+    }
+    const file = event.dataTransfer.files?.[0] || null;
+    onFileSelect(fieldName, file);
+  };
+
+  const handleChange = (event) => {
+    const file = event.target.files?.[0] || null;
+    onFileSelect(fieldName, file);
+  };
+
+  return (
+    <div
+      className={`provider-upload-zone ${preview ? "has-preview" : ""}`}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+    >
+      <span>{title}</span>
+      <strong>{subtitle}</strong>
+      <small>{note}</small>
+
+      {preview ? (
+        <div className="provider-profile-upload-preview">
+          <img src={preview} alt={title} />
+        </div>
+      ) : (
+        <div className="provider-profile-upload-empty">Aucune image pour le moment</div>
+      )}
+
+      <label className="provider-upload-trigger">
+        {preview ? "Changer la photo" : "Choisir une image"}
+        <input
+          key={inputKey}
+          type="file"
+          name={fieldName}
+          accept="image/*"
+          disabled={disabled}
+          onChange={handleChange}
+        />
+      </label>
+
+      {error ? <span className="provider-field-error">{error}</span> : null}
+    </div>
+  );
+};
+
+const ProviderProfile = ({
+  profileForm,
+  profileErrors,
+  profileMessage,
+  profileLoading,
+  profileSubmitting,
+  profilePhotoPreview,
+  coverPhotoPreview,
+  profileImageInputKey,
+  coverImageInputKey,
+  onProfileChange,
+  onProfileImageChange,
+  onSaveProfile,
+}) => {
   return (
     <article className="provider-panel">
       <div className="provider-panel-head">
@@ -8,14 +81,37 @@ const ProviderProfile = ({ profileForm, onProfileChange, onSaveProfile, profileM
         <p>Affinez votre image de marque avec une presentation elegante et rassurante.</p>
       </div>
 
+      {profileMessage?.text ? (
+        <div
+          className={`provider-alert ${
+            profileMessage.type === "success" ? "provider-alert-success" : "provider-alert-error"
+          }`}
+        >
+          {profileMessage.text}
+        </div>
+      ) : null}
+
       <div className="provider-profile-cover">
-        <img src={profileForm.coverPhoto} alt="Couverture prestataire" />
+        {coverPhotoPreview ? (
+          <img src={coverPhotoPreview} alt="Couverture prestataire" />
+        ) : (
+          <div className="provider-profile-cover-empty">
+            <strong>Ajoutez votre photo de couverture</strong>
+            <span>Un visuel immersif aide les couples a se projeter dans votre univers.</span>
+          </div>
+        )}
         <div className="provider-profile-overlay" />
         <div className="provider-profile-badge">
-          <img src={profileForm.profilePhoto} alt="Profil prestataire" />
+          {profilePhotoPreview ? (
+            <img src={profilePhotoPreview} alt="Profil prestataire" />
+          ) : (
+            <div className="provider-profile-avatar-empty">
+              {(profileForm.name || "P").trim().charAt(0).toUpperCase()}
+            </div>
+          )}
           <div>
-            <strong>{profileForm.name}</strong>
-            <span>{profileForm.category}</span>
+            <strong>{profileForm.name || "Votre nom prestataire"}</strong>
+            <span>{profileForm.category || "Categorie a definir"}</span>
           </div>
         </div>
       </div>
@@ -25,10 +121,12 @@ const ProviderProfile = ({ profileForm, onProfileChange, onSaveProfile, profileM
           <label>
             Nom
             <input name="name" value={profileForm.name} onChange={onProfileChange} />
+            {profileErrors?.name ? <span className="provider-field-error">{profileErrors.name}</span> : null}
           </label>
           <label>
             Email
             <input name="email" type="email" value={profileForm.email} onChange={onProfileChange} />
+            {profileErrors?.email ? <span className="provider-field-error">{profileErrors.email}</span> : null}
           </label>
           <label>
             Telephone
@@ -50,14 +148,6 @@ const ProviderProfile = ({ profileForm, onProfileChange, onSaveProfile, profileM
             Site web
             <input name="website" value={profileForm.website} onChange={onProfileChange} />
           </label>
-          <label>
-            Photo de profil
-            <input name="profilePhoto" value={profileForm.profilePhoto} onChange={onProfileChange} />
-          </label>
-          <label className="provider-field-full">
-            Photo de couverture
-            <input name="coverPhoto" value={profileForm.coverPhoto} onChange={onProfileChange} />
-          </label>
           <label className="provider-field-full">
             Description
             <textarea
@@ -70,23 +160,35 @@ const ProviderProfile = ({ profileForm, onProfileChange, onSaveProfile, profileM
         </div>
 
         <div className="provider-upload-grid">
-          <div className="provider-upload-zone">
-            <span>Photo de profil</span>
-            <strong>Deposez une image ou collez une URL</strong>
-            <small>Ideal pour votre avatar et votre image de confiance.</small>
-          </div>
-          <div className="provider-upload-zone">
-            <span>Photo de couverture</span>
-            <strong>Ajoutez une scene premium de votre univers</strong>
-            <small>Utilisez un visuel lumineux, romantique et tres qualitatif.</small>
-          </div>
+          <UploadZone
+            fieldName="profilePhoto"
+            title="Photo de profil"
+            subtitle="Deposez une image premium ou cliquez pour choisir"
+            note="Ideal pour votre avatar, votre image de confiance et votre signature visuelle."
+            preview={profilePhotoPreview}
+            inputKey={profileImageInputKey}
+            disabled={profileSubmitting}
+            error={profileErrors?.profilePhoto}
+            onFileSelect={onProfileImageChange}
+          />
+          <UploadZone
+            fieldName="coverPhoto"
+            title="Photo de couverture"
+            subtitle="Ajoutez une scene premium de votre univers"
+            note="Utilisez un visuel lumineux, romantique et qualitatif. JPG, JPEG ou PNG, 2 MB max."
+            preview={coverPhotoPreview}
+            inputKey={coverImageInputKey}
+            disabled={profileSubmitting}
+            error={profileErrors?.coverPhoto}
+            onFileSelect={onProfileImageChange}
+          />
         </div>
 
         <div className="provider-inline-actions">
-          <button type="submit" className="provider-primary-btn">
-            Enregistrer
+          <button type="submit" className="provider-primary-btn" disabled={profileSubmitting || profileLoading}>
+            {profileSubmitting ? "Enregistrement..." : profileLoading ? "Chargement..." : "Enregistrer"}
           </button>
-          {profileMessage ? <span className="provider-form-note">{profileMessage}</span> : null}
+          {profileLoading ? <span className="provider-form-note">Chargement de votre profil...</span> : null}
         </div>
       </form>
     </article>

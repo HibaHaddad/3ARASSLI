@@ -1,10 +1,14 @@
 import React from "react";
 
-const TimeSlot = ({ slot, isCurrentHour, onToggle }) => {
+const TimeSlot = ({ slot, isCurrentHour, isUpdating, onToggle }) => {
+  const isReserved = slot.status === "reserved";
+  const disabled = isReserved || isUpdating;
+
   return (
     <button
       type="button"
       className={`provider-time-slot ${slot.status} ${isCurrentHour ? "now" : ""}`}
+      disabled={disabled}
       onClick={onToggle}
     >
       <div className="provider-time-line" />
@@ -48,9 +52,9 @@ const TimeSlot = ({ slot, isCurrentHour, onToggle }) => {
         ) : (
           <div className="provider-time-copy">
             <p>
-              Reserve par <strong>{slot.client}</strong>
+              Reserve par <strong>{slot.clientName || slot.client}</strong>
             </p>
-            <small>{slot.service}</small>
+            <small>{slot.serviceTitle || slot.service}</small>
           </div>
         )}
       </div>

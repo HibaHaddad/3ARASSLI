@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 
 from extensions import db
 
@@ -11,7 +11,21 @@ class User(db.Model):
     email = db.Column(db.String(160), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(30), nullable=False, default="client")
+    phone = db.Column(db.String(40), nullable=True)
+    city = db.Column(db.String(120), nullable=True)
+    category = db.Column(db.String(120), nullable=True)
+    instagram = db.Column(db.String(160), nullable=True)
+    website = db.Column(db.String(255), nullable=True)
+    description = db.Column(db.Text, nullable=True)
+    profile_photo = db.Column(db.Text, nullable=True)
+    cover_photo = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
 
 class Service(db.Model):
@@ -82,3 +96,32 @@ class PlannerItem(db.Model):
     title = db.Column(db.String(180), nullable=False)
     completed = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class ProviderAvailabilitySlot(db.Model):
+    __tablename__ = "provider_availability_slots"
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False, index=True, default=date.today)
+    start_time = db.Column(db.String(5), nullable=False)
+    end_time = db.Column(db.String(5), nullable=False)
+    status = db.Column(db.String(20), nullable=False, default="free")
+    reservation_id = db.Column(db.Integer, db.ForeignKey("reservations.id"), nullable=True)
+    note = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "provider_id",
+            "date",
+            "start_time",
+            name="uq_provider_availability_date_time",
+        ),
+    )

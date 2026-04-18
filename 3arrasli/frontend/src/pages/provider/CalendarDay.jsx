@@ -11,6 +11,8 @@ const CalendarDay = ({
   onMarkDayOccupied,
   onFreeDay,
   currentHour,
+  calendarUpdating,
+  updatingSlotIds,
   onBackToMonth,
 }) => {
   const currentSlotRef = useRef(null);
@@ -76,10 +78,15 @@ const CalendarDay = ({
             <button type="button" className="provider-ghost-btn" onClick={onBackToMonth}>
               Retour au calendrier
             </button>
-            <button type="button" className="provider-primary-btn" onClick={onMarkDayOccupied}>
-              Marquer la journee occupee
+            <button
+              type="button"
+              className="provider-primary-btn"
+              onClick={onMarkDayOccupied}
+              disabled={calendarUpdating}
+            >
+              {calendarUpdating ? "Mise a jour..." : "Marquer la journee occupee"}
             </button>
-            <button type="button" className="provider-ghost-btn" onClick={onFreeDay}>
+            <button type="button" className="provider-ghost-btn" onClick={onFreeDay} disabled={calendarUpdating}>
               Liberer la journee
             </button>
           </div>
@@ -125,7 +132,12 @@ const CalendarDay = ({
       </div>
 
       <div className="provider-time-slot-list">
-        {visibleSlots.map((slot) => {
+        {visibleSlots.length === 0 ? (
+          <div className="provider-empty-state">
+            <h3>Aucun creneau trouve pour ce filtre</h3>
+            <p>Essayez un autre filtre pour afficher les disponibilites de la journee.</p>
+          </div>
+        ) : visibleSlots.map((slot) => {
           const isCurrentHour = slot.time.startsWith(currentHour);
 
           return (
@@ -136,6 +148,7 @@ const CalendarDay = ({
               <TimeSlot
                 slot={slot}
                 isCurrentHour={isCurrentHour}
+                isUpdating={calendarUpdating || updatingSlotIds.includes(slot.id)}
                 onToggle={() => onToggleSlot(slot.id)}
               />
             </div>

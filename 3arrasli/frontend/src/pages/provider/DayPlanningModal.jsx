@@ -9,6 +9,8 @@ const DayPlanningModal = ({
   onMarkDayOccupied,
   onFreeDay,
   currentHour,
+  calendarUpdating,
+  updatingSlotIds,
   onBackToMonth,
   onClose,
 }) => {
@@ -65,6 +67,8 @@ const DayPlanningModal = ({
           onMarkDayOccupied={onMarkDayOccupied}
           onFreeDay={onFreeDay}
           currentHour={currentHour}
+          calendarUpdating={calendarUpdating}
+          updatingSlotIds={updatingSlotIds}
           onBackToMonth={onBackToMonth}
         />
       </div>

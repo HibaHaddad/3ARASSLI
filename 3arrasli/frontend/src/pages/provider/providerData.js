@@ -385,19 +385,16 @@ export const initialChats = [
 ];
 
 export const initialProfile = {
-  name: "Studio Lumiere",
-  email: "contact@studiolumiere.tn",
-  phone: "+216 55 123 456",
-  city: "Tunis",
-  category: "Photographe",
-  instagram: "@studio.lumiere.weddings",
-  website: "www.studiolumiere.tn",
-  description:
-    "Prestataire mariage premium specialise dans les reportages editoriaux, les portraits lumineux et les histoires visuelles elegantes.",
-  profilePhoto:
-    "https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&w=900&q=90",
-  coverPhoto:
-    "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1400&q=90",
+  name: "",
+  email: "",
+  phone: "",
+  city: "",
+  category: "",
+  instagram: "",
+  website: "",
+  description: "",
+  profilePhoto: "",
+  coverPhoto: "",
 };
 
 export const emptyServiceForm = {
