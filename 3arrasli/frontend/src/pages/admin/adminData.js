@@ -1,5 +1,11 @@
 export const adminSections = [
   {
+    id: "dashboard",
+    label: "Dashboard",
+    title: "Statistiques",
+    description: "Vue d'ensemble et indicateurs clés de la plateforme.",
+  },
+  {
     id: "providers",
     label: "Prestataires",
     title: "Gestion des prestataires",
