@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
+import { resolveAssetUrl } from "../services/assets";
 import { clearStoredUser } from "../services/auth";
 import "../Home.css";
 import "./client.css";
@@ -166,7 +167,7 @@ const ClientDashboard = () => {
             {services.map((service) => (
               <article key={service.id} className="service-card client-service-card">
                 <div className="service-media">
-                  <img src={service.image} alt={service.title} />
+                  <img src={resolveAssetUrl(service.image)} alt={service.title} />
                   <div className="service-media-overlay" />
                   <div className="service-badges">
                     <span className="service-badge">Selection premium</span>

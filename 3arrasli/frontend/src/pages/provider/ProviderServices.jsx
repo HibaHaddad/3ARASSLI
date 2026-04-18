@@ -1,15 +1,28 @@
 import React from "react";
+import { resolveAssetUrl } from "../../services/assets";
 
 const ProviderServices = ({
   editingServiceId,
   serviceForm,
+  serviceFormErrors,
+  serviceFeedback,
+  servicesLoading,
+  serviceSubmitting,
+  imagePreviewUrl,
+  imageInputKey,
   onServiceChange,
+  onServiceImageChange,
   onSubmitService,
   onResetEditing,
   services,
   onEditService,
   onDeleteService,
 }) => {
+  const renderFieldError = (fieldName) =>
+    serviceFormErrors?.[fieldName] ? (
+      <span className="provider-field-error">{serviceFormErrors[fieldName]}</span>
+    ) : null;
+
   return (
     <div className="provider-stack">
       <article className="provider-panel">
@@ -24,6 +37,16 @@ const ProviderServices = ({
         </div>
 
         <form className="provider-form" onSubmit={onSubmitService}>
+          {serviceFeedback?.text ? (
+            <div
+              className={`provider-alert ${
+                serviceFeedback.type === "success" ? "provider-alert-success" : "provider-alert-error"
+              }`}
+            >
+              {serviceFeedback.text}
+            </div>
+          ) : null}
+
           <div className="provider-form-grid">
             <label>
               Titre
@@ -33,33 +56,55 @@ const ProviderServices = ({
                 onChange={onServiceChange}
                 placeholder="Nom de la prestation"
               />
+              {renderFieldError("title")}
             </label>
             <label>
               Prix
               <input
+                type="number"
+                min="0"
+                step="0.01"
                 name="price"
                 value={serviceForm.price}
                 onChange={onServiceChange}
-                placeholder="A partir de 1500 TND"
+                placeholder="1500"
               />
+              {renderFieldError("price")}
             </label>
             <label>
               Categorie
               <select name="category" value={serviceForm.category} onChange={onServiceChange}>
+                <option value="">Selectionner</option>
                 <option>Photographe</option>
                 <option>Decoration</option>
                 <option>Traiteur</option>
                 <option>Salle</option>
               </select>
+              {renderFieldError("category")}
             </label>
+            <div>
+              <span>Image / photo reelle</span>
+              <label className="provider-upload-trigger">
+                {imagePreviewUrl ? "Changer l'image" : "Choisir une image"}
+                <input
+                  key={imageInputKey}
+                  type="file"
+                  name="image"
+                  accept="image/*"
+                  onChange={onServiceImageChange}
+                />
+              </label>
+              {renderFieldError("image")}
+              <span className="provider-form-note">
+                JPG, JPEG ou PNG, 2 MB maximum.
+              </span>
+            </div>
             <label>
-              Image / photo reelle
-              <input
-                name="image"
-                value={serviceForm.image}
-                onChange={onServiceChange}
-                placeholder="https://..."
-              />
+              Statut
+              <select name="status" value={serviceForm.status} onChange={onServiceChange}>
+                <option>Actif</option>
+                <option>Inactif</option>
+              </select>
             </label>
             <label className="provider-field-full">
               Description
@@ -69,12 +114,29 @@ const ProviderServices = ({
                 onChange={onServiceChange}
                 rows="4"
               />
+              {renderFieldError("description")}
             </label>
+            {imagePreviewUrl ? (
+              <div className="provider-field-full provider-image-preview-card">
+                <div className="provider-image-preview-head">
+                  <strong>Apercu de l'image</strong>
+                  <span>Image chargee avec succes.</span>
+                </div>
+                <img src={imagePreviewUrl} alt="Apercu du service" className="provider-image-preview" />
+                <span className="provider-form-note">
+                  {editingServiceId ? "Choisissez un autre fichier pour changer l'image." : "L'image sera envoyee avec le service."}
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <div className="provider-inline-actions">
-            <button type="submit" className="provider-primary-btn">
-              {editingServiceId ? "Mettre a jour" : "Ajouter"}
+            <button type="submit" className="provider-primary-btn" disabled={serviceSubmitting}>
+              {serviceSubmitting
+                ? "Enregistrement..."
+                : editingServiceId
+                  ? "Mettre a jour"
+                  : "Ajouter"}
             </button>
             {editingServiceId ? (
               <button type="button" className="provider-ghost-btn" onClick={onResetEditing}>
@@ -86,41 +148,55 @@ const ProviderServices = ({
       </article>
 
       <section className="provider-services-grid">
-        {services.map((service) => (
-          <article key={service.id} className="provider-service-card">
-            <div className="provider-service-media">
-              <img src={service.image} alt={service.title} />
-              <div className="provider-service-overlay" />
-              <span>{service.category}</span>
-            </div>
-            <div className="provider-service-body">
-              <div className="provider-service-topline">
-                <h3>{service.title}</h3>
-                <strong>{service.price}</strong>
-              </div>
-              <p>{service.description}</p>
-              <div className="provider-service-footer">
-                <em>{service.status}</em>
-              </div>
-              <div className="provider-inline-actions">
-                <button
-                  type="button"
-                  className="provider-primary-btn"
-                  onClick={() => onEditService(service)}
-                >
-                  Modifier
-                </button>
-                <button
-                  type="button"
-                  className="provider-secondary-btn"
-                  onClick={() => onDeleteService(service.id)}
-                >
-                  Supprimer
-                </button>
-              </div>
-            </div>
+        {servicesLoading ? (
+          <article className="provider-panel provider-empty-state">
+            <h3>Chargement des services...</h3>
+            <p>Nous recuperons vos prestations depuis l'API.</p>
           </article>
-        ))}
+        ) : services.length === 0 ? (
+          <article className="provider-panel provider-empty-state">
+            <h3>Aucun service pour le moment</h3>
+            <p>Ajoutez votre premiere prestation pour la partager sur la plateforme.</p>
+          </article>
+        ) : (
+          services.map((service) => (
+            <article key={service.id} className="provider-service-card">
+              <div className="provider-service-media">
+                <img src={resolveAssetUrl(service.image)} alt={service.title} />
+                <div className="provider-service-overlay" />
+                <span>{service.category}</span>
+              </div>
+              <div className="provider-service-body">
+                <div className="provider-service-topline">
+                  <h3>{service.title}</h3>
+                  <strong>{Number(service.price).toFixed(2)} TND</strong>
+                </div>
+                <p>{service.description}</p>
+                <div className="provider-service-footer">
+                  <em>{service.status}</em>
+                </div>
+                <div className="provider-inline-actions">
+                  <button
+                    type="button"
+                    className="provider-primary-btn"
+                    onClick={() => onEditService(service)}
+                    disabled={serviceSubmitting}
+                  >
+                    Modifier
+                  </button>
+                  <button
+                    type="button"
+                    className="provider-secondary-btn"
+                    onClick={() => onDeleteService(service.id)}
+                    disabled={serviceSubmitting}
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </article>
+          ))
+        )}
       </section>
     </div>
   );

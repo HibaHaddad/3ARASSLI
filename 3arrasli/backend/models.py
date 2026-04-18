@@ -18,15 +18,25 @@ class Service(db.Model):
     __tablename__ = "services"
 
     id = db.Column(db.Integer, primary_key=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     title = db.Column(db.String(180), nullable=False)
     description = db.Column(db.Text, nullable=False)
     price = db.Column(db.Float, nullable=False)
-    city = db.Column(db.String(120), nullable=False)
-    type = db.Column(db.String(120), nullable=False)
+    category = db.Column(db.String(120), nullable=False)
+    image = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(40), nullable=False, default="Actif")
+    city = db.Column(db.String(120), nullable=True)
+    type = db.Column(db.String(120), nullable=True)
     image_url = db.Column(db.Text, nullable=True)
     rating = db.Column(db.Float, nullable=False, default=4.5)
-    prestataire_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    prestataire_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
 
 class Reservation(db.Model):
