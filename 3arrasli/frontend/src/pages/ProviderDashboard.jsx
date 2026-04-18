@@ -10,11 +10,9 @@ import ProviderServices from "./provider/ProviderServices";
 import { resolveAssetUrl } from "../services/assets";
 import { getStoredSession, saveStoredUser } from "../services/auth";
 import {
-  freeProviderCalendarDay,
-  generateProviderCalendar,
-  getProviderCalendar,
-  occupyProviderCalendarDay,
-  toggleProviderCalendarSlot,
+  deleteProviderCalendarBlock,
+  getProviderCalendarWeek,
+  occupyProviderCalendarWeekSlot,
 } from "../services/providerCalendar";
 import { getProviderProfile, updateProviderProfile } from "../services/providerProfile";
 import { validateServiceForm } from "./provider/serviceForm";
@@ -33,20 +31,20 @@ import {
   updateProviderService,
 } from "../services/providerServices";
 
-const getDayStatus = (slots) => {
-  const reservedCount = slots.filter((slot) => slot.status === "reserved").length;
-  const occupiedCount = slots.filter((slot) => slot.status === "occupied").length;
-  const busyCount = reservedCount + occupiedCount;
+const getWeekStartDate = (value = new Date()) => {
+  const nextDate = new Date(value);
+  const day = nextDate.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  nextDate.setDate(nextDate.getDate() + diff);
+  nextDate.setHours(0, 0, 0, 0);
+  return nextDate;
+};
 
-  if (busyCount === 0) {
-    return { status: "free", statusLabel: "Journee libre" };
-  }
-
-  if (busyCount >= slots.length - 1) {
-    return { status: "occupied", statusLabel: "Journee complete" };
-  }
-
-  return { status: "partial", statusLabel: "Partiellement occupee" };
+const toIsoDate = (value) => {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 };
 
 const ProviderDashboard = () => {
@@ -77,16 +75,15 @@ const ProviderDashboard = () => {
   const [serviceImageFile, setServiceImageFile] = useState(null);
   const [serviceImagePreview, setServiceImagePreview] = useState("");
   const [imageInputKey, setImageInputKey] = useState(0);
-  const [calendarDates, setCalendarDates] = useState([]);
-  const [selectedCalendarDateId, setSelectedCalendarDateId] = useState(null);
-  const [calendarFilterMode, setCalendarFilterMode] = useState("all");
+  const [calendarDays, setCalendarDays] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarMessage, setCalendarMessage] = useState({ type: "", text: "" });
-  const [calendarUpdating, setCalendarUpdating] = useState(false);
-  const [updatingSlotIds, setUpdatingSlotIds] = useState([]);
-  const [calendarMonthMeta, setCalendarMonthMeta] = useState({
-    month: new Date().getMonth() + 1,
-    year: new Date().getFullYear(),
+  const [calendarUpdatingSlotKeys, setCalendarUpdatingSlotKeys] = useState([]);
+  const [calendarWeekStart, setCalendarWeekStart] = useState(() => toIsoDate(getWeekStartDate()));
+  const [calendarWeekMeta, setCalendarWeekMeta] = useState({
+    weekLabel: "",
+    startDate: toIsoDate(getWeekStartDate()),
+    endDate: toIsoDate(new Date(getWeekStartDate().getTime() + 6 * 24 * 60 * 60 * 1000)),
   });
   const [chats, setChats] = useState(initialChats);
   const [activeChatId, setActiveChatId] = useState(initialChats[0].id);
@@ -168,41 +165,19 @@ const ProviderDashboard = () => {
     }
 
     try {
-      const response = await getProviderCalendar(calendarMonthMeta);
-      const days = response.days || [];
-      setCalendarDates(days);
-      setCalendarMonthMeta({
-        month: response.month || calendarMonthMeta.month,
-        year: response.year || calendarMonthMeta.year,
+      const response = await getProviderCalendarWeek(calendarWeekStart);
+      setCalendarDays(response.days || []);
+      setCalendarWeekMeta({
+        weekLabel: response.weekLabel || "",
+        startDate: response.startDate || calendarWeekStart,
+        endDate: response.endDate || calendarWeekStart,
       });
-      setSelectedCalendarDateId((currentId) =>
-        currentId && days.some((item) => item.id === currentId) ? currentId : null
-      );
       if (!silent) {
         setCalendarMessage((current) => (current.type === "error" ? { type: "", text: "" } : current));
       }
     } catch (error) {
-      const message =
-        error.response?.data?.message || "Impossible de charger le calendrier.";
+      const message = error.response?.data?.message || "Impossible de charger le calendrier hebdomadaire.";
       setCalendarMessage({ type: "error", text: message });
-
-      if (error.response?.status === 404 || error.response?.status === 400) {
-        try {
-          const generated = await generateProviderCalendar(calendarMonthMeta);
-          setCalendarDates(generated.days || []);
-          setCalendarMessage({
-            type: "success",
-            text: generated.message || "Creneaux generes avec succes.",
-          });
-        } catch (generationError) {
-          setCalendarMessage({
-            type: "error",
-            text:
-              generationError.response?.data?.message ||
-              "La generation du calendrier a echoue.",
-          });
-        }
-      }
     } finally {
       if (!silent) {
         setCalendarLoading(false);
@@ -212,20 +187,10 @@ const ProviderDashboard = () => {
 
   useEffect(() => {
     loadCalendar();
-  }, [calendarMonthMeta.month, calendarMonthMeta.year]);
+  }, [calendarWeekStart]);
 
   const selectedReservation =
     reservations.find((item) => item.id === selectedReservationId) || reservations[0];
-  const normalizedCalendarDates = useMemo(
-    () =>
-      calendarDates.map((item) => ({
-        ...item,
-        ...getDayStatus(item.slots),
-      })),
-    [calendarDates]
-  );
-  const selectedCalendarDate =
-    normalizedCalendarDates.find((item) => item.id === selectedCalendarDateId) || null;
   const activeChat = chats.find((chat) => chat.id === activeChatId) || chats[0];
 
   const filteredReservations = useMemo(() => {
@@ -551,18 +516,24 @@ const ProviderDashboard = () => {
     }
   };
 
-  const onSelectCalendarDate = (id) => {
-    setSelectedCalendarDateId(id);
-    setCalendarFilterMode("all");
+  const goToPreviousWeek = () => {
+    const currentStart = getWeekStartDate(new Date(calendarWeekStart));
+    currentStart.setDate(currentStart.getDate() - 7);
+    setCalendarWeekStart(toIsoDate(currentStart));
   };
 
-  const toggleCalendarSlot = async (slotId) => {
-    if (!selectedCalendarDateId) {
+  const goToNextWeek = () => {
+    const currentStart = getWeekStartDate(new Date(calendarWeekStart));
+    currentStart.setDate(currentStart.getDate() + 7);
+    setCalendarWeekStart(toIsoDate(currentStart));
+  };
+
+  const toggleCalendarSlot = async (slot) => {
+    if (!slot) {
       return;
     }
 
-    const slot = selectedCalendarDate?.slots.find((item) => item.id === slotId);
-    if (!slot || slot.status === "reserved") {
+    if (slot.status === "reserved") {
       setCalendarMessage({
         type: "error",
         text: "Un creneau reserve ne peut pas etre modifie manuellement.",
@@ -570,15 +541,25 @@ const ProviderDashboard = () => {
       return;
     }
 
-    setUpdatingSlotIds((prev) => [...prev, slotId]);
+    const slotKey = `${slot.date}-${slot.start_time}`;
+    setCalendarUpdatingSlotKeys((prev) => [...prev, slotKey]);
     setCalendarMessage({ type: "", text: "" });
 
     try {
-      const response = await toggleProviderCalendarSlot(slotId);
+      let response;
+      if (slot.status === "free") {
+        response = await occupyProviderCalendarWeekSlot({
+          date: slot.date,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+        });
+      } else {
+        response = await deleteProviderCalendarBlock(slot.blockId);
+      }
       await loadCalendar({ silent: true });
       setCalendarMessage({
         type: "success",
-        text: response.message || "Creneau mis a jour.",
+        text: response.message || (slot.status === "free" ? "Creneau bloque avec succes." : "Creneau libere avec succes."),
       });
     } catch (error) {
       setCalendarMessage({
@@ -586,57 +567,7 @@ const ProviderDashboard = () => {
         text: error.response?.data?.message || "Impossible de mettre a jour ce creneau.",
       });
     } finally {
-      setUpdatingSlotIds((prev) => prev.filter((id) => id !== slotId));
-    }
-  };
-
-  const markEntireDayOccupied = async () => {
-    if (!selectedCalendarDateId) {
-      return;
-    }
-
-    setCalendarUpdating(true);
-    setCalendarMessage({ type: "", text: "" });
-
-    try {
-      const response = await occupyProviderCalendarDay(selectedCalendarDateId);
-      await loadCalendar({ silent: true });
-      setCalendarMessage({
-        type: "success",
-        text: response.message || "Journee marquee comme occupee.",
-      });
-    } catch (error) {
-      setCalendarMessage({
-        type: "error",
-        text: error.response?.data?.message || "Impossible de bloquer cette journee.",
-      });
-    } finally {
-      setCalendarUpdating(false);
-    }
-  };
-
-  const freeEntireDay = async () => {
-    if (!selectedCalendarDateId) {
-      return;
-    }
-
-    setCalendarUpdating(true);
-    setCalendarMessage({ type: "", text: "" });
-
-    try {
-      const response = await freeProviderCalendarDay(selectedCalendarDateId);
-      await loadCalendar({ silent: true });
-      setCalendarMessage({
-        type: "success",
-        text: response.message || "Journee liberee.",
-      });
-    } catch (error) {
-      setCalendarMessage({
-        type: "error",
-        text: error.response?.data?.message || "Impossible de liberer cette journee.",
-      });
-    } finally {
-      setCalendarUpdating(false);
+      setCalendarUpdatingSlotKeys((prev) => prev.filter((key) => key !== slotKey));
     }
   };
 
@@ -732,30 +663,15 @@ const ProviderDashboard = () => {
         );
       case "calendar":
         return (
-            <ProviderCalendar
-            calendarDates={normalizedCalendarDates}
-            selectedDate={selectedCalendarDate}
-            selectedDateId={selectedCalendarDateId}
-            onSelectDate={onSelectCalendarDate}
+          <ProviderCalendar
+            calendarDays={calendarDays}
             onToggleSlot={toggleCalendarSlot}
-            onMarkDayOccupied={markEntireDayOccupied}
-            onFreeDay={freeEntireDay}
-            filterMode={calendarFilterMode}
-            onFilterChange={setCalendarFilterMode}
-            currentHour={currentHour}
             loadingCalendar={calendarLoading}
             calendarMessage={calendarMessage}
-            calendarUpdating={calendarUpdating}
-            updatingSlotIds={updatingSlotIds}
-            monthMeta={calendarMonthMeta}
-            onCloseDayPlanning={() => {
-              setSelectedCalendarDateId(null);
-            }}
-            onBackToMonth={() => {
-              setSelectedCalendarDateId(null);
-              const monthPanel = document.getElementById("provider-month-panel");
-              monthPanel?.scrollIntoView({ behavior: "smooth", block: "start" });
-            }}
+            updatingSlotKeys={calendarUpdatingSlotKeys}
+            weekMeta={calendarWeekMeta}
+            onPreviousWeek={goToPreviousWeek}
+            onNextWeek={goToNextWeek}
           />
         );
       case "chat":
@@ -777,9 +693,9 @@ const ProviderDashboard = () => {
             heroSummary={heroSummary}
             priorityActions={initialPriorityActions}
             upcomingReservations={upcomingReservations}
-            calendarDates={normalizedCalendarDates}
+            calendarDates={calendarDays}
             recentChats={recentChats}
-            onCalendarToggle={onSelectCalendarDate}
+            onCalendarToggle={() => setActiveSection("calendar")}
             onGoToSection={setActiveSection}
           />
         );

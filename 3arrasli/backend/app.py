@@ -14,7 +14,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db
-from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, Reservation, Service, User
+from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, User
 
 
 JWT_SECRET = "change-this-secret-in-production"
@@ -84,6 +84,7 @@ FRENCH_MONTHS = [
     "Novembre",
     "Decembre",
 ]
+STANDARD_WORKING_HOURS = STANDARD_SLOT_TIMES
 
 
 def build_database_uri():
@@ -214,6 +215,7 @@ def make_token(user_id, role):
         "exp": datetime.utcnow() + timedelta(hours=JWT_EXP_HOURS),
         "iat": datetime.utcnow(),
     }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def get_day_status_from_slots(slots):
@@ -257,7 +259,6 @@ def parse_reservation_datetime(value):
     if parsed_date:
         return datetime.combine(parsed_date, time.min)
     return None
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
 def allowed_image_file(filename):
@@ -312,6 +313,32 @@ def plus_one_hour(time_label):
         return time_label
     end_dt = datetime.combine(date.today(), start) + timedelta(hours=1)
     return end_dt.strftime("%H:%M")
+
+
+def get_week_start(day_value):
+    parsed_date = parse_date_value(day_value) or datetime.utcnow().date()
+    return parsed_date - timedelta(days=parsed_date.weekday())
+
+
+def build_week_label(start_date):
+    end_date = start_date + timedelta(days=6)
+    start_label = f"{start_date.day:02d} {FRENCH_MONTHS[start_date.month]}"
+    end_label = f"{end_date.day:02d} {FRENCH_MONTHS[end_date.month]} {end_date.year}"
+    return f"{start_label} - {end_label}"
+
+
+def serialize_weekly_day(day_date, slots):
+    status, status_label = get_day_status_from_slots(slots)
+    return {
+        "id": day_date.isoformat(),
+        "date": day_date.isoformat(),
+        "day": day_date.day,
+        "weekDay": FRENCH_WEEKDAYS[day_date.weekday()],
+        "month": FRENCH_MONTHS[day_date.month],
+        "status": status,
+        "statusLabel": status_label,
+        "slots": slots,
+    }
 
 
 def ensure_user_schema():
@@ -793,6 +820,117 @@ def create_app():
             )
         return service, None
 
+    def get_provider_week_reservations(provider_id, start_date, end_date):
+        services = Service.query.filter(
+            db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
+        ).all()
+        if not services:
+            return {}
+
+        services_by_id = {service.id: service for service in services}
+        reservations = Reservation.query.filter(Reservation.service_id.in_(list(services_by_id))).all()
+        valid_reservations = {}
+        client_ids = set()
+
+        for reservation in reservations:
+            if str(reservation.status or "").lower() in {"cancelled", "canceled", "refusee", "refused"}:
+                continue
+            reservation_dt = parse_reservation_datetime(reservation.date)
+            if not reservation_dt:
+                continue
+            reservation_date = reservation_dt.date()
+            if reservation_date < start_date or reservation_date > end_date:
+                continue
+            valid_reservations[reservation.id] = {
+                "reservation": reservation,
+                "service": services_by_id.get(reservation.service_id),
+                "datetime": reservation_dt,
+            }
+            client_ids.add(reservation.client_id)
+
+        clients_by_id = {
+            client.id: client
+            for client in User.query.filter(User.id.in_(client_ids)).all()
+        } if client_ids else {}
+
+        reservations_by_slot = {}
+        for reservation_id, payload in valid_reservations.items():
+            reservation_dt = payload["datetime"]
+            slot_key = (reservation_dt.date().isoformat(), reservation_dt.strftime("%H:%M"))
+            reservations_by_slot[slot_key] = {
+                "reservationId": reservation_id,
+                "clientName": clients_by_id.get(payload["reservation"].client_id).username
+                if clients_by_id.get(payload["reservation"].client_id)
+                else None,
+                "serviceTitle": payload["service"].title if payload["service"] else None,
+            }
+
+        return reservations_by_slot
+
+    def build_provider_week_calendar(provider_id, start_date):
+        end_date = start_date + timedelta(days=6)
+        blocks = (
+            ProviderCalendarBlock.query.filter(
+                ProviderCalendarBlock.provider_id == provider_id,
+                ProviderCalendarBlock.date >= start_date,
+                ProviderCalendarBlock.date <= end_date,
+                ProviderCalendarBlock.type == "occupied",
+            )
+            .order_by(ProviderCalendarBlock.date.asc(), ProviderCalendarBlock.start_time.asc())
+            .all()
+        )
+        occupied_by_slot = {
+            (block.date.isoformat(), block.start_time): block for block in blocks
+        }
+        reservations_by_slot = get_provider_week_reservations(provider_id, start_date, end_date)
+
+        days = []
+        for offset in range(7):
+            current_date = start_date + timedelta(days=offset)
+            slots = []
+            for start_time_label in STANDARD_WORKING_HOURS:
+                slot_key = (current_date.isoformat(), start_time_label)
+                reservation_payload = reservations_by_slot.get(slot_key)
+                occupied_block = occupied_by_slot.get(slot_key)
+
+                status = "free"
+                block_id = None
+                reservation_id = None
+                client_name = None
+                service_title = None
+
+                if reservation_payload:
+                    status = "reserved"
+                    reservation_id = reservation_payload["reservationId"]
+                    client_name = reservation_payload["clientName"]
+                    service_title = reservation_payload["serviceTitle"]
+                elif occupied_block:
+                    status = "occupied"
+                    block_id = occupied_block.id
+
+                slots.append(
+                    {
+                        "date": current_date.isoformat(),
+                        "time": start_time_label,
+                        "start_time": start_time_label,
+                        "end_time": plus_one_hour(start_time_label),
+                        "status": status,
+                        "blockId": block_id,
+                        "reservationId": reservation_id,
+                        "clientName": client_name,
+                        "serviceTitle": service_title,
+                    }
+                )
+
+            days.append(serialize_weekly_day(current_date, slots))
+
+        return {
+            "weekLabel": build_week_label(start_date),
+            "startDate": start_date.isoformat(),
+            "endDate": end_date.isoformat(),
+            "days": days,
+        }
+
     def auth_required(allowed_roles=None):
         def decorator(view_func):
             @wraps(view_func)
@@ -991,138 +1129,96 @@ def create_app():
             }
         )
 
-    @app.get("/api/provider/calendar")
+    @app.get("/api/provider/calendar/week")
     @auth_required(allowed_roles={"prestataire"})
-    def get_provider_calendar():
-        today = datetime.utcnow().date()
-        month_int, year_int, error_response = validate_calendar_request(
-            request.args.get("month", today.month),
-            request.args.get("year", today.year),
-        )
-        if error_response:
-            return error_response
-
-        days = build_provider_calendar_days(request.user_id, year_int, month_int)
+    def get_provider_calendar_week():
+        start_date = get_week_start(request.args.get("start"))
+        payload = build_provider_week_calendar(request.user_id, start_date)
         return jsonify(
             {
                 "success": True,
-                "message": "Calendrier recupere avec succes.",
-                "month": month_int,
-                "year": year_int,
-                "days": days,
+                "message": "Calendrier hebdomadaire recupere avec succes.",
+                **payload,
             }
         )
 
-    @app.post("/api/provider/calendar/generate")
+    @app.post("/api/provider/calendar/week/occupy")
     @auth_required(allowed_roles={"prestataire"})
-    def generate_provider_calendar():
+    def occupy_provider_calendar_week_slot():
         payload = request.get_json(silent=True) or {}
-        today = datetime.utcnow().date()
-        month_int, year_int, error_response = validate_calendar_request(
-            payload.get("month", today.month),
-            payload.get("year", today.year),
-        )
-        if error_response:
-            return error_response
+        slot_date = parse_date_value(payload.get("date"))
+        start_time_label = str(payload.get("start_time") or "").strip()
+        end_time_label = str(payload.get("end_time") or plus_one_hour(start_time_label)).strip()
 
-        generate_provider_slots_for_month(request.user_id, year_int, month_int)
-        days = build_provider_calendar_days(request.user_id, year_int, month_int)
+        if not slot_date:
+            return jsonify({"success": False, "message": "date est requis et doit etre valide."}), 400
+        if not parse_time_value(start_time_label):
+            return jsonify({"success": False, "message": "start_time est invalide."}), 400
+        if not parse_time_value(end_time_label):
+            return jsonify({"success": False, "message": "end_time est invalide."}), 400
+
+        reservations_by_slot = get_provider_week_reservations(request.user_id, slot_date, slot_date)
+        if (slot_date.isoformat(), start_time_label) in reservations_by_slot:
+            return jsonify({"success": False, "message": "Ce creneau est deja reserve et ne peut pas etre bloque manuellement."}), 409
+
+        existing_block = ProviderCalendarBlock.query.filter_by(
+            provider_id=request.user_id,
+            date=slot_date,
+            start_time=start_time_label,
+            type="occupied",
+        ).first()
+        if existing_block:
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Ce creneau est deja bloque.",
+                    "block": {
+                        "id": existing_block.id,
+                        "date": existing_block.date.isoformat(),
+                        "start_time": existing_block.start_time,
+                        "end_time": existing_block.end_time,
+                        "type": existing_block.type,
+                    },
+                }
+            )
+
+        block = ProviderCalendarBlock(
+            provider_id=request.user_id,
+            date=slot_date,
+            start_time=start_time_label,
+            end_time=end_time_label,
+            type="occupied",
+        )
+        db.session.add(block)
+        db.session.commit()
         return jsonify(
             {
                 "success": True,
-                "message": "Creneaux generes avec succes.",
-                "month": month_int,
-                "year": year_int,
-                "days": days,
+                "message": "Creneau bloque avec succes.",
+                "block": {
+                    "id": block.id,
+                    "date": block.date.isoformat(),
+                    "start_time": block.start_time,
+                    "end_time": block.end_time,
+                    "type": block.type,
+                },
             }
         ), 201
 
-    @app.patch("/api/provider/calendar/slots/<int:slot_id>/toggle")
+    @app.delete("/api/provider/calendar/blocks/<int:block_id>")
     @auth_required(allowed_roles={"prestataire"})
-    def toggle_provider_calendar_slot(slot_id):
-        slot, error_response = get_provider_slot_or_404(slot_id)
-        if error_response:
-            return error_response
-        if slot.status == "reserved":
-            return jsonify({"success": False, "message": "Un creneau reserve ne peut pas etre modifie manuellement."}), 409
+    def delete_provider_calendar_block(block_id):
+        block = ProviderCalendarBlock.query.filter_by(
+            id=block_id,
+            provider_id=request.user_id,
+            type="occupied",
+        ).first()
+        if not block:
+            return jsonify({"success": False, "message": "Bloc calendrier introuvable."}), 404
 
-        slot.status = "occupied" if slot.status == "free" else "free"
-        slot.updated_at = datetime.utcnow()
+        db.session.delete(block)
         db.session.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "Creneau mis a jour.",
-                "slot": {
-                    "id": slot.id,
-                    "date": slot.date.isoformat(),
-                    "time": slot.start_time,
-                    "status": slot.status,
-                },
-            }
-        )
-
-    @app.patch("/api/provider/calendar/days/<string:day_value>/occupy")
-    @auth_required(allowed_roles={"prestataire"})
-    def occupy_provider_calendar_day(day_value):
-        parsed_date = parse_date_value(day_value)
-        if not parsed_date:
-            return jsonify({"success": False, "message": "Date invalide."}), 400
-
-        slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
-        if not slots:
-            generate_provider_slots_for_month(request.user_id, parsed_date.year, parsed_date.month)
-            sync_provider_reservations_for_month(request.user_id, parsed_date.year, parsed_date.month)
-            slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
-
-        updated_count = 0
-        for slot in slots:
-            if slot.status == "reserved":
-                continue
-            if slot.status != "occupied":
-                slot.status = "occupied"
-                slot.updated_at = datetime.utcnow()
-                updated_count += 1
-
-        db.session.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "Journee marquee comme occupee.",
-                "updatedSlots": updated_count,
-            }
-        )
-
-    @app.patch("/api/provider/calendar/days/<string:day_value>/free")
-    @auth_required(allowed_roles={"prestataire"})
-    def free_provider_calendar_day(day_value):
-        parsed_date = parse_date_value(day_value)
-        if not parsed_date:
-            return jsonify({"success": False, "message": "Date invalide."}), 400
-
-        slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
-        if not slots:
-            generate_provider_slots_for_month(request.user_id, parsed_date.year, parsed_date.month)
-            sync_provider_reservations_for_month(request.user_id, parsed_date.year, parsed_date.month)
-            slots = ProviderAvailabilitySlot.query.filter_by(provider_id=request.user_id, date=parsed_date).all()
-
-        updated_count = 0
-        for slot in slots:
-            if slot.status == "reserved":
-                continue
-            if slot.status != "free":
-                slot.status = "free"
-                slot.updated_at = datetime.utcnow()
-                updated_count += 1
-
-        db.session.commit()
-        return jsonify(
-            {
-                "success": True,
-                "message": "Journee liberee.",
-                "updatedSlots": updated_count,
-            }
-        )
+        return jsonify({"success": True, "message": "Creneau libere avec succes."})
 
     @app.get("/api/services")
     @auth_required(allowed_roles={"client"})
@@ -1626,6 +1722,19 @@ def seed_data():
         if reservations_to_add:
             db.session.add_all(reservations_to_add)
             db.session.commit()
+
+    if studio and ProviderCalendarBlock.query.count() == 0:
+        next_week_start = get_week_start(datetime.utcnow().date()) + timedelta(days=7)
+        db.session.add(
+            ProviderCalendarBlock(
+                provider_id=studio.id,
+                date=next_week_start + timedelta(days=1),
+                start_time="14:00",
+                end_time="15:00",
+                type="occupied",
+            )
+        )
+        db.session.commit()
 
 
 app = create_app()

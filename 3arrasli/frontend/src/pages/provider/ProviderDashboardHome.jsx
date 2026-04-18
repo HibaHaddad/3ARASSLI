@@ -122,12 +122,18 @@ const ProviderDashboardHome = ({
                 key={item.id}
                 type="button"
                 className={`provider-date-pill ${item.status}`}
-                onClick={() => onCalendarToggle(item.id)}
+                onClick={onCalendarToggle}
               >
                 <span>
                   {item.weekDay} {item.day} {item.month}
                 </span>
-                <strong>{item.status === "occupied" ? "Occupee" : "Libre"}</strong>
+                <strong>
+                  {item.status === "occupied"
+                    ? "Complete"
+                    : item.status === "partial"
+                      ? "Partielle"
+                      : "Libre"}
+                </strong>
               </button>
             ))}
           </div>

@@ -125,3 +125,32 @@ class ProviderAvailabilitySlot(db.Model):
             name="uq_provider_availability_date_time",
         ),
     )
+
+
+class ProviderCalendarBlock(db.Model):
+    __tablename__ = "provider_calendar_blocks"
+
+    id = db.Column(db.Integer, primary_key=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False, index=True, default=date.today)
+    start_time = db.Column(db.String(5), nullable=False)
+    end_time = db.Column(db.String(5), nullable=False)
+    type = db.Column(db.String(20), nullable=False, default="occupied")
+    reservation_id = db.Column(db.Integer, db.ForeignKey("reservations.id"), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint(
+            "provider_id",
+            "date",
+            "start_time",
+            "type",
+            name="uq_provider_calendar_block_slot",
+        ),
+    )
