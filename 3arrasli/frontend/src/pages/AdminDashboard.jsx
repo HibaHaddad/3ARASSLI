@@ -60,7 +60,7 @@ const defaultPackForm = {
 };
 
 const AdminDashboard = () => {
-  const [activeSection, setActiveSection] = useState("providers");
+const [activeSection, setActiveSection] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sectionLoading, setSectionLoading] = useState(false);
@@ -197,27 +197,54 @@ const AdminDashboard = () => {
   const kpis = useMemo(
     () => [
       {
-        id: "providers",
+        id: "providers-active",
         label: "Prestataires actifs",
         value: providers.filter((item) => item.status === "active").length,
       },
       {
-        id: "appointments",
-        label: "Rendez-vous en attente",
+        id: "providers-total",
+        label: "Total prestataires",
+        value: providers.length,
+      },
+      {
+        id: "appointments-pending",
+        label: "Rdv en attente",
         value: appointments.filter((item) => item.status === "pending").length,
       },
       {
-        id: "contracts",
-        label: "Contrats a signer",
+        id: "appointments-total",
+        label: "Total rdv",
+        value: appointments.length,
+      },
+      {
+        id: "contracts-pending",
+        label: "Contrats à signer",
         value: contracts.filter((item) => item.status === "pending-signature").length,
       },
       {
-        id: "invoices",
-        label: "Factures impayees",
+        id: "invoices-unpaid",
+        label: "Factures impayées",
         value: invoices.filter((item) => item.status === "unpaid").length,
       },
+      {
+        id: "revenue",
+        label: "Chiffre d'affaires",
+        value: invoices
+          .filter((item) => item.status === "paid")
+          .reduce((sum, item) => sum + item.amount, 0),
+      },
+      {
+        id: "reviews-total",
+        label: "Total avis",
+        value: reviews.length,
+      },
+      {
+        id: "packs-active",
+        label: "Packs actifs",
+        value: packs.filter((item) => item.status === "active").length,
+      },
     ],
-    [appointments, contracts, invoices, providers]
+    [appointments, contracts, invoices, providers, reviews, packs]
   );
 
   const openCreateProviderModal = () => {
@@ -558,6 +585,28 @@ const AdminDashboard = () => {
       return <div className="admin-status-card">Chargement de la section...</div>;
     }
 
+    if (activeSection === "dashboard") {
+      return (
+        <section className="provider-panel">
+          <div className="provider-panel-head">
+            <h3>Tableau de bord administrateur</h3>
+            <p>Indicateurs clés en temps réel de votre plateforme.</p>
+          </div>
+          <section className="admin-kpi-grid admin-kpi-grid-dashboard">
+            {kpis.map((item) => (
+              <article key={item.id} className="provider-stat-card cream">
+                <div className="provider-stat-topline">
+                  <span>{item.label}</span>
+                  <div className="provider-stat-icon">ADM</div>
+                </div>
+                <strong>{item.value}</strong>
+              </article>
+            ))}
+          </section>
+        </section>
+      );
+    }
+
     if (activeSection === "providers") {
       return (
         <section className="provider-panel">
@@ -862,18 +911,6 @@ const AdminDashboard = () => {
         onDismissNotification={dismissNotification}
       >
         <div className="provider-stack provider-stack-simple">
-          <section className="admin-kpi-grid">
-            {kpis.map((item) => (
-              <article key={item.id} className="provider-stat-card cream">
-                <div className="provider-stat-topline">
-                  <span>{item.label}</span>
-                  <div className="provider-stat-icon">ADM</div>
-                </div>
-                <strong>{item.value}</strong>
-              </article>
-            ))}
-          </section>
-
           {renderSection()}
         </div>
       </AdminLayout>
