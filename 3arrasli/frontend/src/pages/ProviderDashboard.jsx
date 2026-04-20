@@ -325,16 +325,66 @@ const ProviderDashboard = () => {
     const validated = reservations.filter((item) => item.status === "Validee").length;
     const unread = chats.reduce((total, chat) => total + Number(chat.unread || 0), 0);
     const activeServices = services.filter((service) => service.status !== "Inactif").length;
-    const occupiedDates = calendarDays.filter((day) => day.status === "occupied" || day.status === "partial").length;
-    const upcoming = reservations.filter((item) => item.status !== "Refusee").length;
+    const freeDates = calendarDays.filter((day) => day.status === "free").length;
+    const totalRevenue = reservations
+      .filter((item) => item.status !== "Refusee")
+      .reduce((total, item) => total + Number(item.amount || 0), 0);
+    const totalDemand = Math.max(pending + validated, 1);
+    const totalCalendarDays = Math.max(calendarDays.length, 1);
+    const availabilityProgress = Math.round((freeDates / totalCalendarDays) * 100);
+    const revenueProgress = Math.min(Math.round(totalRevenue / 80), 100);
 
     return [
-      { id: "pending", label: "En attente", value: pending, detail: "demandes a traiter", tone: "rose" },
-      { id: "validated", label: "Validees", value: validated, detail: "reservations confirmees", tone: "gold" },
-      { id: "unread", label: "Messages", value: unread, detail: "non lus", tone: "burgundy" },
-      { id: "services", label: "Services actifs", value: activeServices, detail: "prestations visibles", tone: "cream" },
-      { id: "dates", label: "Dates occupees", value: occupiedDates, detail: "jours a surveiller", tone: "champagne" },
-      { id: "events", label: "Evenements", value: upcoming, detail: "a venir", tone: "soft" },
+      {
+        id: "revenue",
+        label: "CA estime",
+        value: `${new Intl.NumberFormat("fr-FR").format(totalRevenue)} TND`,
+        detail: "potentiel des evenements actifs",
+        tone: "burgundy",
+        icon: "💎",
+        trend: "Signature premium",
+        progress: revenueProgress,
+      },
+      {
+        id: "requests",
+        label: "Demandes",
+        value: pending,
+        detail: "couples a confirmer",
+        tone: "rose",
+        icon: "💌",
+        trend: pending > 0 ? "A traiter aujourd'hui" : "Aucune urgence",
+        progress: Math.round((pending / totalDemand) * 100),
+      },
+      {
+        id: "availability",
+        label: "Disponibilite",
+        value: `${availabilityProgress}%`,
+        detail: "dates encore ouvertes",
+        tone: "gold",
+        icon: "🗓️",
+        trend: `${freeDates} jour(s) libres`,
+        progress: availabilityProgress,
+      },
+      {
+        id: "unread",
+        label: "Messages",
+        value: unread,
+        detail: "reponses client en attente",
+        tone: "champagne",
+        icon: "💬",
+        trend: unread > 0 ? "Reponse conseillee" : "Inbox maitrisee",
+        progress: unread > 0 ? Math.min(unread * 22, 100) : 100,
+      },
+      {
+        id: "services",
+        label: "Vitrine",
+        value: activeServices,
+        detail: "prestations visibles",
+        tone: "soft",
+        icon: "✨",
+        trend: "Catalogue public",
+        progress: Math.min(activeServices * 24, 100),
+      },
     ];
   }, [calendarDays, chats, reservations, services]);
 

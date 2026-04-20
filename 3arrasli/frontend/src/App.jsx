@@ -1,6 +1,7 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Home from "./Home";
+import SplashScreen from "./components/SplashScreen";
 import AdminDashboard from "./pages/AdminDashboard";
 import ChatPage from "./pages/ChatPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -21,9 +22,45 @@ const RequireRole = ({ role, children }) => {
   return children;
 };
 
+const SPLASH_VISIBLE_MS = 1900;
+const SPLASH_EXIT_MS = 540;
+
 const App = () => {
+  const [splash, setSplash] = useState({ visible: true, exiting: false });
+  const splashTimers = useRef([]);
+
+  const clearSplashTimers = useCallback(() => {
+    splashTimers.current.forEach((timerId) => window.clearTimeout(timerId));
+    splashTimers.current = [];
+  }, []);
+
+  const showSplash = useCallback(() => {
+    clearSplashTimers();
+    setSplash({ visible: true, exiting: false });
+
+    splashTimers.current = [
+      window.setTimeout(() => {
+        setSplash((current) => ({ ...current, exiting: true }));
+      }, SPLASH_VISIBLE_MS),
+      window.setTimeout(() => {
+        setSplash({ visible: false, exiting: false });
+      }, SPLASH_VISIBLE_MS + SPLASH_EXIT_MS),
+    ];
+  }, [clearSplashTimers]);
+
+  useEffect(() => {
+    showSplash();
+    return clearSplashTimers;
+  }, [clearSplashTimers, showSplash]);
+
+  useEffect(() => {
+    window.addEventListener("arrasli:show-splash", showSplash);
+    return () => window.removeEventListener("arrasli:show-splash", showSplash);
+  }, [showSplash]);
+
   return (
     <BrowserRouter>
+      {splash.visible ? <SplashScreen isExiting={splash.exiting} /> : null}
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<LoginPage />} />

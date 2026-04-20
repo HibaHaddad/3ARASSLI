@@ -2,8 +2,6 @@ import React from "react";
 import "./SplashScreen.css";
 import logo from "../logo (2).png";
 
-const particles = Array.from({ length: 6 }, (_, index) => index);
-
 const SplashScreen = ({ isExiting = false }) => {
   return (
     <div
@@ -12,19 +10,8 @@ const SplashScreen = ({ isExiting = false }) => {
       role="status"
     >
       <div className="splash-screen__backdrop" />
-      <div className="splash-screen__blush splash-screen__blush--left" />
-      <div className="splash-screen__blush splash-screen__blush--right" />
-
-      {particles.map((particle) => (
-        <span
-          key={particle}
-          className={`splash-screen__particle splash-screen__particle--${particle + 1}`}
-        />
-      ))}
 
       <div className="splash-screen__content">
-        <div className="splash-screen__halo" />
-        <div className="splash-screen__halo splash-screen__halo--secondary" />
         <div className="splash-screen__logo-frame">
           <svg
             className="splash-screen__heart"

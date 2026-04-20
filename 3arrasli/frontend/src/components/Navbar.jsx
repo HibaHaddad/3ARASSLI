@@ -55,10 +55,20 @@ const Navbar = ({ onLogoClick }) => {
     ...(user ? [] : [{ to: "/login", label: "Login" }, { to: "/signup", label: "Sign Up" }]),
   ];
 
+  const handleLogoClick = (event) => {
+    if (onLogoClick) {
+      onLogoClick(event);
+    }
+
+    if (!event.defaultPrevented) {
+      window.dispatchEvent(new Event("arrasli:show-splash"));
+    }
+  };
+
   return (
     <header className="auth-navbar">
       <div className="auth-container auth-navbar-content">
-        <Link className="auth-logo" to="/" onClick={onLogoClick}>
+        <Link className="auth-logo" to="/" onClick={handleLogoClick}>
           <span className="auth-logo-mark">
             <img src={logo} alt="logo" className="auth-logo-image" />
           </span>
