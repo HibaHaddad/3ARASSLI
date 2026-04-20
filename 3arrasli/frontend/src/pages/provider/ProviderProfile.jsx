@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 
 const UploadZone = ({
   fieldName,
@@ -74,11 +74,23 @@ const ProviderProfile = ({
   onProfileImageChange,
   onSaveProfile,
 }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const hasSocial = profileForm.instagram || profileForm.website || profileForm.phone || profileForm.email;
+
   return (
-    <article className="provider-panel">
-      <div className="provider-panel-head">
-        <h3>Mon profil</h3>
-        <p>Affinez votre image de marque avec une presentation elegante et rassurante.</p>
+    <article className="provider-panel provider-profile-premium-panel">
+      <div className="provider-panel-head provider-panel-head-inline">
+        <div>
+          <h3>Mon profil</h3>
+          <p>Affinez votre image de marque avec une presentation elegante et rassurante.</p>
+        </div>
+        <button
+          type="button"
+          className={isEditing ? "provider-ghost-btn" : "provider-primary-btn"}
+          onClick={() => setIsEditing((current) => !current)}
+        >
+          {isEditing ? "Voir la fiche" : "Modifier le profil"}
+        </button>
       </div>
 
       {profileMessage?.text ? (
@@ -91,32 +103,86 @@ const ProviderProfile = ({
         </div>
       ) : null}
 
-      <div className="provider-profile-cover">
-        {coverPhotoPreview ? (
-          <img src={coverPhotoPreview} alt="Couverture prestataire" />
-        ) : (
-          <div className="provider-profile-cover-empty">
-            <strong>Ajoutez votre photo de couverture</strong>
-            <span>Un visuel immersif aide les couples a se projeter dans votre univers.</span>
+      {!isEditing ? (
+        <section className="provider-profile-showcase">
+          <div className="provider-profile-showcase-cover">
+            {coverPhotoPreview ? (
+              <img src={coverPhotoPreview} alt="Couverture prestataire" />
+            ) : (
+              <div className="provider-profile-cover-empty">
+                <strong>Ajoutez votre photo de couverture</strong>
+                <span>Un visuel immersif aide les couples a se projeter dans votre univers.</span>
+              </div>
+            )}
+            <div className="provider-profile-overlay" />
           </div>
-        )}
-        <div className="provider-profile-overlay" />
-        <div className="provider-profile-badge">
-          {profilePhotoPreview ? (
-            <img src={profilePhotoPreview} alt="Profil prestataire" />
-          ) : (
-            <div className="provider-profile-avatar-empty">
-              {(profileForm.name || "P").trim().charAt(0).toUpperCase()}
-            </div>
-          )}
-          <div>
-            <strong>{profileForm.name || "Votre nom prestataire"}</strong>
-            <span>{profileForm.category || "Categorie a definir"}</span>
-          </div>
-        </div>
-      </div>
 
-      <form className="provider-form" onSubmit={onSaveProfile}>
+          <div className="provider-profile-showcase-body">
+            <div className="provider-profile-showcase-avatar">
+              {profilePhotoPreview ? (
+                <img src={profilePhotoPreview} alt="Profil prestataire" />
+              ) : (
+                <div className="provider-profile-avatar-empty">
+                  {(profileForm.name || "P").trim().charAt(0).toUpperCase()}
+                </div>
+              )}
+            </div>
+
+            <div className="provider-profile-showcase-copy">
+              <span className="provider-section-label">Fiche prestataire</span>
+              <h3>{profileForm.name || "Votre nom prestataire"}</h3>
+              <div className="provider-profile-showcase-tags">
+                <span>{profileForm.category || "Categorie a definir"}</span>
+                <span>{profileForm.city || "Ville a renseigner"}</span>
+              </div>
+              <p>
+                {profileForm.description ||
+                  "Ajoutez une description elegante pour raconter votre univers, vos prestations et votre signature mariage."}
+              </p>
+
+              {hasSocial ? (
+                <div className="provider-profile-contact-grid">
+                  {profileForm.phone ? <span>Tel: {profileForm.phone}</span> : null}
+                  {profileForm.email ? <span>Email: {profileForm.email}</span> : null}
+                  {profileForm.instagram ? <span>Instagram: {profileForm.instagram}</span> : null}
+                  {profileForm.website ? <span>Site: {profileForm.website}</span> : null}
+                </div>
+              ) : null}
+
+              <button type="button" className="provider-primary-btn" onClick={() => setIsEditing(true)}>
+                Modifier le profil
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section className="provider-profile-edit-shell">
+          <div className="provider-profile-cover">
+            {coverPhotoPreview ? (
+              <img src={coverPhotoPreview} alt="Couverture prestataire" />
+            ) : (
+              <div className="provider-profile-cover-empty">
+                <strong>Ajoutez votre photo de couverture</strong>
+                <span>Un visuel immersif aide les couples a se projeter dans votre univers.</span>
+              </div>
+            )}
+            <div className="provider-profile-overlay" />
+            <div className="provider-profile-badge">
+              {profilePhotoPreview ? (
+                <img src={profilePhotoPreview} alt="Profil prestataire" />
+              ) : (
+                <div className="provider-profile-avatar-empty">
+                  {(profileForm.name || "P").trim().charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div>
+                <strong>{profileForm.name || "Votre nom prestataire"}</strong>
+                <span>{profileForm.category || "Categorie a definir"}</span>
+              </div>
+            </div>
+          </div>
+
+      <form className="provider-form provider-profile-edit-form" onSubmit={onSaveProfile}>
         <div className="provider-form-grid">
           <label>
             Nom
@@ -188,9 +254,14 @@ const ProviderProfile = ({
           <button type="submit" className="provider-primary-btn" disabled={profileSubmitting || profileLoading}>
             {profileSubmitting ? "Enregistrement..." : profileLoading ? "Chargement..." : "Enregistrer"}
           </button>
+          <button type="button" className="provider-ghost-btn" onClick={() => setIsEditing(false)}>
+            Annuler
+          </button>
           {profileLoading ? <span className="provider-form-note">Chargement de votre profil...</span> : null}
         </div>
       </form>
+        </section>
+      )}
     </article>
   );
 };

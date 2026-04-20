@@ -2,6 +2,7 @@ import React, { useMemo } from "react";
 import WeeklyTimeCell from "./WeeklyTimeCell";
 
 const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
+  const today = new Date().toISOString().slice(0, 10);
   const timeLabels = useMemo(() => {
     const sourceDay = days.find((day) => day.slots?.length > 0);
     return sourceDay ? sourceDay.slots.map((slot) => slot.time) : [];
@@ -18,11 +19,16 @@ const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
 
   return (
     <div className="provider-week-grid-shell">
-      <div className="provider-week-grid provider-week-grid-header">
+      <div className="provider-week-grid provider-week-grid-header" role="row">
         <div className="provider-week-hour-head">Heure</div>
         {days.map((day) => (
-          <div key={day.date} className="provider-week-day-head">
-            <strong>{day.weekDay}</strong>
+          <div
+            key={day.date}
+            className={`provider-week-day-head ${day.date === today ? "today" : ""} ${
+              day.slots?.some((slot) => slot.status === "reserved") ? "has-reservation" : ""
+            }`}
+          >
+            <strong>{day.date === today ? "✨ " : ""}{day.weekDay}</strong>
             <span>
               {day.day} {day.month}
             </span>
@@ -42,12 +48,12 @@ const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
               <div key={`${day.date}-${timeLabel}`} className="provider-week-cell-wrap">
                 {slot ? (
                   <WeeklyTimeCell
-                    slot={slot}
+                    slot={{ ...slot, weekDay: day.weekDay }}
                     isUpdating={updatingSlotKeys.includes(slotKey)}
                     onToggle={onToggleSlot}
                   />
                 ) : (
-                  <div className="provider-week-cell empty">--</div>
+                  <div className="provider-week-cell empty" />
                 )}
               </div>
             );

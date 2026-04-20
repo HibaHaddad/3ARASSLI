@@ -10,16 +10,21 @@ const ProviderDashboardHome = ({
   upcomingReservations,
   calendarDates,
   recentChats,
+  dashboardStats = [],
   onCalendarToggle,
   onGoToSection,
+  onOpenReservation,
+  onOpenChat,
 }) => {
+  const nextHighlight = upcomingReservations[0];
+
   return (
     <div className="provider-stack provider-stack-simple">
-      <section className="provider-hero-card provider-hero-card-simple">
+      <section className="provider-hero-card provider-hero-card-simple provider-dashboard-hero-premium">
         <div className="provider-hero-copy">
           <span className="provider-section-label">Dashboard</span>
-          <h3>Bonjour {providerName} </h3>
-          <p>Voici ce que vous devez faire aujourd'hui.</p>
+          <h3>Bonjour {providerName || "Prestataire"} </h3>
+          <p>Votre atelier du jour, pense pour piloter chaque detail avec calme et elegance.</p>
           <p className="provider-hero-summary">{heroSummary}</p>
 
           <div className="provider-inline-actions">
@@ -35,9 +40,19 @@ const ProviderDashboardHome = ({
               className="provider-ghost-btn"
               onClick={() => onGoToSection("calendar")}
             >
-              Mes disponibilites
+            Mes disponibilites
             </button>
           </div>
+
+          {nextHighlight ? (
+            <div className="provider-dashboard-next-focus">
+              <span>Prochaine scene</span>
+              <strong>{nextHighlight.service}</strong>
+              <small>
+                {nextHighlight.client} - {new Date(nextHighlight.date).toLocaleDateString("fr-FR")}
+              </small>
+            </div>
+          ) : null}
         </div>
 
         <div className="provider-hero-visual provider-hero-visual-image">
@@ -49,6 +64,16 @@ const ProviderDashboardHome = ({
             />
           </div>
         </div>
+      </section>
+
+      <section className="provider-dashboard-stats-grid">
+        {dashboardStats.map((stat) => (
+          <article key={stat.id} className={`provider-dashboard-stat ${stat.tone}`}>
+            <span>{stat.label}</span>
+            <strong>{stat.value}</strong>
+            <p>{stat.detail}</p>
+          </article>
+        ))}
       </section>
 
       <section className="provider-actions-grid">
@@ -80,7 +105,7 @@ const ProviderDashboardHome = ({
             <BookingItem
               key={booking.id}
               booking={booking}
-              onClick={() => onGoToSection("reservations")}
+              onClick={() => onOpenReservation(booking.id)}
             />
           ))}
         </div>
@@ -100,7 +125,7 @@ const ProviderDashboardHome = ({
 
           <div className="provider-message-list">
             {recentChats.map((chat) => (
-              <MessageItem key={chat.id} chat={chat} onClick={() => onGoToSection("chat")} />
+              <MessageItem key={chat.id} chat={chat} onClick={() => onOpenChat(chat.id)} />
             ))}
           </div>
         </article>
@@ -122,7 +147,7 @@ const ProviderDashboardHome = ({
                 key={item.id}
                 type="button"
                 className={`provider-date-pill ${item.status}`}
-                onClick={onCalendarToggle}
+                onClick={() => onCalendarToggle(item)}
               >
                 <span>
                   {item.weekDay} {item.day} {item.month}

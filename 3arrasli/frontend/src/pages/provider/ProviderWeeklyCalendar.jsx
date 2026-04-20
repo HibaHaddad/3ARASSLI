@@ -12,7 +12,12 @@ const ProviderWeeklyCalendar = ({
   onPreviousWeek,
   onNextWeek,
   onToggleSlot,
+  onOpenChat,
 }) => {
+  const featuredReservation = calendarDays
+    .flatMap((day) => (day.slots || []).map((slot) => ({ ...slot, day })))
+    .find((slot) => slot.status === "reserved");
+
   return (
     <article className="provider-panel provider-weekly-calendar">
       <WeeklyCalendarHeader
@@ -33,11 +38,33 @@ const ProviderWeeklyCalendar = ({
 
       <CalendarLegend
         items={[
-          { label: "Libre", tone: "free" },
+          { label: "Disponible", tone: "free" },
           { label: "Bloque manuellement", tone: "occupied" },
           { label: "Reserve", tone: "reserved" },
         ]}
       />
+
+      {!loadingCalendar && featuredReservation ? (
+        <section className="provider-calendar-focus-card">
+          <div>
+            <span className="provider-section-label">Reservation prioritaire</span>
+            <h3>{featuredReservation.clientName || "Client"}</h3>
+            <p>{featuredReservation.serviceTitle || "Reservation"} - {featuredReservation.day.weekDay} {featuredReservation.day.day} {featuredReservation.day.month} a {featuredReservation.time}</p>
+          </div>
+          <div className="provider-calendar-focus-actions">
+            <strong>{featuredReservation.status === "reserved" ? "A preparer" : "Planning"}</strong>
+            {featuredReservation.clientId ? (
+              <button
+                type="button"
+                className="provider-primary-btn"
+                onClick={() => onOpenChat(featuredReservation.clientId)}
+              >
+                Contacter client
+              </button>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
 
       {loadingCalendar ? (
         <div className="provider-empty-state">

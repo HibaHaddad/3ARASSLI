@@ -1,4 +1,5 @@
 import React from "react";
+import WeeklyCalendarEventBlock from "./WeeklyCalendarEventBlock";
 
 const WeeklyTimeCell = ({ slot, isUpdating, onToggle }) => {
   const disabled = slot.status === "reserved" || isUpdating;
@@ -9,17 +10,12 @@ const WeeklyTimeCell = ({ slot, isUpdating, onToggle }) => {
       className={`provider-week-cell ${slot.status}`}
       disabled={disabled}
       onClick={() => onToggle(slot)}
+      aria-label={`${slot.weekDay || ""} ${slot.date} ${slot.time}`}
     >
-      <span className="provider-week-cell-time">{slot.time}</span>
       {slot.status === "free" ? (
-        <small>Libre</small>
-      ) : slot.status === "occupied" ? (
-        <small>{isUpdating ? "Mise a jour..." : "Bloque manuellement"}</small>
+        <span className="provider-week-cell-hover-hint">{isUpdating ? "..." : "+"}</span>
       ) : (
-        <>
-          <strong>{slot.clientName || "Client"}</strong>
-          <small>{slot.serviceTitle || "Reservation"}</small>
-        </>
+        <WeeklyCalendarEventBlock slot={slot} isUpdating={isUpdating} />
       )}
     </button>
   );

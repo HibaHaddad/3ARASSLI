@@ -9,6 +9,7 @@ const ProviderLayout = ({
   isSidebarOpen,
   onToggleSidebar,
   currentSection,
+  sidebarAddon,
   children,
 }) => {
   return (
@@ -43,6 +44,7 @@ const ProviderLayout = ({
             activeSection={activeSection}
             onSectionChange={onSectionChange}
             isOpen={isSidebarOpen}
+            sidebarAddon={sidebarAddon}
           />
 
           <section className="provider-content">

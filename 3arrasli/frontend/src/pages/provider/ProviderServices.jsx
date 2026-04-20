@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { resolveAssetUrl } from "../../services/assets";
 
 const ProviderServices = ({
@@ -18,25 +18,67 @@ const ProviderServices = ({
   onEditService,
   onDeleteService,
 }) => {
+  const [showServiceForm, setShowServiceForm] = useState(false);
+
+  useEffect(() => {
+    if (editingServiceId) {
+      setShowServiceForm(true);
+    }
+  }, [editingServiceId]);
+
+  useEffect(() => {
+    if (serviceFeedback?.type === "success" && !editingServiceId) {
+      setShowServiceForm(false);
+    }
+  }, [editingServiceId, serviceFeedback?.type, serviceFeedback?.text]);
+
   const renderFieldError = (fieldName) =>
     serviceFormErrors?.[fieldName] ? (
       <span className="provider-field-error">{serviceFormErrors[fieldName]}</span>
     ) : null;
 
   return (
-    <div className="provider-stack">
-      <article className="provider-panel">
+    <div className="provider-stack provider-services-premium">
+      <article className="provider-panel provider-services-command">
         <div className="provider-panel-head provider-panel-head-inline">
           <div>
-            <h3>{editingServiceId ? "Modifier un service" : "Ajouter un service"}</h3>
-            <p>Prix, description, image reelle et categorie pour chaque prestation.</p>
+            <span className="provider-section-label">Catalogue</span>
+            <h3>Vos prestations signature</h3>
+            <p>Commencez par parcourir vos services, puis ajoutez ou modifiez une offre au bon moment.</p>
           </div>
-          <button type="button" className="provider-primary-btn" onClick={onResetEditing}>
-            + Ajouter
+          <button
+            type="button"
+            className="provider-primary-btn provider-add-service-btn"
+            onClick={() => {
+              onResetEditing();
+              setShowServiceForm(true);
+            }}
+          >
+            Ajouter un service
           </button>
         </div>
+      </article>
 
-        <form className="provider-form" onSubmit={onSubmitService}>
+      {showServiceForm ? (
+        <article className="provider-panel provider-service-form-panel">
+          <div className="provider-panel-head provider-panel-head-inline">
+            <div>
+              <h3>{editingServiceId ? "Modifier un service" : "Nouvelle prestation"}</h3>
+              <p>Prix, description, image reelle et categorie pour chaque prestation.</p>
+            </div>
+            <button
+              type="button"
+              className="provider-ghost-btn"
+              onClick={() => {
+                onResetEditing();
+                setShowServiceForm(false);
+              }}
+            >
+              Fermer
+            </button>
+          </div>
+
+        <form className="provider-form provider-service-edit-form" onSubmit={onSubmitService}>
           {serviceFeedback?.text ? (
             <div
               className={`provider-alert ${
@@ -139,13 +181,21 @@ const ProviderServices = ({
                   : "Ajouter"}
             </button>
             {editingServiceId ? (
-              <button type="button" className="provider-ghost-btn" onClick={onResetEditing}>
+              <button
+                type="button"
+                className="provider-ghost-btn"
+                onClick={() => {
+                  onResetEditing();
+                  setShowServiceForm(false);
+                }}
+              >
                 Annuler
               </button>
             ) : null}
           </div>
         </form>
-      </article>
+        </article>
+      ) : null}
 
       <section className="provider-services-grid">
         {servicesLoading ? (

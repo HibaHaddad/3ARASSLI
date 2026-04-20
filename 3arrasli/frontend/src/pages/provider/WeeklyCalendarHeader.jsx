@@ -2,19 +2,26 @@ import React from "react";
 
 const WeeklyCalendarHeader = ({ weekMeta, onPreviousWeek, onNextWeek }) => {
   return (
-    <div className="provider-panel-head provider-panel-head-inline">
-      <div>
-        <h3>Calendrier hebdomadaire</h3>
-        <p>Bloquez ou liberez vos creneaux directement depuis la semaine complete.</p>
+    <div className="provider-week-header">
+      <div className="provider-week-header-copy">
+        <span className="provider-week-kicker">✨ Planning signature</span>
       </div>
 
-      <div className="provider-inline-actions">
-        <button type="button" className="provider-ghost-btn" onClick={onPreviousWeek}>
-          Semaine precedente
+      <div className="provider-week-header-actions">
+        <button type="button" className="provider-week-nav" onClick={onPreviousWeek}>
+          <span aria-hidden="true">‹</span>
+          <span>Precedente</span>
         </button>
-        <span className="provider-calendar-month">{weekMeta.weekLabel}</span>
-        <button type="button" className="provider-primary-btn" onClick={onNextWeek}>
-          Semaine suivante
+        <div className="provider-week-range-pill">
+          <span aria-hidden="true" className="provider-week-range-icon">💍</span>
+          <strong>{weekMeta.weekLabel}</strong>
+          <small>
+            {weekMeta.startDate} au {weekMeta.endDate}
+          </small>
+        </div>
+        <button type="button" className="provider-week-nav primary" onClick={onNextWeek}>
+          <span>Suivante</span>
+          <span aria-hidden="true">›</span>
         </button>
       </div>
     </div>

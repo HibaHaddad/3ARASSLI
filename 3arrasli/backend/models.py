@@ -60,9 +60,18 @@ class Reservation(db.Model):
     client_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=False)
     date = db.Column(db.String(40), nullable=False)
+    location = db.Column(db.String(160), nullable=True)
+    amount = db.Column(db.Float, nullable=True)
     notes = db.Column(db.Text, nullable=True)
+    details = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(40), nullable=False, default="pending")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
 
 
 class Favorite(db.Model):
@@ -86,6 +95,7 @@ class Message(db.Model):
     receiver_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     content = db.Column(db.Text, nullable=False)
     timestamp = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    is_read = db.Column(db.Boolean, nullable=False, default=False)
 
 
 class PlannerItem(db.Model):

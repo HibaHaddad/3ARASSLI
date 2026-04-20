@@ -185,6 +185,53 @@ def serialize_reservation(reservation):
     }
 
 
+def normalize_booking_status(status):
+    normalized = str(status or "").strip().lower()
+
+    if normalized in {"validee", "paid", "confirmed", "accepted", "acceptee"}:
+        return "Validee"
+    if normalized in {"refusee", "refused", "cancelled", "canceled", "rejected"}:
+        return "Refusee"
+    return "En attente"
+
+
+def split_booking_datetime(value):
+    parsed = parse_reservation_datetime(value)
+    if not parsed:
+        return str(value or ""), "--"
+
+    time_label = parsed.strftime("%H:%M") if parsed.time() != time.min else "--"
+    return parsed.date().isoformat(), time_label
+
+
+def get_service_provider_id(service):
+    return service.provider_id or service.prestataire_id if service else None
+
+
+def serialize_provider_booking(reservation):
+    service = Service.query.get(reservation.service_id)
+    client = User.query.get(reservation.client_id)
+    booking_date, booking_time = split_booking_datetime(reservation.date)
+    details = getattr(reservation, "details", None) or reservation.notes or ""
+    amount = getattr(reservation, "amount", None)
+
+    return {
+        "id": reservation.id,
+        "clientId": reservation.client_id,
+        "client": client.username if client else "Client",
+        "serviceId": reservation.service_id,
+        "service": service.title if service else "Service",
+        "date": booking_date,
+        "time": booking_time,
+        "location": getattr(reservation, "location", None) or (service.city if service else "") or "--",
+        "amount": amount if amount is not None else (service.price if service else 0),
+        "status": normalize_booking_status(reservation.status),
+        "details": details,
+        "createdAt": reservation.created_at.isoformat() if reservation.created_at else None,
+        "updatedAt": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
+    }
+
+
 def serialize_message(message):
     sender = User.query.get(message.sender_id)
     receiver = User.query.get(message.receiver_id)
@@ -195,6 +242,38 @@ def serialize_message(message):
         "receiver_id": message.receiver_id,
         "receiver_name": receiver.username if receiver else "",
         "content": message.content,
+        "timestamp": message.timestamp.isoformat() if message.timestamp else None,
+        "is_read": bool(getattr(message, "is_read", False)),
+    }
+
+
+def format_chat_time(value):
+    if not value:
+        return "--"
+
+    today = datetime.utcnow().date()
+    message_date = value.date()
+    if message_date == today:
+        return value.strftime("%H:%M")
+    if message_date == today - timedelta(days=1):
+        return "Hier"
+    return value.strftime("%d/%m/%Y")
+
+
+def build_avatar(name):
+    parts = [part for part in str(name or "Client").strip().split() if part]
+    if not parts:
+        return "C"
+    initials = "".join(part[0].upper() for part in parts[:2])
+    return initials or "C"
+
+
+def serialize_provider_chat_message(message, provider_id):
+    return {
+        "id": message.id,
+        "author": "provider" if message.sender_id == provider_id else "client",
+        "text": message.content,
+        "time": format_chat_time(message.timestamp),
         "timestamp": message.timestamp.isoformat() if message.timestamp else None,
     }
 
@@ -467,6 +546,67 @@ def ensure_service_schema():
     db.session.commit()
 
 
+def ensure_reservation_schema():
+    inspector = inspect(db.engine)
+    if "reservations" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("reservations")}
+    statements = []
+
+    if "location" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN location VARCHAR(160) NULL")
+    if "amount" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN amount FLOAT NULL")
+    if "details" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN details TEXT NULL")
+    if "updated_at" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN updated_at DATETIME NULL")
+
+    for statement in statements:
+        db.session.execute(text(statement))
+
+    if statements:
+        db.session.commit()
+
+    columns = {column["name"] for column in inspect(db.engine).get_columns("reservations")}
+    if "details" in columns and "notes" in columns:
+        db.session.execute(
+            text(
+                "UPDATE reservations "
+                "SET details = notes "
+                "WHERE (details IS NULL OR details = '') AND notes IS NOT NULL"
+            )
+        )
+    if "updated_at" in columns:
+        db.session.execute(
+            text(
+                "UPDATE reservations "
+                "SET updated_at = COALESCE(updated_at, created_at, NOW()) "
+                "WHERE updated_at IS NULL"
+            )
+        )
+    db.session.commit()
+
+
+def ensure_message_schema():
+    inspector = inspect(db.engine)
+    if "messages" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("messages")}
+    statements = []
+
+    if "is_read" not in columns:
+        statements.append("ALTER TABLE messages ADD COLUMN is_read BOOLEAN NOT NULL DEFAULT 0")
+
+    for statement in statements:
+        db.session.execute(text(statement))
+
+    if statements:
+        db.session.commit()
+
+
 def create_app():
     app = Flask(__name__)
     database_uri = build_database_uri()
@@ -493,6 +633,8 @@ def create_app():
         db.create_all()
         ensure_user_schema()
         ensure_service_schema()
+        ensure_reservation_schema()
+        ensure_message_schema()
         seed_data()
 
     @app.errorhandler(RequestEntityTooLarge)
@@ -740,6 +882,7 @@ def create_app():
                     "id": slot.id,
                     "time": slot.start_time,
                     "status": slot.status,
+                    "clientId": reservation.client_id if reservation else None,
                     "client": client.username if client else None,
                     "clientName": client.username if client else None,
                     "service": service.title if service else None,
@@ -820,6 +963,126 @@ def create_app():
             )
         return service, None
 
+    def get_provider_service_ids(provider_id):
+        services = Service.query.filter(
+            db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
+        ).all()
+        return [service.id for service in services]
+
+    def get_provider_client_contexts(provider_id):
+        service_ids = get_provider_service_ids(provider_id)
+        if not service_ids:
+            return {}
+
+        reservations = (
+            Reservation.query.filter(Reservation.service_id.in_(service_ids))
+            .order_by(Reservation.created_at.desc(), Reservation.id.desc())
+            .all()
+        )
+        contexts = {}
+        for reservation in reservations:
+            service = Service.query.get(reservation.service_id)
+            if not service or get_service_provider_id(service) != provider_id:
+                continue
+
+            current = contexts.get(reservation.client_id)
+            if not current:
+                contexts[reservation.client_id] = {
+                    "client_id": reservation.client_id,
+                    "subject": service.title if service else "Reservation mariage",
+                    "reservation": reservation,
+                }
+                continue
+
+            if reservation.created_at and current["reservation"].created_at:
+                if reservation.created_at > current["reservation"].created_at:
+                    current["subject"] = service.title if service else current["subject"]
+                    current["reservation"] = reservation
+
+        return contexts
+
+    def get_provider_chat_context_or_error(chat_id):
+        client = User.query.filter_by(id=chat_id, role="client").first()
+        if not client:
+            return None, None, (
+                jsonify({"success": False, "message": "Conversation introuvable."}),
+                404,
+            )
+
+        contexts = get_provider_client_contexts(request.user_id)
+        context = contexts.get(chat_id)
+        if not context:
+            return None, None, (
+                jsonify({"success": False, "message": "Conversation non autorisee."}),
+                403,
+            )
+
+        return client, context, None
+
+    def get_provider_chat_messages(provider_id, client_id):
+        return (
+            Message.query.filter(
+                db.or_(
+                    db.and_(Message.sender_id == provider_id, Message.receiver_id == client_id),
+                    db.and_(Message.sender_id == client_id, Message.receiver_id == provider_id),
+                )
+            )
+            .order_by(Message.timestamp.asc(), Message.id.asc())
+            .all()
+        )
+
+    def serialize_provider_chat(client, context, provider_id):
+        messages = get_provider_chat_messages(provider_id, client.id)
+        last_message = messages[-1] if messages else None
+        unread = sum(
+            1
+            for message in messages
+            if message.sender_id == client.id
+            and message.receiver_id == provider_id
+            and not bool(getattr(message, "is_read", False))
+        )
+
+        excerpt = last_message.content if last_message else "Aucun message pour le moment."
+        if len(excerpt) > 82:
+            excerpt = f"{excerpt[:79]}..."
+
+        fallback_time = context["reservation"].created_at if context.get("reservation") else None
+
+        return {
+            "id": client.id,
+            "client": client.username,
+            "avatar": build_avatar(client.username),
+            "excerpt": excerpt,
+            "time": format_chat_time(last_message.timestamp if last_message else fallback_time),
+            "unread": unread,
+            "subject": context.get("subject") or "Reservation mariage",
+            "messages": [serialize_provider_chat_message(message, provider_id) for message in messages],
+            "lastTimestamp": (
+                last_message.timestamp.isoformat()
+                if last_message and last_message.timestamp
+                else fallback_time.isoformat()
+                if fallback_time
+                else None
+            ),
+        }
+
+    def get_provider_booking_or_404(booking_id):
+        reservation = Reservation.query.get(booking_id)
+        if not reservation:
+            return None, (
+                jsonify({"success": False, "message": "Reservation introuvable."}),
+                404,
+            )
+
+        service = Service.query.get(reservation.service_id)
+        if not service or get_service_provider_id(service) != request.user_id:
+            return None, (
+                jsonify({"success": False, "message": "Acces non autorise."}),
+                403,
+            )
+
+        return reservation, None
+
     def get_provider_week_reservations(provider_id, start_date, end_date):
         services = Service.query.filter(
             db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
@@ -833,7 +1096,7 @@ def create_app():
         client_ids = set()
 
         for reservation in reservations:
-            if str(reservation.status or "").lower() in {"cancelled", "canceled", "refusee", "refused"}:
+            if normalize_booking_status(reservation.status) != "Validee":
                 continue
             reservation_dt = parse_reservation_datetime(reservation.date)
             if not reservation_dt:
@@ -859,6 +1122,7 @@ def create_app():
             slot_key = (reservation_dt.date().isoformat(), reservation_dt.strftime("%H:%M"))
             reservations_by_slot[slot_key] = {
                 "reservationId": reservation_id,
+                "clientId": payload["reservation"].client_id,
                 "clientName": clients_by_id.get(payload["reservation"].client_id).username
                 if clients_by_id.get(payload["reservation"].client_id)
                 else None,
@@ -1220,6 +1484,165 @@ def create_app():
         db.session.commit()
         return jsonify({"success": True, "message": "Creneau libere avec succes."})
 
+    @app.get("/api/provider/chats")
+    @auth_required(allowed_roles={"prestataire"})
+    def list_provider_chats():
+        contexts = get_provider_client_contexts(request.user_id)
+        if not contexts:
+            return jsonify({"success": True, "chats": []})
+
+        clients = User.query.filter(User.id.in_(list(contexts.keys())), User.role == "client").all()
+        chats = [
+            serialize_provider_chat(client, contexts[client.id], request.user_id)
+            for client in clients
+            if client.id in contexts
+        ]
+        chats.sort(key=lambda item: item.get("lastTimestamp") or "", reverse=True)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Conversations recuperees avec succes.",
+                "chats": chats,
+            }
+        )
+
+    @app.get("/api/provider/chats/<int:chat_id>")
+    @auth_required(allowed_roles={"prestataire"})
+    def get_provider_chat(chat_id):
+        client, context, error_response = get_provider_chat_context_or_error(chat_id)
+        if error_response:
+            return error_response
+
+        return jsonify({"success": True, "chat": serialize_provider_chat(client, context, request.user_id)})
+
+    @app.post("/api/provider/chats/<int:chat_id>/messages")
+    @auth_required(allowed_roles={"prestataire"})
+    def send_provider_chat_message(chat_id):
+        client, context, error_response = get_provider_chat_context_or_error(chat_id)
+        if error_response:
+            return error_response
+
+        payload = request.get_json(silent=True) or {}
+        content = (payload.get("content") or "").strip()
+        if not content:
+            return jsonify({"success": False, "message": "Le message ne peut pas etre vide."}), 400
+
+        message = Message(
+            sender_id=request.user_id,
+            receiver_id=client.id,
+            content=content,
+            is_read=False,
+        )
+        db.session.add(message)
+        db.session.commit()
+
+        return (
+            jsonify(
+                {
+                    "success": True,
+                    "message": "Message envoye avec succes.",
+                    "sentMessage": serialize_provider_chat_message(message, request.user_id),
+                    "chat": serialize_provider_chat(client, context, request.user_id),
+                }
+            ),
+            201,
+        )
+
+    @app.patch("/api/provider/chats/<int:chat_id>/read")
+    @auth_required(allowed_roles={"prestataire"})
+    def mark_provider_chat_read(chat_id):
+        client, context, error_response = get_provider_chat_context_or_error(chat_id)
+        if error_response:
+            return error_response
+
+        updated = (
+            Message.query.filter_by(sender_id=client.id, receiver_id=request.user_id, is_read=False)
+            .update({"is_read": True}, synchronize_session=False)
+        )
+        db.session.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Conversation marquee comme lue.",
+                "updated": updated,
+                "chat": serialize_provider_chat(client, context, request.user_id),
+            }
+        )
+
+    @app.get("/api/provider/bookings")
+    @auth_required(allowed_roles={"prestataire"})
+    def list_provider_bookings():
+        service_ids = get_provider_service_ids(request.user_id)
+        status_filter = str(request.args.get("status") or "").strip()
+
+        if not service_ids:
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Aucune reservation pour le moment.",
+                    "bookings": [],
+                }
+            )
+
+        reservations = (
+            Reservation.query.filter(Reservation.service_id.in_(service_ids))
+            .order_by(Reservation.created_at.desc(), Reservation.id.desc())
+            .all()
+        )
+        bookings = [serialize_provider_booking(item) for item in reservations]
+
+        if status_filter and status_filter != "Tous":
+            expected_status = normalize_booking_status(status_filter)
+            bookings = [booking for booking in bookings if booking["status"] == expected_status]
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Reservations recuperees avec succes.",
+                "bookings": bookings,
+            }
+        )
+
+    @app.get("/api/provider/bookings/<int:booking_id>")
+    @auth_required(allowed_roles={"prestataire"})
+    def get_provider_booking(booking_id):
+        reservation, error_response = get_provider_booking_or_404(booking_id)
+        if error_response:
+            return error_response
+
+        return jsonify({"success": True, "booking": serialize_provider_booking(reservation)})
+
+    @app.patch("/api/provider/bookings/<int:booking_id>/status")
+    @auth_required(allowed_roles={"prestataire"})
+    def update_provider_booking_status(booking_id):
+        reservation, error_response = get_provider_booking_or_404(booking_id)
+        if error_response:
+            return error_response
+
+        payload = request.get_json(silent=True) or {}
+        next_status = normalize_booking_status(payload.get("status"))
+        if next_status not in {"Validee", "Refusee"}:
+            return jsonify(
+                {
+                    "success": False,
+                    "message": "Statut invalide. Utilisez Validee ou Refusee.",
+                }
+            ), 400
+
+        reservation.status = next_status
+        reservation.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Statut de la reservation mis a jour avec succes.",
+                "booking": serialize_provider_booking(reservation),
+            }
+        )
+
     @app.get("/api/services")
     @auth_required(allowed_roles={"client"})
     def list_services():
@@ -1388,6 +1811,9 @@ def create_app():
         service_id = payload.get("service_id")
         date_value = (payload.get("date") or "").strip()
         notes = (payload.get("notes") or "").strip() or None
+        location = (payload.get("location") or "").strip() or None
+        details = (payload.get("details") or notes or "").strip() or None
+        amount = payload.get("amount")
 
         if not service_id or not date_value:
             return jsonify({"success": False, "message": "service_id et date sont requis."}), 400
@@ -1396,11 +1822,19 @@ def create_app():
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
+        try:
+            amount_value = float(amount) if amount not in (None, "") else service.price
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "message": "amount doit etre numerique."}), 400
+
         reservation = Reservation(
             client_id=request.user_id,
             service_id=service_id,
             date=date_value,
+            location=location or service.city,
+            amount=amount_value,
             notes=notes,
+            details=details,
             status="pending",
         )
         db.session.add(reservation)
@@ -1559,6 +1993,7 @@ def create_app():
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
 
         reservation.status = "paid"
+        reservation.updated_at = datetime.utcnow()
         db.session.commit()
         return jsonify({"success": True, "reservation": serialize_reservation(reservation), "message": "Paiement simule avec succes."})
 
@@ -1705,7 +2140,10 @@ def seed_data():
                     client_id=client.id,
                     service_id=studio_service.id,
                     date=f"{datetime.utcnow().date().replace(day=12).isoformat()} 10:00",
+                    location=studio_service.city or "Tunis",
+                    amount=studio_service.price,
                     notes="Reservation de demonstration pour le calendrier prestataire.",
+                    details="Reservation de demonstration pour le calendrier prestataire.",
                     status="paid",
                 )
             )
@@ -1715,7 +2153,10 @@ def seed_data():
                     client_id=client.id,
                     service_id=palais_service.id,
                     date=f"{datetime.utcnow().date().replace(day=18).isoformat()} 15:00",
+                    location=palais_service.city or "Sousse",
+                    amount=palais_service.price,
                     notes="Reservation de demonstration pour le calendrier prestataire.",
+                    details="Reservation de demonstration pour le calendrier prestataire.",
                     status="pending",
                 )
             )
