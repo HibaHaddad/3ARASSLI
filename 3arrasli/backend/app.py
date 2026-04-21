@@ -1,13 +1,17 @@
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
+from email.message import EmailMessage
 from functools import wraps
 import os
+import smtplib
+from pathlib import Path
 from uuid import uuid4
 
 import jwt
 import pymysql
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 from sqlalchemy import inspect, text
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -15,6 +19,11 @@ from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db
 from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, User
+
+
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR.parent / ".env")
 
 
 JWT_SECRET = "change-this-secret-in-production"
@@ -87,6 +96,71 @@ FRENCH_MONTHS = [
 STANDARD_WORKING_HOURS = STANDARD_SLOT_TIMES
 
 
+def get_frontend_base_url():
+    return (os.getenv("FRONTEND_BASE_URL") or "http://localhost:5173").rstrip("/")
+
+
+def send_provider_approval_email(recipient_email, provider_name):
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_sender = os.getenv("SMTP_SENDER", smtp_user or "").strip()
+    use_tls = str(os.getenv("SMTP_USE_TLS", "true")).strip().lower() != "false"
+    use_ssl = str(os.getenv("SMTP_USE_SSL", "false")).strip().lower() == "true"
+
+    if not smtp_host or not smtp_sender:
+        return False, "Configuration SMTP manquante. Definissez SMTP_HOST et SMTP_SENDER."
+
+    login_url = f"{get_frontend_base_url()}/login"
+    message = EmailMessage()
+    message["Subject"] = "Votre compte prestataire 3arrasli a ete approuve"
+    message["From"] = smtp_sender
+    message["To"] = recipient_email
+    message.set_content(
+        "\n".join(
+            [
+                f"Bonjour {provider_name},",
+                "",
+                "Votre compte prestataire 3arrasli a ete approuve par l'administrateur.",
+                f"Email de connexion : {recipient_email}",
+                "Mot de passe : utilisez le mot de passe que vous avez choisi lors de l'inscription.",
+                f"Vous pouvez maintenant vous connecter ici : {login_url}",
+                "",
+                "Merci,",
+                "L'equipe 3arrasli",
+            ]
+        )
+    )
+    message.add_alternative(
+        "\n".join(
+            [
+                "<html><body>",
+                f"<p>Bonjour {provider_name},</p>",
+                "<p>Votre compte prestataire 3arrasli a ete approuve par l'administrateur.</p>",
+                f"<p><strong>Email de connexion :</strong> {recipient_email}</p>",
+                "<p><strong>Mot de passe :</strong> utilisez le mot de passe choisi lors de l'inscription.</p>",
+                f"<p><a href=\"{login_url}\">Acceder a la page de connexion</a></p>",
+                "<p>Merci,<br/>L'equipe 3arrasli</p>",
+                "</body></html>",
+            ]
+        ),
+        subtype="html",
+    )
+
+    try:
+        smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+        with smtp_class(smtp_host, smtp_port, timeout=20) as server:
+            if not use_ssl and use_tls:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(message)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
 def build_database_uri():
     db_user = os.getenv("DB_USER", "root")
     db_password = os.getenv("DB_PASSWORD", "")
@@ -133,6 +207,7 @@ def serialize_user(user):
         "email": user.email,
         "role": user.role.capitalize(),
         "is_active": bool(getattr(user, "is_active", True)),
+        "approval_status": str(getattr(user, "approval_status", "approved") or "approved"),
         "phone": user.phone,
         "city": user.city,
         "category": user.category,
@@ -162,7 +237,11 @@ def serialize_admin_provider(user):
         "instagram": user.instagram or "",
         "website": user.website or "",
         "rating": average_rating,
-        "status": "active" if bool(getattr(user, "is_active", True)) else "inactive",
+        "status": (
+            "pending-approval"
+            if str(getattr(user, "approval_status", "approved") or "approved") == "pending"
+            else ("active" if bool(getattr(user, "is_active", True)) else "inactive")
+        ),
         "joinedAt": user.created_at.date().isoformat() if user.created_at else None,
         "updatedAt": user.updated_at.isoformat() if getattr(user, "updated_at", None) else None,
     }
@@ -457,6 +536,8 @@ def ensure_user_schema():
         statements.append("ALTER TABLE users ADD COLUMN phone VARCHAR(40) NULL")
     if "is_active" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1")
+    if "approval_status" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN approval_status VARCHAR(30) NOT NULL DEFAULT 'approved'")
     if "city" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN city VARCHAR(120) NULL")
     if "category" not in columns:
@@ -486,6 +567,16 @@ def ensure_user_schema():
             text(
                 "UPDATE users "
                 "SET is_active = COALESCE(is_active, 1)"
+            )
+        )
+    if "approval_status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE users "
+                "SET approval_status = CASE "
+                "WHEN approval_status IS NULL OR approval_status = '' THEN "
+                "CASE WHEN role = 'prestataire' AND COALESCE(is_active, 1) = 0 THEN 'pending' ELSE 'approved' END "
+                "ELSE approval_status END"
             )
         )
     if "updated_at" in columns:
@@ -707,7 +798,7 @@ def create_app():
         relative_dir = os.path.relpath(folder_path, app.root_path).replace("\\", "/")
         return f"{relative_dir}/{unique_filename}", None
 
-    def validate_provider_profile_payload(payload, profile_photo=None, cover_photo=None):
+    def validate_provider_profile_payload(payload, profile_photo=None, cover_photo=None, require_provider_assets=False):
         errors = {}
 
         name = str(payload.get("name") or "").strip()
@@ -726,6 +817,18 @@ def create_app():
             errors["email"] = "L'email est obligatoire."
         elif "@" not in email or "." not in email.split("@")[-1]:
             errors["email"] = "L'email est invalide."
+
+        if require_provider_assets:
+            if not category:
+                errors["category"] = "Le service du prestataire est obligatoire."
+            if not city:
+                errors["city"] = "La ville du prestataire est obligatoire."
+            if not website:
+                errors["website"] = "Le lien du prestataire est obligatoire."
+            if not profile_photo:
+                errors["profilePhoto"] = "La photo principale du service est obligatoire."
+            if not cover_photo:
+                errors["coverPhoto"] = "La photo supplementaire du service est obligatoire."
 
         for field_name, image_file in {
             "profilePhoto": profile_photo,
@@ -1277,12 +1380,17 @@ def create_app():
 
     @app.post("/register")
     def register():
-        payload = request.get_json(silent=True) or {}
+        is_multipart = request.content_type and "multipart/form-data" in request.content_type
+        payload = request.form if is_multipart else (request.get_json(silent=True) or {})
 
         username = (payload.get("name") or payload.get("username") or "").strip()
         email = (payload.get("email") or "").strip().lower()
         password = payload.get("password") or ""
         role = (payload.get("role") or "client").strip().lower()
+        website = (payload.get("website") or "").strip()
+        city = (payload.get("city") or "").strip()
+        profile_photo = request.files.get("profilePhoto") if is_multipart else None
+        cover_photo = request.files.get("coverPhoto") if is_multipart else None
 
         if not username or not email or not password:
             return jsonify({"success": False, "message": "Nom, email et mot de passe sont obligatoires."}), 400
@@ -1296,11 +1404,58 @@ def create_app():
         if User.query.filter_by(email=email).first():
             return jsonify({"success": False, "message": "Cet email est deja utilise."}), 409
 
+        if role == "prestataire":
+            provider_errors, provider_payload = validate_provider_profile_payload(
+                {
+                    "name": username,
+                    "email": email,
+                    "category": payload.get("category"),
+                    "city": city,
+                    "website": website,
+                },
+                profile_photo=profile_photo,
+                cover_photo=cover_photo,
+                require_provider_assets=True,
+            )
+            if provider_errors:
+                first_error = next(iter(provider_errors.values()))
+                return jsonify({"success": False, "message": first_error, "errors": provider_errors}), 400
+
+            profile_photo_path = None
+            cover_photo_path = None
+
+            if profile_photo:
+                profile_photo_path, image_error = save_provider_profile_image(
+                    profile_photo,
+                    "PROFILE_UPLOAD_FOLDER",
+                )
+                if image_error:
+                    return jsonify({"success": False, "message": image_error, "errors": {"profilePhoto": image_error}}), 400
+
+            if cover_photo:
+                cover_photo_path, image_error = save_provider_profile_image(
+                    cover_photo,
+                    "COVER_UPLOAD_FOLDER",
+                )
+                if image_error:
+                    return jsonify({"success": False, "message": image_error, "errors": {"coverPhoto": image_error}}), 400
+        else:
+            provider_payload = {"website": ""}
+            profile_photo_path = None
+            cover_photo_path = None
+
         user = User(
             username=username,
             email=email,
             password=bcrypt.generate_password_hash(password).decode("utf-8"),
             role=role,
+            is_active=False if role == "prestataire" else True,
+            approval_status="pending" if role == "prestataire" else "approved",
+            category=provider_payload.get("category") or None,
+            city=provider_payload.get("city") or None,
+            website=provider_payload.get("website") or None,
+            profile_photo=profile_photo_path,
+            cover_photo=cover_photo_path,
         )
         db.session.add(user)
         db.session.commit()
@@ -1311,6 +1466,18 @@ def create_app():
                     {
                         "success": True,
                         "message": "Compte client cree. Connectez-vous pour acceder a votre interface client.",
+                        "user": serialize_user(user),
+                    }
+                ),
+                201,
+            )
+
+        if role == "prestataire":
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Votre demande d'acces prestataire a bien ete envoyee. Merci d'attendre l'approbation de l'administrateur.",
                         "user": serialize_user(user),
                     }
                 ),
@@ -1340,6 +1507,17 @@ def create_app():
         if not bcrypt.check_password_hash(user.password, password):
             return jsonify({"success": False, "message": "Mot de passe incorrect."}), 401
 
+        if user.role == "prestataire" and str(getattr(user, "approval_status", "approved") or "approved") != "approved":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Votre demande d'acces prestataire est en attente d'approbation par l'administrateur.",
+                    }
+                ),
+                403,
+            )
+
         token = make_token(user.id, user.role)
         return jsonify({"success": True, "message": "Connexion reussie.", "token": token, "user": serialize_user(user)})
 
@@ -1366,6 +1544,9 @@ def create_app():
         if not provider:
             return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
 
+        previous_approval_status = str(getattr(provider, "approval_status", "approved") or "approved")
+        previous_is_active = bool(getattr(provider, "is_active", True))
+
         payload = request.get_json(silent=True) or {}
         name = (payload.get("name") or "").strip()
         category = (payload.get("category") or "").strip()
@@ -1388,7 +1569,7 @@ def create_app():
                 400,
             )
 
-        if status and status not in {"active", "inactive"}:
+        if status and status not in {"active", "inactive", "pending-approval"}:
             return jsonify({"success": False, "message": "Statut invalide."}), 400
 
         existing_user = User.query.filter(User.email == email, User.id != provider.id).first()
@@ -1403,15 +1584,54 @@ def create_app():
         provider.description = description or None
         provider.instagram = instagram or None
         provider.website = website or None
-        if status:
-            provider.is_active = status == "active"
+        required_for_approval = [
+            ("category", provider.category),
+            ("website", provider.website),
+            ("profile_photo", provider.profile_photo),
+            ("cover_photo", provider.cover_photo),
+        ]
+        if status == "active" and any(not str(value or "").strip() for _, value in required_for_approval):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Impossible d'approuver ce prestataire tant que les champs service, lien et photos ne sont pas completes.",
+                    }
+                ),
+                400,
+            )
+
+        if status == "pending-approval":
+            provider.approval_status = "pending"
+            provider.is_active = False
+        elif status == "active":
+            provider.approval_status = "approved"
+            provider.is_active = True
+        elif status == "inactive":
+            provider.approval_status = "approved"
+            provider.is_active = False
         provider.updated_at = datetime.utcnow()
 
         db.session.commit()
+
+        email_message = "Prestataire mis a jour avec succes."
+        should_send_approval_email = (
+            status == "active" and (previous_approval_status == "pending" or not previous_is_active)
+        )
+        if should_send_approval_email:
+            email_sent, email_error = send_provider_approval_email(provider.email, provider.username)
+            if email_sent:
+                email_message = "Prestataire approuve et email envoye avec succes."
+            else:
+                email_message = (
+                    "Prestataire approuve, mais l'email n'a pas pu etre envoye. "
+                    f"Detail: {email_error}"
+                )
+
         return jsonify(
             {
                 "success": True,
-                "message": "Prestataire mis a jour avec succes.",
+                "message": email_message,
                 "provider": serialize_admin_provider(provider),
             }
         )

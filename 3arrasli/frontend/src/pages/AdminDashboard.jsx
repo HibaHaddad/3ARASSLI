@@ -21,6 +21,7 @@ const formatCurrency = (value) => `${value} TND`;
 const statusLabels = {
   active: "Actif",
   inactive: "Inactif",
+  "pending-approval": "En attente d'approbation",
   pending: "En attente",
   confirmed: "Confirme",
   cancelled: "Annule",
@@ -38,7 +39,7 @@ const statusClass = (status) => {
     return "ok";
   }
 
-  if (["pending", "pending-signature", "unpaid", "flagged"].includes(status)) {
+  if (["pending", "pending-approval", "pending-signature", "unpaid", "flagged"].includes(status)) {
     return "warn";
   }
 
@@ -64,12 +65,21 @@ const defaultPackForm = {
   services: "",
 };
 
+const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
+
 const AdminDashboard = () => {
 const [activeSection, setActiveSection] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sectionLoading, setSectionLoading] = useState(false);
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotifications] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(ADMIN_NOTIFICATIONS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (error) {
+      return [];
+    }
+  });
 
   const [providers, setProviders] = useState([]);
   const [appointments, setAppointments] = useState([]);
@@ -138,17 +148,32 @@ const [activeSection, setActiveSection] = useState("dashboard");
     return () => clearTimeout(timer);
   }, [activeSection, initialLoading]);
 
-  const pushNotification = (type, message) => {
-    const id = Date.now() + Math.random();
-    setNotifications((prev) => [...prev, { id, type, message }]);
+  useEffect(() => {
+    window.localStorage.setItem(ADMIN_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(notifications));
+  }, [notifications]);
 
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((item) => item.id !== id));
-    }, 3400);
+  const pushNotification = (type, message, options = {}) => {
+    const id = options.id || options.key || Date.now() + Math.random();
+    setNotifications((prev) => {
+      const nextNotification = { id, type, message, seen: false };
+      if (options.key) {
+        const existingIndex = prev.findIndex((item) => item.id === options.key);
+        if (existingIndex >= 0) {
+          const next = [...prev];
+          next[existingIndex] = nextNotification;
+          return next;
+        }
+      }
+      return [nextNotification, ...prev];
+    });
   };
 
   const dismissNotification = (id) => {
     setNotifications((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const markNotificationsAsSeen = () => {
+    setNotifications((prev) => prev.map((item) => ({ ...item, seen: true })));
   };
 
   const loadProviders = async () => {
@@ -156,7 +181,21 @@ const [activeSection, setActiveSection] = useState("dashboard");
 
     try {
       const response = await api.get("/api/admin/providers");
-      setProviders(response.data.providers || []);
+      const nextProviders = response.data.providers || [];
+      setProviders(nextProviders);
+
+      const pendingProviders = nextProviders.filter((provider) => provider.status === "pending-approval");
+      if (pendingProviders.length > 0) {
+        pushNotification(
+          "info",
+          pendingProviders.length === 1
+            ? `Un nouveau prestataire attend l'approbation de l'admin.`
+            : `${pendingProviders.length} prestataires attendent l'approbation de l'admin.`,
+          {
+            key: `pending-providers-${pendingProviders.map((provider) => provider.id).sort().join("-")}`,
+          }
+        );
+      }
     } catch (error) {
       pushNotification("error", error.response?.data?.message || "Impossible de charger les prestataires.");
       setProviders([]);
@@ -352,7 +391,10 @@ const [activeSection, setActiveSection] = useState("dashboard");
               status: updatedProvider.status || "active",
             });
           }
-          pushNotification("success", `Compte ${activating ? "active" : "desactive"} avec succes.`);
+          pushNotification(
+            "success",
+            response.data.message || `Compte ${activating ? "active" : "desactive"} avec succes.`
+          );
         } catch (error) {
           pushNotification("error", error.response?.data?.message || "Impossible de modifier le statut.");
         }
@@ -685,6 +727,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
               onChange={(event) => setProviderStatusFilter(event.target.value)}
             >
               <option value="all">Tous les statuts</option>
+              <option value="pending-approval">En attente</option>
               <option value="active">Actif</option>
               <option value="inactive">Inactif</option>
             </select>
@@ -702,7 +745,11 @@ const [activeSection, setActiveSection] = useState("dashboard");
                   Details
                 </button>
                 <button type="button" className="provider-secondary-btn" onClick={() => toggleProviderStatus(row)}>
-                  {row.status === "active" ? "Desactiver" : "Activer"}
+                  {row.status === "pending-approval"
+                    ? "Approuver"
+                    : row.status === "active"
+                      ? "Desactiver"
+                      : "Activer"}
                 </button>
               </>
             )}
@@ -961,6 +1008,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
         currentSection={currentSection}
         notifications={notifications}
         onDismissNotification={dismissNotification}
+        onOpenNotifications={markNotificationsAsSeen}
       >
         <div className="provider-stack provider-stack-simple">
           {renderSection()}
@@ -1030,6 +1078,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
             value={providerForm.status}
             onChange={(event) => setProviderForm((prev) => ({ ...prev, status: event.target.value }))}
           >
+            <option value="pending-approval">En attente d'approbation</option>
             <option value="active">Actif</option>
             <option value="inactive">Inactif</option>
           </select>

@@ -22,16 +22,34 @@ Wedding services platform with:
 3. `.venv\Scripts\activate`
 4. `pip install -r requirements.txt`
 5. Start XAMPP and make sure `Apache` and `MySQL` are running.
-6. Create database `3arrasli_db` in phpMyAdmin (or set your own name in env vars below).
-7. (Optional) set env vars:
-   - `DB_HOST=127.0.0.1`
-   - `DB_PORT=3306`
-   - `DB_USER=root`
-   - `DB_PASSWORD=`
-   - `DB_NAME=3arrasli_db`
-   Or set one full URI with:
-   - `DATABASE_URL=mysql+pymysql://root:@127.0.0.1:3306/3arrasli_db?charset=utf8mb4`
+6. Copy `backend/.env.example` to `backend/.env`
+7. Fill `backend/.env` with your database and SMTP values
 8. `python app.py`
+
+Example `backend/.env`:
+
+```env
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=
+DB_NAME=ma_base
+
+FRONTEND_BASE_URL=http://localhost:5173
+
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=your-email@gmail.com
+SMTP_PASSWORD=your-app-password
+SMTP_SENDER=your-email@gmail.com
+SMTP_USE_TLS=true
+SMTP_USE_SSL=false
+```
+
+Notes:
+- `SMTP_PASSWORD` should be an app password if you use Gmail.
+- The backend now loads variables automatically from `backend/.env`.
+- You can still override them with system environment variables if needed.
 
 Backend URLs:
 - `GET http://localhost:5000/api/health`

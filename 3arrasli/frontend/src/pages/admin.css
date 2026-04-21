@@ -6,6 +6,167 @@
   position: relative;
 }
 
+.admin-notifications {
+  position: relative;
+  z-index: 8;
+}
+
+.admin-notification-trigger {
+  position: relative;
+  width: 56px;
+  height: 56px;
+  border: 1px solid rgba(184, 124, 145, 0.18);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.84),
+    0 18px 34px rgba(112, 65, 82, 0.1);
+  cursor: pointer;
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease,
+    border-color 220ms ease;
+}
+
+.admin-notification-trigger:hover,
+.admin-notification-trigger.active {
+  transform: translateY(-2px);
+  border-color: rgba(184, 124, 145, 0.28);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 24px 40px rgba(112, 65, 82, 0.14);
+}
+
+.admin-notification-bell {
+  position: relative;
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+}
+
+.admin-notification-bell span:first-child {
+  position: absolute;
+  left: 3px;
+  top: 1px;
+  width: 14px;
+  height: 12px;
+  border: 2px solid #6f4152;
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+
+.admin-notification-bell span:last-child {
+  position: absolute;
+  left: 1px;
+  top: 11px;
+  width: 18px;
+  height: 7px;
+  border-radius: 0 0 10px 10px;
+  background: #6f4152;
+}
+
+.admin-notification-trigger::after {
+  content: "";
+  position: absolute;
+  left: 24px;
+  bottom: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #6f4152;
+}
+
+.admin-notification-count {
+  position: absolute;
+  top: -6px;
+  right: -4px;
+  min-width: 24px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #b34c69, #d5a35f);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 800;
+  box-shadow: 0 12px 24px rgba(179, 76, 105, 0.28);
+}
+
+.auth-admin-notifications {
+  margin-right: 6px;
+}
+
+.admin-notification-panel {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  width: min(420px, calc(100vw - 48px));
+  max-height: 520px;
+  overflow: auto;
+  border-radius: 24px;
+  border: 1px solid rgba(184, 124, 145, 0.16);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 28px 60px rgba(112, 65, 82, 0.18);
+  padding: 16px;
+  z-index: 80;
+}
+
+.admin-notification-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.admin-notification-panel-head strong {
+  color: #4f2d38;
+}
+
+.admin-notification-panel-head span {
+  color: rgba(93, 59, 70, 0.72);
+  font-size: 0.88rem;
+}
+
+.admin-notification-empty {
+  margin: 0;
+  color: rgba(93, 59, 70, 0.76);
+}
+
+.admin-notification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-notification-item {
+  border-radius: 18px;
+  border: 1px solid rgba(184, 124, 145, 0.16);
+  background: rgba(255, 251, 248, 0.96);
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+}
+
+.admin-notification-item p {
+  margin: 0;
+  color: rgba(67, 40, 50, 0.92);
+  line-height: 1.55;
+}
+
+.admin-notification-item.success {
+  border-color: rgba(96, 179, 124, 0.34);
+}
+
+.admin-notification-item.error {
+  border-color: rgba(203, 99, 128, 0.36);
+}
+
+.admin-notification-item.info {
+  border-color: rgba(201, 160, 94, 0.32);
+}
+
 .admin-tabs {
   display: flex;
   gap: 10px;
@@ -257,40 +418,6 @@
   color: rgba(93, 59, 70, 0.82);
 }
 
-.admin-toast-stack {
-  position: fixed;
-  top: 104px;
-  right: 18px;
-  z-index: 80;
-  display: grid;
-  gap: 10px;
-  max-width: min(420px, calc(100vw - 24px));
-}
-
-.admin-toast {
-  border-radius: 18px;
-  border: 1px solid rgba(184, 124, 145, 0.2);
-  background: rgba(255, 255, 255, 0.94);
-  padding: 12px;
-  box-shadow: 0 20px 40px rgba(112, 65, 82, 0.14);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 12px;
-}
-
-.admin-toast.success {
-  border-color: rgba(96, 179, 124, 0.4);
-}
-
-.admin-toast.error {
-  border-color: rgba(203, 99, 128, 0.45);
-}
-
-.admin-toast span {
-  color: rgba(67, 40, 50, 0.9);
-}
-
 .admin-toast-close {
   min-height: 34px;
   padding: 0 12px;
@@ -318,9 +445,9 @@
     grid-template-columns: 1fr;
   }
 
-  .admin-toast-stack {
-    left: 12px;
-    right: 12px;
-    top: 88px;
+  .admin-notification-panel {
+    right: auto;
+    left: 0;
+    width: min(100%, calc(100vw - 40px));
   }
 }
