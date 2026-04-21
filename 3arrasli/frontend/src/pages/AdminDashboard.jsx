@@ -3,6 +3,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import AdminLayout from "../components/admin/AdminLayout";
 import DataTable from "../components/admin/DataTable";
 import Modal from "../components/admin/Modal";
+import api from "../services/api";
 import {
   adminSections,
   mockAppointments,
@@ -10,7 +11,6 @@ import {
   mockConversations,
   mockInvoices,
   mockPacks,
-  mockProviders,
   mockReviews,
 } from "./admin/adminData";
 import "./provider.css";
@@ -50,6 +50,11 @@ const defaultProviderForm = {
   category: "",
   city: "",
   email: "",
+  phone: "",
+  description: "",
+  instagram: "",
+  website: "",
+  status: "active",
 };
 
 const defaultPackForm = {
@@ -80,9 +85,10 @@ const [activeSection, setActiveSection] = useState("dashboard");
   const [appointmentStatusFilter, setAppointmentStatusFilter] = useState("all");
 
   const [providerModalOpen, setProviderModalOpen] = useState(false);
-  const [providerModalMode, setProviderModalMode] = useState("create");
   const [providerForm, setProviderForm] = useState(defaultProviderForm);
   const [providerDetails, setProviderDetails] = useState(null);
+  const [providersLoading, setProvidersLoading] = useState(true);
+  const [providerSaving, setProviderSaving] = useState(false);
 
   const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
   const [appointmentDraft, setAppointmentDraft] = useState(null);
@@ -107,7 +113,6 @@ const [activeSection, setActiveSection] = useState("dashboard");
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setProviders(mockProviders);
       setAppointments(mockAppointments);
       setContracts(mockContracts);
       setInvoices(mockInvoices);
@@ -145,6 +150,24 @@ const [activeSection, setActiveSection] = useState("dashboard");
   const dismissNotification = (id) => {
     setNotifications((prev) => prev.filter((item) => item.id !== id));
   };
+
+  const loadProviders = async () => {
+    setProvidersLoading(true);
+
+    try {
+      const response = await api.get("/api/admin/providers");
+      setProviders(response.data.providers || []);
+    } catch (error) {
+      pushNotification("error", error.response?.data?.message || "Impossible de charger les prestataires.");
+      setProviders([]);
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProviders();
+  }, []);
 
   const openConfirm = (title, message, confirmLabel, action) => {
     setConfirmState({
@@ -247,19 +270,23 @@ const [activeSection, setActiveSection] = useState("dashboard");
     [appointments, contracts, invoices, providers, reviews, packs]
   );
 
-  const openCreateProviderModal = () => {
-    setProviderModalMode("create");
-    setProviderForm(defaultProviderForm);
-    setProviderModalOpen(true);
-  };
-
   const openProviderDetailsModal = (provider) => {
-    setProviderModalMode("details");
     setProviderDetails(provider);
+    setProviderForm({
+      name: provider.name || "",
+      category: provider.category || "",
+      city: provider.city || "",
+      email: provider.email || "",
+      phone: provider.phone || "",
+      description: provider.description || "",
+      instagram: provider.instagram || "",
+      website: provider.website || "",
+      status: provider.status || "active",
+    });
     setProviderModalOpen(true);
   };
 
-  const submitProvider = (event) => {
+  const submitProvider = async (event) => {
     event.preventDefault();
 
     if (!providerForm.name || !providerForm.category || !providerForm.city || !providerForm.email) {
@@ -267,17 +294,28 @@ const [activeSection, setActiveSection] = useState("dashboard");
       return;
     }
 
-    const nextProvider = {
-      id: Date.now(),
-      ...providerForm,
-      rating: 4.5,
-      status: "active",
-      joinedAt: new Date().toISOString().slice(0, 10),
-    };
+    if (!providerDetails?.id) {
+      pushNotification("error", "Prestataire introuvable.");
+      return;
+    }
 
-    setProviders((prev) => [nextProvider, ...prev]);
-    setProviderModalOpen(false);
-    pushNotification("success", "Prestataire cree avec succes.");
+    setProviderSaving(true);
+
+    try {
+      const response = await api.put(`/api/admin/providers/${providerDetails.id}`, providerForm);
+      const updatedProvider = response.data.provider;
+
+      setProviders((prev) =>
+        prev.map((item) => (item.id === updatedProvider.id ? updatedProvider : item))
+      );
+      setProviderDetails(updatedProvider);
+      setProviderModalOpen(false);
+      pushNotification("success", response.data.message || "Prestataire mis a jour avec succes.");
+    } catch (error) {
+      pushNotification("error", error.response?.data?.message || "La mise a jour du prestataire a echoue.");
+    } finally {
+      setProviderSaving(false);
+    }
   };
 
   const toggleProviderStatus = (provider) => {
@@ -289,18 +327,35 @@ const [activeSection, setActiveSection] = useState("dashboard");
         ? `Confirmer l'activation du compte ${provider.name} ?`
         : `Confirmer la desactivation du compte ${provider.name} ?`,
       activating ? "Activer" : "Desactiver",
-      () => {
-        setProviders((prev) =>
-          prev.map((item) =>
-            item.id === provider.id
-              ? {
-                  ...item,
-                  status: activating ? "active" : "inactive",
-                }
-              : item
-          )
-        );
-        pushNotification("success", `Compte ${activating ? "active" : "desactive"} avec succes.`);
+      async () => {
+        try {
+          const response = await api.put(`/api/admin/providers/${provider.id}`, {
+            ...provider,
+            status: activating ? "active" : "inactive",
+          });
+          const updatedProvider = response.data.provider;
+
+          setProviders((prev) =>
+            prev.map((item) => (item.id === updatedProvider.id ? updatedProvider : item))
+          );
+          if (providerDetails?.id === updatedProvider.id) {
+            setProviderDetails(updatedProvider);
+            setProviderForm({
+              name: updatedProvider.name || "",
+              category: updatedProvider.category || "",
+              city: updatedProvider.city || "",
+              email: updatedProvider.email || "",
+              phone: updatedProvider.phone || "",
+              description: updatedProvider.description || "",
+              instagram: updatedProvider.instagram || "",
+              website: updatedProvider.website || "",
+              status: updatedProvider.status || "active",
+            });
+          }
+          pushNotification("success", `Compte ${activating ? "active" : "desactive"} avec succes.`);
+        } catch (error) {
+          pushNotification("error", error.response?.data?.message || "Impossible de modifier le statut.");
+        }
       }
     );
   };
@@ -615,9 +670,6 @@ const [activeSection, setActiveSection] = useState("dashboard");
               <h3>Provider Management</h3>
               <p>Recherche, filtre et actions sur tous les prestataires.</p>
             </div>
-            <button type="button" className="provider-primary-btn" onClick={openCreateProviderModal}>
-              Creer un prestataire
-            </button>
           </div>
 
           <div className="admin-filter-bar">
@@ -642,7 +694,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
             columns={providerColumns}
             rows={filteredProviders}
             keyField="id"
-            loading={false}
+            loading={providersLoading}
             emptyMessage="Aucun prestataire trouve pour ce filtre."
             renderActions={(row) => (
               <>
@@ -917,62 +969,82 @@ const [activeSection, setActiveSection] = useState("dashboard");
 
       <Modal
         open={providerModalOpen}
-        title={providerModalMode === "create" ? "Creer un prestataire" : "Details prestataire"}
+        title="Modifier prestataire"
         onClose={() => setProviderModalOpen(false)}
         actions={
-          providerModalMode === "create" ? (
-            <>
-              <button type="button" className="provider-ghost-btn" onClick={() => setProviderModalOpen(false)}>
-                Annuler
-              </button>
-              <button type="button" className="provider-primary-btn" onClick={submitProvider}>
-                Enregistrer
-              </button>
-            </>
-          ) : (
-            <button type="button" className="provider-primary-btn" onClick={() => setProviderModalOpen(false)}>
-              Fermer
+          <>
+            <button type="button" className="provider-ghost-btn" onClick={() => setProviderModalOpen(false)}>
+              Annuler
             </button>
-          )
+            <button type="button" className="provider-primary-btn" onClick={submitProvider} disabled={providerSaving}>
+              {providerSaving ? "Enregistrement..." : "Enregistrer"}
+            </button>
+          </>
         }
       >
-        {providerModalMode === "create" ? (
-          <form className="admin-form-grid" onSubmit={submitProvider}>
-            <input
-              className="provider-input"
-              placeholder="Nom"
-              value={providerForm.name}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, name: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Categorie"
-              value={providerForm.category}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, category: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Ville"
-              value={providerForm.city}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, city: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Email"
-              value={providerForm.email}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, email: event.target.value }))}
-            />
-          </form>
-        ) : (
+        <form className="admin-form-grid" onSubmit={submitProvider}>
+          <input
+            className="provider-input"
+            placeholder="Nom"
+            value={providerForm.name}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, name: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Categorie"
+            value={providerForm.category}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, category: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Ville"
+            value={providerForm.city}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, city: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Email"
+            value={providerForm.email}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, email: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Telephone"
+            value={providerForm.phone}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, phone: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Instagram"
+            value={providerForm.instagram}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, instagram: event.target.value }))}
+          />
+          <input
+            className="provider-input"
+            placeholder="Site web"
+            value={providerForm.website}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, website: event.target.value }))}
+          />
+          <select
+            className="provider-select"
+            value={providerForm.status}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, status: event.target.value }))}
+          >
+            <option value="active">Actif</option>
+            <option value="inactive">Inactif</option>
+          </select>
+          <textarea
+            className="provider-input"
+            placeholder="Description"
+            value={providerForm.description}
+            onChange={(event) => setProviderForm((prev) => ({ ...prev, description: event.target.value }))}
+            rows={4}
+          />
           <div className="admin-detail-grid">
-            <div><strong>Nom</strong><p>{providerDetails?.name}</p></div>
-            <div><strong>Categorie</strong><p>{providerDetails?.category}</p></div>
-            <div><strong>Ville</strong><p>{providerDetails?.city}</p></div>
-            <div><strong>Email</strong><p>{providerDetails?.email}</p></div>
             <div><strong>Note</strong><p>{providerDetails?.rating}/5</p></div>
             <div><strong>Inscription</strong><p>{providerDetails?.joinedAt}</p></div>
           </div>
-        )}
+        </form>
       </Modal>
 
       <Modal

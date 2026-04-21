@@ -132,6 +132,7 @@ def serialize_user(user):
         "username": user.username,
         "email": user.email,
         "role": user.role.capitalize(),
+        "is_active": bool(getattr(user, "is_active", True)),
         "phone": user.phone,
         "city": user.city,
         "category": user.category,
@@ -140,6 +141,30 @@ def serialize_user(user):
         "description": user.description,
         "profilePhoto": user.profile_photo,
         "coverPhoto": user.cover_photo,
+    }
+
+
+def serialize_admin_provider(user):
+    services = Service.query.filter(
+        db.or_(Service.provider_id == user.id, Service.prestataire_id == user.id)
+    ).all()
+    ratings = [float(service.rating) for service in services if getattr(service, "rating", None) is not None]
+    average_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
+
+    return {
+        "id": user.id,
+        "name": user.username,
+        "category": user.category or "",
+        "city": user.city or "",
+        "email": user.email,
+        "phone": user.phone or "",
+        "description": user.description or "",
+        "instagram": user.instagram or "",
+        "website": user.website or "",
+        "rating": average_rating,
+        "status": "active" if bool(getattr(user, "is_active", True)) else "inactive",
+        "joinedAt": user.created_at.date().isoformat() if user.created_at else None,
+        "updatedAt": user.updated_at.isoformat() if getattr(user, "updated_at", None) else None,
     }
 
 
@@ -430,6 +455,8 @@ def ensure_user_schema():
 
     if "phone" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN phone VARCHAR(40) NULL")
+    if "is_active" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1")
     if "city" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN city VARCHAR(120) NULL")
     if "category" not in columns:
@@ -454,6 +481,13 @@ def ensure_user_schema():
         db.session.commit()
 
     columns = {column["name"] for column in inspect(db.engine).get_columns("users")}
+    if "is_active" in columns:
+        db.session.execute(
+            text(
+                "UPDATE users "
+                "SET is_active = COALESCE(is_active, 1)"
+            )
+        )
     if "updated_at" in columns:
         db.session.execute(
             text(
@@ -1308,6 +1342,79 @@ def create_app():
 
         token = make_token(user.id, user.role)
         return jsonify({"success": True, "message": "Connexion reussie.", "token": token, "user": serialize_user(user)})
+
+    @app.get("/api/admin/providers")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_providers():
+        providers = (
+            User.query.filter_by(role="prestataire")
+            .order_by(User.created_at.desc(), User.id.desc())
+            .all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "providers": [serialize_admin_provider(provider) for provider in providers],
+            }
+        )
+
+    @app.put("/api/admin/providers/<int:provider_id>")
+    @app.patch("/api/admin/providers/<int:provider_id>")
+    @auth_required(allowed_roles={"admin"})
+    def update_admin_provider(provider_id):
+        provider = User.query.filter_by(id=provider_id, role="prestataire").first()
+        if not provider:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        name = (payload.get("name") or "").strip()
+        category = (payload.get("category") or "").strip()
+        city = (payload.get("city") or "").strip()
+        email = (payload.get("email") or "").strip().lower()
+        phone = (payload.get("phone") or "").strip()
+        description = (payload.get("description") or "").strip()
+        instagram = (payload.get("instagram") or "").strip()
+        website = (payload.get("website") or "").strip()
+        status = str(payload.get("status") or "").strip().lower()
+
+        if not name or not category or not city or not email:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Nom, categorie, ville et email sont obligatoires.",
+                    }
+                ),
+                400,
+            )
+
+        if status and status not in {"active", "inactive"}:
+            return jsonify({"success": False, "message": "Statut invalide."}), 400
+
+        existing_user = User.query.filter(User.email == email, User.id != provider.id).first()
+        if existing_user:
+            return jsonify({"success": False, "message": "Cet email est deja utilise."}), 409
+
+        provider.username = name
+        provider.category = category
+        provider.city = city
+        provider.email = email
+        provider.phone = phone or None
+        provider.description = description or None
+        provider.instagram = instagram or None
+        provider.website = website or None
+        if status:
+            provider.is_active = status == "active"
+        provider.updated_at = datetime.utcnow()
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Prestataire mis a jour avec succes.",
+                "provider": serialize_admin_provider(provider),
+            }
+        )
 
     @app.get("/api/provider/profile")
     @auth_required(allowed_roles={"prestataire"})
