@@ -18,7 +18,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db
-from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, User
+from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, ServiceImage, User
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -256,6 +256,13 @@ def serialize_service(service, client_id=None):
         favorite = Favorite.query.filter_by(client_id=client_id, prestataire_id=provider_id).first()
 
     prestataire = User.query.get(provider_id) if provider_id else None
+    gallery = [
+        {"id": item.id, "image_path": item.image_path, "url": item.image_path}
+        for item in getattr(service, "images", [])
+    ]
+    if not gallery and (service.image or service.image_url):
+        gallery = [{"id": None, "image_path": service.image or service.image_url, "url": service.image or service.image_url}]
+    primary_image = gallery[0]["image_path"] if gallery else (service.image or service.image_url)
     return {
         "id": service.id,
         "title": service.title,
@@ -264,7 +271,8 @@ def serialize_service(service, client_id=None):
         "city": service.city,
         "type": service.category or service.type,
         "category": service.category or service.type,
-        "image": service.image or service.image_url,
+        "image": primary_image,
+        "images": gallery,
         "rating": service.rating,
         "status": service.status or "Actif",
         "provider_id": provider_id,
@@ -673,6 +681,30 @@ def ensure_service_schema():
     db.session.commit()
 
 
+def ensure_service_images_schema():
+    inspector = inspect(db.engine)
+    table_names = inspector.get_table_names()
+    if "service_images" not in table_names:
+        ServiceImage.__table__.create(db.engine, checkfirst=True)
+        inspector = inspect(db.engine)
+        table_names = inspector.get_table_names()
+
+    if "services" in table_names:
+        db.session.execute(
+            text(
+                "INSERT INTO service_images (service_id, image_path, created_at) "
+                "SELECT services.id, COALESCE(services.image, services.image_url), COALESCE(services.created_at, CURRENT_TIMESTAMP) "
+                "FROM services "
+                "WHERE COALESCE(services.image, services.image_url) IS NOT NULL "
+                "AND COALESCE(services.image, services.image_url) != '' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM service_images WHERE service_images.service_id = services.id"
+                ")"
+            )
+        )
+        db.session.commit()
+
+
 def ensure_reservation_schema():
     inspector = inspect(db.engine)
     if "reservations" not in inspector.get_table_names():
@@ -760,6 +792,7 @@ def create_app():
         db.create_all()
         ensure_user_schema()
         ensure_service_schema()
+        ensure_service_images_schema()
         ensure_reservation_schema()
         ensure_message_schema()
         seed_data()
@@ -1041,8 +1074,26 @@ def create_app():
             )
         return slot, None
 
-    def validate_service_payload(payload, image_file=None, existing_image=None):
+    def get_service_image_files():
+        files = []
+        for field_name in ("images[]", "images", "image"):
+            files.extend([item for item in request.files.getlist(field_name) if item and item.filename])
+        return files
+
+    def get_removed_service_image_ids(payload):
+        raw_values = payload.getlist("removed_image_ids[]") if hasattr(payload, "getlist") else []
+        raw_values.extend(payload.getlist("removed_image_ids") if hasattr(payload, "getlist") else [])
+        ids = []
+        for raw_value in raw_values:
+            for item in str(raw_value or "").split(","):
+                item = item.strip()
+                if item.isdigit():
+                    ids.append(int(item))
+        return ids
+
+    def validate_service_payload(payload, image_files=None, existing_images_count=0):
         errors = {}
+        image_files = image_files or []
 
         title = str(payload.get("title") or "").strip()
         price_raw = payload.get("price")
@@ -1068,12 +1119,13 @@ def create_app():
         if not category:
             errors["category"] = "category est requis."
 
-        if not image_file and not str(existing_image or "").strip():
+        if not image_files and existing_images_count <= 0:
             errors["image"] = "image est requis."
-        elif image_file:
+        for image_file in image_files:
             filename = image_file.filename or ""
             if not filename or not allowed_image_file(filename):
                 errors["image"] = "Formats acceptes: jpg, jpeg, png."
+                break
 
         if not description:
             errors["description"] = "description est requis."
@@ -1085,6 +1137,31 @@ def create_app():
             "description": description,
             "status": status,
         }
+
+    def refresh_service_primary_image(service):
+        first_image = (
+            ServiceImage.query.filter_by(service_id=service.id)
+            .order_by(ServiceImage.id.asc())
+            .first()
+        )
+        image_path = first_image.image_path if first_image else ""
+        service.image = image_path
+        service.image_url = image_path
+
+    def save_service_gallery_images(service, image_files):
+        saved_paths = []
+        for image_file in image_files:
+            image_path, image_error = save_service_image(image_file)
+            if image_error:
+                for saved_path in saved_paths:
+                    delete_uploaded_file(app, saved_path)
+                return image_error
+            saved_paths.append(image_path)
+            db.session.add(ServiceImage(service_id=service.id, image_path=image_path))
+        if saved_paths and not service.image:
+            service.image = saved_paths[0]
+            service.image_url = saved_paths[0]
+        return None
 
     def get_provider_service_or_404(service_id):
         service = Service.query.filter_by(id=service_id, provider_id=request.user_id).first()
@@ -2029,15 +2106,11 @@ def create_app():
     @auth_required(allowed_roles={"prestataire"})
     def create_provider_service():
         payload = request.form or {}
-        image_file = request.files.get("image")
-        errors, normalized = validate_service_payload(payload, image_file=image_file)
+        image_files = get_service_image_files()
+        errors, normalized = validate_service_payload(payload, image_files=image_files)
 
         if errors:
             return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
-
-        image_path, image_error = save_service_image(image_file)
-        if image_error:
-            return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
 
         service = Service(
             provider_id=request.user_id,
@@ -2046,14 +2119,22 @@ def create_app():
             price=normalized["price"],
             category=normalized["category"],
             type=normalized["category"],
-            image=image_path,
-            image_url=image_path,
+            image="",
+            image_url="",
             description=normalized["description"],
             status=normalized["status"],
             rating=4.5,
             city="",
         )
         db.session.add(service)
+        db.session.flush()
+
+        image_error = save_service_gallery_images(service, image_files)
+        if image_error:
+            db.session.rollback()
+            return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
+
+        refresh_service_primary_image(service)
         db.session.commit()
         return (
             jsonify(
@@ -2075,34 +2156,46 @@ def create_app():
             return error_response
 
         payload = request.form or {}
-        image_file = request.files.get("image")
+        image_files = get_service_image_files()
+        removed_image_ids = get_removed_service_image_ids(payload)
+        existing_images_query = ServiceImage.query.filter_by(service_id=service.id)
+        if removed_image_ids:
+            existing_images_query = existing_images_query.filter(~ServiceImage.id.in_(removed_image_ids))
+        existing_images_count = existing_images_query.count()
         errors, normalized = validate_service_payload(
             payload,
-            image_file=image_file,
-            existing_image=service.image,
+            image_files=image_files,
+            existing_images_count=existing_images_count,
         )
 
         if errors:
             return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
 
-        image_path = service.image
-        if image_file:
-            image_path, image_error = save_service_image(image_file)
+        if image_files:
+            image_error = save_service_gallery_images(service, image_files)
             if image_error:
+                db.session.rollback()
                 return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
-            delete_uploaded_file(app, service.image)
+
+        if removed_image_ids:
+            images_to_remove = ServiceImage.query.filter(
+                ServiceImage.service_id == service.id,
+                ServiceImage.id.in_(removed_image_ids),
+            ).all()
+            for image_item in images_to_remove:
+                delete_uploaded_file(app, image_item.image_path)
+                db.session.delete(image_item)
 
         service.title = normalized["title"]
         service.price = normalized["price"]
         service.category = normalized["category"]
         service.type = normalized["category"]
-        service.image = image_path
-        service.image_url = image_path
         service.description = normalized["description"]
         service.status = normalized["status"]
         service.provider_id = request.user_id
         service.prestataire_id = request.user_id
         service.updated_at = datetime.utcnow()
+        refresh_service_primary_image(service)
 
         db.session.commit()
         return jsonify(
@@ -2120,7 +2213,10 @@ def create_app():
         if error_response:
             return error_response
 
-        delete_uploaded_file(app, service.image)
+        for image_item in list(getattr(service, "images", [])):
+            delete_uploaded_file(app, image_item.image_path)
+        if not getattr(service, "images", []):
+            delete_uploaded_file(app, service.image)
         db.session.delete(service)
         db.session.commit()
         return jsonify({"success": True, "message": "Service supprime avec succes."})

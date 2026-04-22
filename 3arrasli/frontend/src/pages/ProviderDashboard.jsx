@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./provider.css";
 import ProviderBookings from "./provider/ProviderBookings";
 import ProviderCalendar from "./provider/ProviderCalendar";
@@ -65,8 +65,10 @@ const ProviderDashboard = () => {
   const [profileForm, setProfileForm] = useState(initialProfile);
   const [profileMessage, setProfileMessage] = useState({ type: "", text: "" });
   const [profileLoading, setProfileLoading] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [profileErrors, setProfileErrors] = useState({});
+  const [profileCompletionDismissed, setProfileCompletionDismissed] = useState(false);
   const [profileImageFile, setProfileImageFile] = useState(null);
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState("");
@@ -80,8 +82,10 @@ const ProviderDashboard = () => {
   const [serviceFeedback, setServiceFeedback] = useState({ type: "", text: "" });
   const [servicesLoading, setServicesLoading] = useState(false);
   const [serviceSubmitting, setServiceSubmitting] = useState(false);
-  const [serviceImageFile, setServiceImageFile] = useState(null);
-  const [serviceImagePreview, setServiceImagePreview] = useState("");
+  const [serviceImageFiles, setServiceImageFiles] = useState([]);
+  const [serviceImagePreviews, setServiceImagePreviews] = useState([]);
+  const [serviceRemovedImageIds, setServiceRemovedImageIds] = useState([]);
+  const serviceImagePreviewsRef = useRef([]);
   const [imageInputKey, setImageInputKey] = useState(0);
   const [calendarDays, setCalendarDays] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
@@ -190,6 +194,7 @@ const ProviderDashboard = () => {
       });
     } finally {
       setProfileLoading(false);
+      setProfileLoaded(true);
     }
   };
 
@@ -396,6 +401,43 @@ const ProviderDashboard = () => {
 
   const currentHour = useMemo(() => `${String(new Date().getHours()).padStart(2, "0")}:`, []);
 
+  const profileCompletion = useMemo(() => {
+    const requiredFields = [
+      { key: "name", label: "Nom de l'entreprise" },
+      { key: "email", label: "Email professionnel" },
+      { key: "phone", label: "Telephone" },
+      { key: "city", label: "Ville" },
+      { key: "category", label: "Categorie" },
+      { key: "description", label: "Presentation" },
+      { key: "profilePhoto", label: "Photo de profil" },
+      { key: "coverPhoto", label: "Photo de couverture" },
+    ];
+
+    const missingFields = requiredFields.filter(({ key }) => {
+      const value = profileForm[key];
+      return !String(value || "").trim();
+    });
+
+    const completed = requiredFields.length - missingFields.length;
+    return {
+      missingFields,
+      progress: Math.round((completed / requiredFields.length) * 100),
+    };
+  }, [profileForm]);
+
+  const shouldShowProfileCompletionPopup =
+    profileLoaded &&
+    !profileLoading &&
+    !profileCompletionDismissed &&
+    activeSection !== "profile" &&
+    profileCompletion.missingFields.length > 0;
+
+  const goToProfileCompletion = () => {
+    setActiveSection("profile");
+    setSidebarOpen(false);
+    setProfileCompletionDismissed(true);
+  };
+
   const handleSectionChange = (sectionId) => {
     setActiveSection(sectionId);
     setSidebarOpen(false);
@@ -569,36 +611,75 @@ const ProviderDashboard = () => {
   };
 
   const onServiceImageChange = (event) => {
-    const file = event.target.files?.[0] || null;
+    const files = Array.from(event.target.files || []);
     setServiceFormErrors((prev) => ({ ...prev, image: "" }));
 
-    if (!file) {
-      setServiceImageFile(null);
-      setServiceImagePreview(editingServiceId ? serviceForm.image || "" : "");
+    if (files.length === 0) {
       return;
     }
 
-    setServiceImageFile(file);
-    setServiceImagePreview(URL.createObjectURL(file));
-    setServiceFeedback({ type: "success", text: "Image chargee avec succes." });
+    const nextPreviews = files.map((file) => ({
+      key: `${file.name}-${file.lastModified}-${Math.random().toString(16).slice(2)}`,
+      url: URL.createObjectURL(file),
+      name: file.name,
+      isNew: true,
+    }));
+
+    setServiceImageFiles((prev) => [...prev, ...files]);
+    setServiceImagePreviews((prev) => [...prev, ...nextPreviews]);
+    setImageInputKey((prev) => prev + 1);
+    setServiceFeedback({
+      type: "success",
+      text: files.length > 1 ? "Images chargees avec succes." : "Image chargee avec succes.",
+    });
   };
 
   useEffect(() => {
+    serviceImagePreviewsRef.current = serviceImagePreviews;
+  }, [serviceImagePreviews]);
+
+  useEffect(() => {
     return () => {
-      if (serviceImagePreview?.startsWith("blob:")) {
-        URL.revokeObjectURL(serviceImagePreview);
-      }
+      serviceImagePreviewsRef.current.forEach((preview) => {
+        if (preview.url?.startsWith("blob:")) {
+          URL.revokeObjectURL(preview.url);
+        }
+      });
     };
-  }, [serviceImagePreview]);
+  }, []);
+
+  const removeServiceImagePreview = (preview) => {
+    if (preview.url?.startsWith("blob:")) {
+      URL.revokeObjectURL(preview.url);
+    }
+
+    setServiceImagePreviews((prev) => prev.filter((item) => item.key !== preview.key));
+
+    if (preview.isNew) {
+      setServiceImageFiles((prev) => {
+        const nextFiles = [...prev];
+        const previewIndex = serviceImagePreviews.filter((item) => item.isNew).findIndex((item) => item.key === preview.key);
+        if (previewIndex >= 0) {
+          nextFiles.splice(previewIndex, 1);
+        }
+        return nextFiles;
+      });
+    } else if (preview.id) {
+      setServiceRemovedImageIds((prev) => [...new Set([...prev, preview.id])]);
+    }
+  };
 
   const resetServiceEditing = () => {
-    if (serviceImagePreview?.startsWith("blob:")) {
-      URL.revokeObjectURL(serviceImagePreview);
-    }
+    serviceImagePreviews.forEach((preview) => {
+      if (preview.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(preview.url);
+      }
+    });
     setEditingServiceId(null);
     setServiceFormErrors({});
-    setServiceImageFile(null);
-    setServiceImagePreview("");
+    setServiceImageFiles([]);
+    setServiceImagePreviews([]);
+    setServiceRemovedImageIds([]);
     setImageInputKey((prev) => prev + 1);
     setServiceForm(emptyServiceForm);
   };
@@ -607,8 +688,8 @@ const ProviderDashboard = () => {
     event.preventDefault();
 
     const validationErrors = validateServiceForm(serviceForm, {
-      imageFile: serviceImageFile,
-      hasExistingImage: Boolean(serviceForm.image),
+      imageFiles: serviceImageFiles,
+      hasExistingImages: serviceImagePreviews.some((preview) => !preview.isNew),
     });
     if (Object.keys(validationErrors).length > 0) {
       setServiceFormErrors(validationErrors);
@@ -628,9 +709,12 @@ const ProviderDashboard = () => {
     payload.append("category", serviceForm.category.trim());
     payload.append("description", serviceForm.description.trim());
     payload.append("status", serviceForm.status?.trim() || "Actif");
-    if (serviceImageFile) {
-      payload.append("image", serviceImageFile);
-    }
+    serviceImageFiles.forEach((file) => {
+      payload.append("images[]", file);
+    });
+    serviceRemovedImageIds.forEach((imageId) => {
+      payload.append("removed_image_ids[]", String(imageId));
+    });
 
     try {
       if (editingServiceId) {
@@ -662,9 +746,16 @@ const ProviderDashboard = () => {
   };
 
   const editService = (service) => {
-    if (serviceImagePreview?.startsWith("blob:")) {
-      URL.revokeObjectURL(serviceImagePreview);
-    }
+    serviceImagePreviews.forEach((preview) => {
+      if (preview.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(preview.url);
+      }
+    });
+    const savedImages = Array.isArray(service.images) && service.images.length > 0
+      ? service.images
+      : service.image
+        ? [{ id: null, image_path: service.image, url: service.image }]
+        : [];
     setServiceForm({
       title: service.title,
       price: String(service.price),
@@ -674,8 +765,17 @@ const ProviderDashboard = () => {
       status: service.status || "Actif",
     });
     setServiceFormErrors({});
-    setServiceImageFile(null);
-    setServiceImagePreview(resolveAssetUrl(service.image));
+    setServiceImageFiles([]);
+    setServiceImagePreviews(
+      savedImages.map((image, index) => ({
+        key: `saved-${image.id || index}`,
+        id: image.id,
+        url: resolveAssetUrl(image.image_path || image.url || image),
+        name: `Image ${index + 1}`,
+        isNew: false,
+      }))
+    );
+    setServiceRemovedImageIds([]);
     setImageInputKey((prev) => prev + 1);
     setServiceFeedback({ type: "", text: "" });
     setEditingServiceId(service.id);
@@ -927,10 +1027,11 @@ const ProviderDashboard = () => {
             serviceFeedback={serviceFeedback}
             servicesLoading={servicesLoading}
             serviceSubmitting={serviceSubmitting}
-            imagePreviewUrl={serviceImagePreview}
+            imagePreviews={serviceImagePreviews}
             imageInputKey={imageInputKey}
             onServiceChange={onServiceChange}
             onServiceImageChange={onServiceImageChange}
+            onRemoveServiceImage={removeServiceImagePreview}
             onSubmitService={submitService}
             onResetEditing={resetServiceEditing}
             services={services}
@@ -1004,6 +1105,65 @@ const ProviderDashboard = () => {
       currentSection={currentSection}
     >
       {renderContent()}
+      {shouldShowProfileCompletionPopup ? (
+        <div className="provider-modal-overlay provider-profile-task-overlay" role="presentation">
+          <section
+            className="provider-profile-task-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-profile-task-title"
+            style={{ "--provider-profile-progress": `${profileCompletion.progress}%` }}
+          >
+            <button
+              type="button"
+              className="provider-modal-close provider-profile-task-close"
+              onClick={() => setProfileCompletionDismissed(true)}
+              aria-label="Fermer"
+            >
+              <span />
+              <span />
+            </button>
+
+            <div className="provider-profile-task-visual" aria-hidden="true">
+              <div className="provider-profile-task-ring">
+                <strong>{profileCompletion.progress}%</strong>
+                <span>Profil</span>
+              </div>
+            </div>
+
+            <div className="provider-profile-task-content">
+              <span className="provider-section-label">Action recommandee</span>
+              <h3 id="provider-profile-task-title">Votre vitrine merite quelques details de plus</h3>
+              <p>
+                Les clients reservent plus facilement quand votre profil presente clairement votre
+                style, votre ville, vos contacts et vos photos principales.
+              </p>
+
+              <div className="provider-profile-task-missing">
+                {profileCompletion.missingFields.slice(0, 5).map((field) => (
+                  <span key={field.key}>{field.label}</span>
+                ))}
+                {profileCompletion.missingFields.length > 5 ? (
+                  <span>+{profileCompletion.missingFields.length - 5} autre(s)</span>
+                ) : null}
+              </div>
+
+              <div className="provider-profile-task-actions">
+                <button type="button" className="provider-primary-btn" onClick={goToProfileCompletion}>
+                  Completer mon profil
+                </button>
+                <button
+                  type="button"
+                  className="provider-ghost-btn"
+                  onClick={() => setProfileCompletionDismissed(true)}
+                >
+                  Plus tard
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </ProviderLayout>
   );
 };
