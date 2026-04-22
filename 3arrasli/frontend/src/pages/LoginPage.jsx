@@ -11,6 +11,7 @@ const LoginPage = () => {
   const [form, setForm] = useState({ email: "", password: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [pendingApprovalPopup, setPendingApprovalPopup] = useState("");
   const [loading, setLoading] = useState(false);
 
   const onChange = (event) => {
@@ -22,6 +23,7 @@ const LoginPage = () => {
     event.preventDefault();
     setMessage("");
     setError("");
+    setPendingApprovalPopup("");
 
     if (!form.email || !form.password) {
       setError("Veuillez remplir tous les champs.");
@@ -41,7 +43,11 @@ const LoginPage = () => {
       }, 700);
     } catch (err) {
       const apiMessage = err.response?.data?.message || "Echec de la connexion.";
-      setError(apiMessage);
+      if (err.response?.status === 403) {
+        setPendingApprovalPopup(apiMessage);
+      } else {
+        setError(apiMessage);
+      }
     } finally {
       setLoading(false);
     }
@@ -49,6 +55,28 @@ const LoginPage = () => {
 
   return (
     <div className="auth-page">
+      {pendingApprovalPopup ? (
+        <div className="auth-popup-overlay" role="dialog" aria-modal="true" aria-label="Compte en attente">
+          <div className="auth-popup-card auth-pending-popup-card">
+            <h3>Compte en attente d'approbation</h3>
+            <p>{pendingApprovalPopup}</p>
+            <p>
+              Votre espace prestataire sera accessible apres validation de votre compte par l'administrateur.
+              Merci de reessayer plus tard.
+            </p>
+            <div className="auth-popup-actions">
+              <button
+                type="button"
+                className="auth-btn auth-btn-request"
+                onClick={() => setPendingApprovalPopup("")}
+              >
+                Compris
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <Navbar />
 
       <main className="auth-main">

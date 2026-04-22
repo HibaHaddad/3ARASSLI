@@ -334,13 +334,13 @@ const SignupPage = () => {
       </main>
 
       {providerRequestPopup ? (
-        <div className="auth-popup-overlay" role="dialog" aria-modal="true" aria-label="Demande envoyee">
+        <div className="auth-popup-overlay" role="dialog" aria-modal="true" aria-label="Demande envoyée">
           <div className="auth-popup-card">
-            <span className="auth-provider-badge">Demande envoyee</span>
-            <h3>Votre demande d'acces a bien ete envoyee</h3>
+            <span className="auth-provider-badge">Demande envoyée</span>
+            <h3>Votre demande d'accés a bien été envoyée</h3>
             <p>
               Merci. Votre profil prestataire est maintenant en attente d'approbation par
-              l'administrateur. Vous recevrez l'acces apres validation.
+              l'administrateur. Vous recevrez l'accés après validation.
             </p>
             <div className="auth-popup-actions">
               <button type="button" className="auth-btn auth-btn-request" onClick={() => setProviderRequestPopup(false)}>

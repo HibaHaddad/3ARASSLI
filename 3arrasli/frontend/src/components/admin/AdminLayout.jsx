@@ -13,14 +13,14 @@ const AdminLayout = ({
   children,
   notifications,
   onDismissNotification,
-  onOpenNotifications,
+  onNotificationClick,
 }) => {
   return (
     <div className="provider-page admin-page-unified">
       <Navbar
         notifications={notifications}
         onDismissNotification={onDismissNotification}
-        onOpenNotifications={onOpenNotifications}
+        onNotificationClick={onNotificationClick}
       />
 
       <main className="provider-main">

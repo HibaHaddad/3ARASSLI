@@ -236,6 +236,8 @@ def serialize_admin_provider(user):
         "description": user.description or "",
         "instagram": user.instagram or "",
         "website": user.website or "",
+        "profilePhoto": user.profile_photo,
+        "coverPhoto": user.cover_photo,
         "rating": average_rating,
         "status": (
             "pending-approval"
