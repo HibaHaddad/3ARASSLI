@@ -45,7 +45,26 @@ const getLinkVariant = (link) => {
   return "";
 };
 
-const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onOpenNotifications }) => {
+const BellIcon = () => (
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path
+      d="M12 4.25a4.75 4.75 0 0 0-4.75 4.75v2.04c0 .82-.24 1.63-.69 2.32l-1.12 1.69a1.75 1.75 0 0 0 1.46 2.71h10.18a1.75 1.75 0 0 0 1.46-2.71l-1.12-1.69a4.25 4.25 0 0 1-.69-2.32V9A4.75 4.75 0 0 0 12 4.25Z"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+    <path
+      d="M9.75 18.25a2.25 2.25 0 0 0 4.5 0"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onNotificationClick }) => {
   const location = useLocation();
   const user = getStoredUser();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -93,20 +112,13 @@ const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onOpen
                 type="button"
                 className={`admin-notification-trigger ${notificationsOpen ? "active" : ""}`}
                 onClick={() => {
-                  setNotificationsOpen((prev) => {
-                    const nextValue = !prev;
-                    if (nextValue) {
-                      onOpenNotifications?.();
-                    }
-                    return nextValue;
-                  });
+                  setNotificationsOpen((prev) => !prev);
                 }}
                 aria-label={notificationLabel}
                 aria-expanded={notificationsOpen}
               >
                 <span className="admin-notification-bell" aria-hidden="true">
-                  <span />
-                  <span />
+                  <BellIcon />
                 </span>
                 {unreadCount > 0 ? (
                   <span className="admin-notification-count">{unreadCount}</span>
@@ -125,12 +137,41 @@ const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onOpen
                   ) : (
                     <div className="admin-notification-list">
                       {notifications.map((notification) => (
-                        <div key={notification.id} className={`admin-notification-item ${notification.type}`}>
-                          <p>{notification.message}</p>
+                        <div
+                          key={notification.id}
+                          className={`admin-notification-item ${notification.type} ${notification.seen ? "" : "unread"}`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => {
+                            onNotificationClick?.(notification);
+                            setNotificationsOpen(false);
+                          }}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              onNotificationClick?.(notification);
+                              setNotificationsOpen(false);
+                            }
+                          }}
+                        >
+                          <div className="admin-notification-item-accent" aria-hidden="true" />
+                          <div className="admin-notification-item-body">
+                            <div className="admin-notification-item-meta">
+                              <span className="admin-notification-item-tag">
+                                {notification.seen ? "Lu" : "Non lu"}
+                              </span>
+                              <time>{notification.dateLabel || "A l'instant"}</time>
+                            </div>
+                            <strong>{notification.title || "Notification admin"}</strong>
+                            <p>{notification.message}</p>
+                          </div>
                           <button
                             type="button"
                             className="provider-ghost-btn admin-toast-close"
-                            onClick={() => onDismissNotification?.(notification.id)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onDismissNotification?.(notification.id);
+                            }}
                           >
                             Fermer
                           </button>

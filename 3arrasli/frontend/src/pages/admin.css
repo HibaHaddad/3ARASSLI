@@ -15,65 +15,44 @@
   position: relative;
   width: 56px;
   height: 56px;
-  border: 1px solid rgba(184, 124, 145, 0.18);
+  border: 1px solid rgba(177, 140, 77, 0.26);
   border-radius: 18px;
-  background: rgba(255, 255, 255, 0.82);
+  background:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.98), rgba(251, 246, 238, 0.92)),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.9), rgba(246, 236, 223, 0.9));
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.84),
-    0 18px 34px rgba(112, 65, 82, 0.1);
+    0 20px 34px rgba(88, 56, 22, 0.12);
   cursor: pointer;
   transition:
     transform 220ms ease,
     box-shadow 220ms ease,
-    border-color 220ms ease;
+    border-color 220ms ease,
+    color 220ms ease;
+  color: #6b4b23;
 }
 
 .admin-notification-trigger:hover,
 .admin-notification-trigger.active {
   transform: translateY(-2px);
-  border-color: rgba(184, 124, 145, 0.28);
+  border-color: rgba(177, 140, 77, 0.42);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.92),
-    0 24px 40px rgba(112, 65, 82, 0.14);
+    0 24px 42px rgba(88, 56, 22, 0.18);
+  color: #513717;
 }
 
 .admin-notification-bell {
-  position: relative;
-  display: inline-block;
-  width: 20px;
-  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
 }
 
-.admin-notification-bell span:first-child {
-  position: absolute;
-  left: 3px;
-  top: 1px;
-  width: 14px;
-  height: 12px;
-  border: 2px solid #6f4152;
-  border-bottom: none;
-  border-radius: 8px 8px 0 0;
-}
-
-.admin-notification-bell span:last-child {
-  position: absolute;
-  left: 1px;
-  top: 11px;
-  width: 18px;
-  height: 7px;
-  border-radius: 0 0 10px 10px;
-  background: #6f4152;
-}
-
-.admin-notification-trigger::after {
-  content: "";
-  position: absolute;
-  left: 24px;
-  bottom: 10px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #6f4152;
+.admin-notification-bell svg {
+  width: 24px;
+  height: 24px;
 }
 
 .admin-notification-count {
@@ -87,11 +66,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #b34c69, #d5a35f);
+  background: linear-gradient(135deg, #8f1f33, #d0a04c);
   color: #fff;
   font-size: 0.78rem;
   font-weight: 800;
-  box-shadow: 0 12px 24px rgba(179, 76, 105, 0.28);
+  box-shadow: 0 12px 24px rgba(143, 31, 51, 0.28);
 }
 
 .auth-admin-notifications {
@@ -102,15 +81,18 @@
   position: absolute;
   top: calc(100% + 12px);
   right: 0;
-  width: min(420px, calc(100vw - 48px));
+  width: min(440px, calc(100vw - 48px));
   max-height: 520px;
   overflow: auto;
-  border-radius: 24px;
-  border: 1px solid rgba(184, 124, 145, 0.16);
-  background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 28px 60px rgba(112, 65, 82, 0.18);
-  padding: 16px;
+  border-radius: 28px;
+  border: 1px solid rgba(177, 140, 77, 0.22);
+  background:
+    radial-gradient(circle at top, rgba(255, 252, 247, 0.98), rgba(252, 248, 242, 0.96)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 240, 230, 0.94));
+  box-shadow: 0 30px 60px rgba(88, 56, 22, 0.18);
+  padding: 18px;
   z-index: 80;
+  backdrop-filter: blur(14px);
 }
 
 .admin-notification-panel-head {
@@ -122,49 +104,144 @@
 }
 
 .admin-notification-panel-head strong {
-  color: #4f2d38;
+  color: #412610;
+  font-size: 1rem;
 }
 
 .admin-notification-panel-head span {
-  color: rgba(93, 59, 70, 0.72);
+  color: rgba(89, 62, 29, 0.72);
   font-size: 0.88rem;
 }
 
 .admin-notification-empty {
   margin: 0;
-  color: rgba(93, 59, 70, 0.76);
+  color: rgba(89, 62, 29, 0.76);
+  padding: 12px 4px 8px;
 }
 
 .admin-notification-list {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .admin-notification-item {
-  border-radius: 18px;
-  border: 1px solid rgba(184, 124, 145, 0.16);
-  background: rgba(255, 251, 248, 0.96);
-  padding: 12px;
+  border-radius: 22px;
+  border: 1px solid rgba(177, 140, 77, 0.16);
+  background: linear-gradient(180deg, rgba(255, 252, 248, 0.96), rgba(250, 244, 235, 0.94));
+  padding: 16px;
   display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: start;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease,
+    border-color 180ms ease;
+  text-align: left;
+  width: 100%;
+}
+
+.admin-notification-item.unread {
+  border-color: rgba(177, 140, 77, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 18px 34px rgba(88, 56, 22, 0.08);
+}
+
+.admin-notification-item:hover,
+.admin-notification-item:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(177, 140, 77, 0.3);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 20px 36px rgba(88, 56, 22, 0.12);
+  outline: none;
+}
+
+.admin-notification-item-accent {
+  width: 10px;
+  min-height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #d7b06b 0%, #8f1f33 100%);
+}
+
+.admin-notification-item-body {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-notification-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  color: rgba(89, 62, 29, 0.68);
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.admin-notification-item-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.admin-notification-item-tag::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8f1f33;
+  box-shadow: 0 0 0 6px rgba(143, 31, 51, 0.08);
+}
+
+.admin-notification-item strong {
+  color: #412610;
+  font-size: 0.98rem;
+  line-height: 1.35;
 }
 
 .admin-notification-item p {
   margin: 0;
-  color: rgba(67, 40, 50, 0.92);
+  color: rgba(67, 44, 22, 0.9);
   line-height: 1.55;
 }
 
-.admin-notification-item.success {
-  border-color: rgba(96, 179, 124, 0.34);
+.admin-feedback-banner {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+  border-radius: 24px;
+  margin-bottom: 18px;
+  border: 1px solid rgba(177, 140, 77, 0.18);
+  background: linear-gradient(135deg, rgba(255, 249, 240, 0.96), rgba(255, 255, 255, 0.92));
+  box-shadow: 0 20px 40px rgba(88, 56, 22, 0.08);
 }
 
-.admin-notification-item.error {
-  border-color: rgba(203, 99, 128, 0.36);
+.admin-feedback-banner.success {
+  border-color: rgba(80, 140, 87, 0.26);
 }
 
-.admin-notification-item.info {
-  border-color: rgba(201, 160, 94, 0.32);
+.admin-feedback-banner.error {
+  border-color: rgba(143, 31, 51, 0.24);
+}
+
+.admin-feedback-banner-label {
+  color: rgba(89, 62, 29, 0.74);
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.admin-feedback-banner p {
+  margin: 0;
+  color: #412610;
+  line-height: 1.55;
 }
 
 .admin-tabs {
@@ -275,8 +352,16 @@
 .admin-table-actions {
   white-space: nowrap;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
+  align-items: center;
+}
+
+.admin-provider-actions-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
 }
 
 .admin-chip {
@@ -374,6 +459,85 @@
   color: rgba(93, 59, 70, 0.8);
 }
 
+.admin-provider-details-shell {
+  display: grid;
+  gap: 16px;
+}
+
+.admin-provider-description-card {
+  border-radius: 20px;
+  border: 1px solid rgba(184, 124, 145, 0.14);
+  background: rgba(255, 255, 255, 0.78);
+  padding: 16px 18px;
+}
+
+.admin-provider-description-card strong {
+  display: block;
+  margin-bottom: 8px;
+  color: #4f2d38;
+}
+
+.admin-provider-description-card p {
+  margin: 0;
+  color: rgba(93, 59, 70, 0.82);
+  line-height: 1.65;
+}
+
+.admin-provider-gallery {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-provider-photo-card {
+  border-radius: 22px;
+  border: 1px solid rgba(184, 124, 145, 0.14);
+  background: rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+  box-shadow: 0 18px 34px rgba(93, 59, 70, 0.08);
+}
+
+.admin-provider-photo-frame {
+  min-height: 260px;
+  max-height: 340px;
+  background:
+    radial-gradient(circle at top, rgba(255, 251, 245, 0.96), rgba(244, 233, 225, 0.94)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(242, 233, 227, 0.9));
+  display: grid;
+  place-items: center;
+}
+
+.admin-provider-photo-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.admin-provider-photo-frame span {
+  color: rgba(93, 59, 70, 0.68);
+  font-size: 0.92rem;
+  padding: 24px;
+  text-align: center;
+}
+
+.admin-provider-photo-copy {
+  padding: 14px 16px 16px;
+}
+
+.admin-provider-photo-copy strong {
+  display: block;
+  color: #4f2d38;
+  margin-bottom: 6px;
+}
+
+.admin-provider-photo-copy p {
+  margin: 0;
+  color: rgba(93, 59, 70, 0.8);
+  line-height: 1.55;
+}
+
 .admin-signature-box {
   margin-top: 12px;
   border: 1px solid rgba(184, 124, 145, 0.16);
@@ -398,11 +562,34 @@
 
 .admin-modal-shell {
   width: min(720px, calc(100% - 24px));
+  max-height: min(88vh, 920px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
 }
 
 .admin-modal-content {
   display: grid;
   gap: 12px;
+  overflow-y: auto;
+  padding-right: 6px;
+  max-height: 100%;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(143, 31, 51, 0.35) rgba(244, 233, 225, 0.6);
+}
+
+.admin-modal-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.admin-modal-content::-webkit-scrollbar-track {
+  background: rgba(244, 233, 225, 0.6);
+  border-radius: 999px;
+}
+
+.admin-modal-content::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(208, 160, 76, 0.85), rgba(143, 31, 51, 0.78));
+  border-radius: 999px;
 }
 
 .admin-modal-actions {
@@ -441,13 +628,28 @@
   .admin-filter-bar,
   .admin-form-grid,
   .admin-detail-grid,
-  .admin-kpi-grid {
+  .admin-kpi-grid,
+  .admin-provider-gallery {
     grid-template-columns: 1fr;
+  }
+
+  .admin-provider-photo-frame {
+    min-height: 240px;
+    max-height: none;
   }
 
   .admin-notification-panel {
     right: auto;
     left: 0;
     width: min(100%, calc(100vw - 40px));
+  }
+
+  .admin-notification-item {
+    grid-template-columns: 10px 1fr;
+  }
+
+  .admin-toast-close {
+    grid-column: 2;
+    justify-self: start;
   }
 }
