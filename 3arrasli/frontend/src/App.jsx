@@ -5,6 +5,8 @@ import SplashScreen from "./components/SplashScreen";
 import AdminDashboard from "./pages/AdminDashboard";
 import ChatPage from "./pages/ChatPage";
 import ClientDashboard from "./pages/ClientDashboard";
+import ClientReservationsPage from "./pages/ClientReservationsPage";
+import ClientSearchPage from "./pages/ClientSearchPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import LoginPage from "./pages/LoginPage";
 import PlannerPage from "./pages/PlannerPage";
@@ -65,8 +67,12 @@ const App = () => {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
+        <Route path="/client-dashboard" element={<Navigate to="/client" replace />} />
+        <Route path="/favorites" element={<Navigate to="/client/favorites" replace />} />
+        <Route path="/chat" element={<Navigate to="/client/chat" replace />} />
+        <Route path="/planner" element={<Navigate to="/client/planner" replace />} />
         <Route
-          path="/client-dashboard"
+          path="/client"
           element={
             <RequireRole role="Client">
               <ClientDashboard />
@@ -74,7 +80,23 @@ const App = () => {
           }
         />
         <Route
-          path="/favorites"
+          path="/client/search"
+          element={
+            <RequireRole role="Client">
+              <ClientSearchPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/client/reservations"
+          element={
+            <RequireRole role="Client">
+              <ClientReservationsPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/client/favorites"
           element={
             <RequireRole role="Client">
               <FavoritesPage />
@@ -82,7 +104,7 @@ const App = () => {
           }
         />
         <Route
-          path="/chat"
+          path="/client/chat"
           element={
             <RequireRole role="Client">
               <ChatPage />
@@ -90,7 +112,7 @@ const App = () => {
           }
         />
         <Route
-          path="/planner"
+          path="/client/planner"
           element={
             <RequireRole role="Client">
               <PlannerPage />

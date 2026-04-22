@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
 import "./client.css";
+import ClientNav from "./client/ClientNav";
 
 const defaultItems = [
   "Robe de mariee",
@@ -68,74 +68,53 @@ const PlannerPage = () => {
   return (
     <div className="client-page">
       <Navbar />
-      <main className="client-main">
-        <section className="client-shell">
-          <aside className="client-sidebar">
-            <div className="client-sidebar-brand">
-              <p className="client-eyebrow">Client</p>
-              <h1>Planner</h1>
-              <span>Construisez votre checklist mariage dans un espace epure.</span>
+      <main className="client-page-main">
+        <section className="client-page-hero compact">
+          <div className="client-shell">
+            <ClientNav />
+            <div className="client-page-heading">
+              <span className="section-kicker">Wedding planner</span>
+              <h1>Votre carnet d'organisation.</h1>
+              <p>Ajoutez, suivez et finalisez les etapes de preparation dans une page simple et douce.</p>
+            </div>
+          </div>
+        </section>
+
+        <section className="client-section client-planner-section">
+          <div className="client-shell client-planner-layout">
+            <div className="client-planner-copy">
+              <span className="section-kicker">Checklist</span>
+              <h2>Vos taches, votre rythme.</h2>
+              <p>Un outil d'organisation mariage clair, sans logique de tableau de bord.</p>
             </div>
 
-            <nav className="client-sidebar-nav">
-              <Link className="client-sidebar-link" to="/client-dashboard">
-                <strong>Dashboard</strong>
-                <small>Recherche, services, reservation</small>
-              </Link>
-              <Link className="client-sidebar-link" to="/favorites">
-                <strong>Favoris</strong>
-                <small>Prestataires sauvegardes</small>
-              </Link>
-              <Link className="client-sidebar-link active" to="/planner">
-                <strong>Planner</strong>
-                <small>Checklist mariage</small>
-              </Link>
-              <Link className="client-sidebar-link" to="/chat">
-                <strong>Chat</strong>
-                <small>Conversation en direct</small>
-              </Link>
-            </nav>
-          </aside>
-
-          <section className="client-content">
-            <header className="client-content-header">
-              <div>
-                <p className="client-section-label">Wedding planner</p>
-                <h2>Vos taches, votre rythme</h2>
-                <p>Ajoutez, suivez et finalisez les etapes de preparation en toute clarte.</p>
-              </div>
-            </header>
-
+            <div className="client-planner-card">
             {message ? <p className="client-message">{message}</p> : null}
             {error ? <p className="client-error">{error}</p> : null}
 
-            <div className="client-grid">
-              <section className="client-panel">
-                <h2>Ajouter une tache</h2>
-                <div className="client-filters">
-                  <input className="client-input" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nouvelle tache" />
-                  <button type="button" className="client-btn client-btn-primary" onClick={addItem}>
-                    Ajouter
-                  </button>
-                </div>
-              </section>
+              <div className="client-planner-form">
+                <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nouvelle tache mariage" />
+                <button type="button" className="client-btn client-btn-primary" onClick={addItem}>
+                  Ajouter
+                </button>
+              </div>
 
-              <section className="client-panel">
-                <h2>Checklist</h2>
-                <div className="client-chat-list">
+              <div className="client-planner-list">
                   {items.map((item) => (
-                    <div key={item.id} className="client-planner-item">
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={item.completed ? "completed" : ""}
+                      onClick={() => toggleItem(item)}
+                    >
                       <span>{item.title}</span>
-                      <button type="button" className="client-btn client-btn-soft" onClick={() => toggleItem(item)}>
-                        {item.completed ? "Termine" : "Marquer complete"}
-                      </button>
-                    </div>
+                      <small>{item.completed ? "Terminee" : "A faire"}</small>
+                    </button>
                   ))}
                   {items.length === 0 ? <p>Aucune tache pour le moment.</p> : null}
-                </div>
-              </section>
+              </div>
             </div>
-          </section>
+          </div>
         </section>
       </main>
     </div>
