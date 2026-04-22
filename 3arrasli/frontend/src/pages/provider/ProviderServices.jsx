@@ -8,10 +8,11 @@ const ProviderServices = ({
   serviceFeedback,
   servicesLoading,
   serviceSubmitting,
-  imagePreviewUrl,
+  imagePreviews,
   imageInputKey,
   onServiceChange,
   onServiceImageChange,
+  onRemoveServiceImage,
   onSubmitService,
   onResetEditing,
   services,
@@ -36,6 +37,13 @@ const ProviderServices = ({
     serviceFormErrors?.[fieldName] ? (
       <span className="provider-field-error">{serviceFormErrors[fieldName]}</span>
     ) : null;
+
+  const getServiceImages = (service) => {
+    if (Array.isArray(service.images) && service.images.length > 0) {
+      return service.images.map((image) => image.image_path || image.url || image);
+    }
+    return service.image ? [service.image] : [];
+  };
 
   return (
     <div className="provider-stack provider-services-premium">
@@ -64,7 +72,7 @@ const ProviderServices = ({
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
               <h3>{editingServiceId ? "Modifier un service" : "Nouvelle prestation"}</h3>
-              <p>Prix, description, image reelle et categorie pour chaque prestation.</p>
+              <p>Prix, description, galerie d'images reelles et categorie pour chaque prestation.</p>
             </div>
             <button
               type="button"
@@ -125,20 +133,21 @@ const ProviderServices = ({
               {renderFieldError("category")}
             </label>
             <div>
-              <span>Image / photo reelle</span>
+              <span>Galerie photos</span>
               <label className="provider-upload-trigger">
-                {imagePreviewUrl ? "Changer l'image" : "Choisir une image"}
+                Ajouter des images
                 <input
                   key={imageInputKey}
                   type="file"
-                  name="image"
+                  name="images[]"
                   accept="image/*"
+                  multiple
                   onChange={onServiceImageChange}
                 />
               </label>
               {renderFieldError("image")}
               <span className="provider-form-note">
-                JPG, JPEG ou PNG, 2 MB maximum.
+                Selection multiple possible. JPG, JPEG ou PNG, 2 MB maximum par image.
               </span>
             </div>
             <label>
@@ -158,15 +167,30 @@ const ProviderServices = ({
               />
               {renderFieldError("description")}
             </label>
-            {imagePreviewUrl ? (
+            {imagePreviews?.length > 0 ? (
               <div className="provider-field-full provider-image-preview-card">
                 <div className="provider-image-preview-head">
-                  <strong>Apercu de l'image</strong>
-                  <span>Image chargee avec succes.</span>
+                  <strong>Galerie du service</strong>
+                  <span>{imagePreviews.length} image{imagePreviews.length > 1 ? "s" : ""} prete{imagePreviews.length > 1 ? "s" : ""}</span>
                 </div>
-                <img src={imagePreviewUrl} alt="Apercu du service" className="provider-image-preview" />
+                <div className="provider-image-preview-grid">
+                  {imagePreviews.map((preview, index) => (
+                    <div key={preview.key} className="provider-image-preview-tile">
+                      <img src={preview.url} alt={`Apercu du service ${index + 1}`} />
+                      <button
+                        type="button"
+                        className="provider-image-remove-btn"
+                        onClick={() => onRemoveServiceImage(preview)}
+                        aria-label="Supprimer cette image"
+                      >
+                        x
+                      </button>
+                      <span>{preview.isNew ? "Nouvelle" : "Enregistree"}</span>
+                    </div>
+                  ))}
+                </div>
                 <span className="provider-form-note">
-                  {editingServiceId ? "Choisissez un autre fichier pour changer l'image." : "L'image sera envoyee avec le service."}
+                  {editingServiceId ? "Ajoutez de nouvelles images ou retirez celles qui ne doivent plus apparaitre." : "Ces images seront envoyees avec le service."}
                 </span>
               </div>
             ) : null}
@@ -209,13 +233,29 @@ const ProviderServices = ({
             <p>Ajoutez votre premiere prestation pour la partager sur la plateforme.</p>
           </article>
         ) : (
-          services.map((service) => (
-            <article key={service.id} className="provider-service-card">
-              <div className="provider-service-media">
-                <img src={resolveAssetUrl(service.image)} alt={service.title} />
-                <div className="provider-service-overlay" />
-                <span>{service.category}</span>
-              </div>
+          services.map((service) => {
+            const serviceImages = getServiceImages(service);
+            const primaryImage = serviceImages[0] || service.image;
+
+            return (
+              <article key={service.id} className="provider-service-card">
+                <div className="provider-service-media">
+                  <img src={resolveAssetUrl(primaryImage)} alt={service.title} />
+                  <div className="provider-service-overlay" />
+                  <span>{service.category}</span>
+                  {serviceImages.length > 1 ? (
+                    <strong className="provider-service-gallery-count">
+                      +{serviceImages.length - 1} photos
+                    </strong>
+                  ) : null}
+                  {serviceImages.length > 1 ? (
+                    <div className="provider-service-thumbs">
+                      {serviceImages.slice(0, 4).map((image, index) => (
+                        <img key={`${service.id}-${image}-${index}`} src={resolveAssetUrl(image)} alt="" />
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
               <div className="provider-service-body">
                 <div className="provider-service-topline">
                   <h3>{service.title}</h3>
@@ -245,7 +285,8 @@ const ProviderServices = ({
                 </div>
               </div>
             </article>
-          ))
+            );
+          })
         )}
       </section>
     </div>

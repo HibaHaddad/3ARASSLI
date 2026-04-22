@@ -53,6 +53,22 @@ class Service(db.Model):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+    images = db.relationship(
+        "ServiceImage",
+        backref="service",
+        cascade="all, delete-orphan",
+        lazy=True,
+        order_by="ServiceImage.id.asc()",
+    )
+
+
+class ServiceImage(db.Model):
+    __tablename__ = "service_images"
+
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=False, index=True)
+    image_path = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class Reservation(db.Model):
