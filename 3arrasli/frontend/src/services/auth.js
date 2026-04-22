@@ -1,7 +1,7 @@
 const STORAGE_KEY = "arrasli_auth_session";
 
 export const ROLE_ROUTES = {
-  Client: "/client-dashboard",
+  Client: "/client",
   Admin: "/admin",
   Prestataire: "/prestataire",
 };

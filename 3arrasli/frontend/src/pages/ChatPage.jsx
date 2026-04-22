@@ -1,10 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
 import { getStoredUser } from "../services/auth";
 import "./provider.css";
 import "./client.css";
+import ClientNav from "./client/ClientNav";
 
 const ChatPage = () => {
   const [services, setServices] = useState([]);
@@ -116,44 +116,20 @@ const ChatPage = () => {
   return (
     <div className="client-page">
       <Navbar />
-      <main className="client-main">
-        <section className="client-shell">
-          <aside className="client-sidebar">
-            <div className="client-sidebar-brand">
-              <p className="client-eyebrow">Client</p>
-              <h1>Messagerie</h1>
-              <span>Discutez directement avec vos prestataires.</span>
+      <main className="client-page-main">
+        <section className="client-page-hero compact">
+          <div className="client-shell">
+            <ClientNav />
+            <div className="client-page-heading">
+              <span className="section-kicker">Chat client</span>
+              <h1>Conversations mariage.</h1>
+              <p>Un fil de discussion naturel pour confirmer les details, poser vos questions et avancer sereinement.</p>
             </div>
+          </div>
+        </section>
 
-            <nav className="client-sidebar-nav">
-              <Link className="client-sidebar-link" to="/client-dashboard">
-                <strong>Dashboard</strong>
-                <small>Recherche, services, reservation</small>
-              </Link>
-              <Link className="client-sidebar-link" to="/favorites">
-                <strong>Favoris</strong>
-                <small>Prestataires sauvegardes</small>
-              </Link>
-              <Link className="client-sidebar-link" to="/planner">
-                <strong>Planner</strong>
-                <small>Checklist mariage</small>
-              </Link>
-              <Link className="client-sidebar-link active" to="/chat">
-                <strong>Chat</strong>
-                <small>Conversation en direct</small>
-              </Link>
-            </nav>
-          </aside>
-
-          <section className="client-content">
-            <header className="client-content-header">
-              <div>
-                <p className="client-section-label">Chat client</p>
-                <h2>Conversations en temps reel</h2>
-                <p>Le meme style premium que l’espace prestataire, avec une lecture plus claire.</p>
-              </div>
-            </header>
-
+        <section className="client-section">
+          <div className="client-shell">
             {error ? <p className="client-error">{error}</p> : null}
 
             <article className="provider-panel provider-chat-shell">
@@ -221,7 +197,7 @@ const ChatPage = () => {
                 </form>
               </div>
             </article>
-          </section>
+          </div>
         </section>
       </main>
     </div>

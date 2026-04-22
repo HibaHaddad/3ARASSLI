@@ -1,38 +1,47 @@
 import React, { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
-import { getStoredUser } from "../services/auth";
 import "../Home.css";
 import "./client.css";
 import ClientNav from "./client/ClientNav";
 import ServiceCard from "./client/ServiceCard";
 import ServiceModal from "./client/ServiceModal";
-import { cities, emptyFilters, serviceTypes, toSearchQuery } from "./client/clientData";
+import {
+  buildServiceParams,
+  cities,
+  getFiltersFromSearch,
+  serviceTypes,
+  toSearchQuery,
+} from "./client/clientData";
 
-const ClientDashboard = () => {
-  const navigate = useNavigate();
-  const user = getStoredUser();
-  const firstName = user?.name?.split(" ")?.[0] || "Bienvenue";
-
-  const [filters, setFilters] = useState(emptyFilters);
+const ClientSearchPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filters, setFilters] = useState(() => getFiltersFromSearch(searchParams));
   const [services, setServices] = useState([]);
   const [selectedService, setSelectedService] = useState(null);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
-  const loadServices = async () => {
+  const loadServices = async (nextFilters = filters) => {
+    setLoading(true);
+    setError("");
     try {
-      const response = await api.get("/api/services");
+      const response = await api.get("/api/services", { params: buildServiceParams(nextFilters) });
       setServices(response.data.services || []);
     } catch (err) {
       setError(err.response?.data?.message || "Impossible de charger les services.");
+    } finally {
+      setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadServices();
-  }, []);
+    const nextFilters = getFiltersFromSearch(searchParams);
+    setFilters(nextFilters);
+    loadServices(nextFilters);
+  }, [searchParams]);
 
   const onFilterChange = (event) => {
     const { name, value } = event.target;
@@ -41,8 +50,12 @@ const ClientDashboard = () => {
 
   const submitSearch = (event) => {
     event.preventDefault();
-    const query = toSearchQuery(filters);
-    navigate(query ? `/client/search?${query}` : "/client/search");
+    setSearchParams(toSearchQuery(filters));
+  };
+
+  const resetSearch = () => {
+    setFilters({ city: "", budget: "", min_price: "", max_price: "", type: "" });
+    setSearchParams("");
   };
 
   const toggleFavorite = async (service) => {
@@ -56,7 +69,7 @@ const ClientDashboard = () => {
         await api.post("/api/favorites", { prestataire_id: service.prestataire_id });
         setMessage("Prestataire ajoute a vos favoris.");
       }
-      await loadServices();
+      await loadServices(filters);
       setSelectedService((prev) =>
         prev && prev.id === service.id ? { ...prev, is_favorite: !prev.is_favorite } : prev
       );
@@ -66,55 +79,19 @@ const ClientDashboard = () => {
   };
 
   return (
-    <div className="client-page client-experience">
+    <div className="client-page">
       <Navbar />
-
-      <main>
-        <section className="client-hero">
-          <div className="client-hero-backdrop" />
-          <div className="client-hero-layer" />
-
+      <main className="client-page-main">
+        <section className="client-page-hero compact">
           <div className="client-shell">
-            <ClientNav light />
-
-            <div className="client-hero-grid">
-              <div className="client-hero-copy">
-                <span className="hero-pill">Votre mariage, version premium</span>
-                <h1>{firstName}, imaginez votre celebration avec les bons prestataires.</h1>
-                <p>
-                  Une experience connectee qui garde le charme de la Home publique : recherche,
-                  inspirations, favoris, conversations et organisation dans une vraie navigation de
-                  site mariage.
-                </p>
-
-                <div className="client-hero-actions">
-                  <Link className="client-btn client-btn-primary" to="/client/search">
-                    Explorer les prestataires
-                  </Link>
-                  <Link className="client-btn client-btn-soft" to="/client/reservations">
-                    Mes reservations
-                  </Link>
-                </div>
-              </div>
-
-              <div className="client-hero-card" aria-label="Resume mariage">
-                <span className="client-section-label">Inspiration</span>
-                <strong>{services.length}</strong>
-                <p>prestataires a explorer pour composer une journee douce, elegante et bien rythmee.</p>
-                <div className="client-mini-stats">
-                  <span>Recherche par ville</span>
-                  <span>Favoris connectes</span>
-                  <span>Reservation fluide</span>
-                </div>
-              </div>
+            <ClientNav />
+            <div className="client-page-heading">
+              <span className="section-kicker">Marketplace mariage</span>
+              <h1>Recherchez les prestataires qui correspondent a votre journee.</h1>
+              <p>Filtrez par ville, budget et type de service, puis ouvrez chaque fiche en pop-up premium.</p>
             </div>
 
             <form className="client-search-card" onSubmit={submitSearch}>
-              <div className="client-search-heading">
-                <span className="section-kicker">Recherche avancee</span>
-                <h2>Lancez votre recherche et ouvrez une vraie page de resultats.</h2>
-              </div>
-
               <div className="client-search-fields">
                 <label className="client-field">
                   <span>Ville</span>
@@ -155,6 +132,9 @@ const ClientDashboard = () => {
                   <button type="submit" className="client-btn client-btn-primary">
                     Rechercher
                   </button>
+                  <button type="button" className="client-btn client-btn-ghost" onClick={resetSearch}>
+                    Reinitialiser
+                  </button>
                 </div>
               </div>
             </form>
@@ -168,14 +148,16 @@ const ClientDashboard = () => {
 
             <div className="client-section-head">
               <div>
-                <span className="section-kicker">A decouvrir</span>
-                <h2>Quelques prestataires pour commencer votre selection.</h2>
+                <span className="section-kicker">Resultats</span>
+                <h2>{services.length} service(s) disponible(s)</h2>
               </div>
-              <p>La page de resultats vous donnera ensuite une recherche complete et filtrable.</p>
+              <p>Des cartes claires, visuelles et prêtes pour une decision rapide.</p>
             </div>
 
+            {loading ? <p className="client-loading">Chargement des prestataires...</p> : null}
+
             <div className="client-service-grid">
-              {services.slice(0, 3).map((service) => (
+              {services.map((service) => (
                 <ServiceCard
                   key={service.id}
                   service={service}
@@ -184,6 +166,13 @@ const ClientDashboard = () => {
                 />
               ))}
             </div>
+
+            {!loading && services.length === 0 ? (
+              <div className="client-empty-state">
+                <h3>Aucun service trouve.</h3>
+                <p>Essayez une autre ville, un budget plus large ou une autre categorie.</p>
+              </div>
+            ) : null}
           </div>
         </section>
       </main>
@@ -197,4 +186,4 @@ const ClientDashboard = () => {
   );
 };
 
-export default ClientDashboard;
+export default ClientSearchPage;
