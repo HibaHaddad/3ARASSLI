@@ -89,6 +89,19 @@ const ClientDashboard = () => {
                 </div>
               </div>
 
+<<<<<<< HEAD
+              <div className="client-hero-card" aria-label="Resume mariage">
+                <span className="client-section-label">Inspiration</span>
+                <strong>{services.length}</strong>
+                <p>prestataires a explorer pour composer une journee douce, elegante et bien rythmee.</p>
+                <div className="client-mini-stats">
+                  <span>Recherche par ville</span>
+                  <span>Favoris connectes</span>
+                  <span>Reservation fluide</span>
+                </div>
+              </div>
+=======
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
             </div>
 
             <form className="client-search-card" onSubmit={submitSearch}>
@@ -99,6 +112,8 @@ const ClientDashboard = () => {
 
               <div className="client-search-fields">
                 <label className="client-field">
+<<<<<<< HEAD
+=======
                   <span>Nom / Service</span>
                   <input
                     type="text"
@@ -110,6 +125,7 @@ const ClientDashboard = () => {
                 </label>
 
                 <label className="client-field">
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
                   <span>Ville</span>
                   <select name="city" value={filters.city} onChange={onFilterChange}>
                     <option value="">Toutes les villes</option>
@@ -162,9 +178,15 @@ const ClientDashboard = () => {
             <div className="client-section-head">
               <div>
                 <span className="section-kicker">A decouvrir</span>
+<<<<<<< HEAD
+                <h2>Quelques prestataires pour commencer votre selection.</h2>
+              </div>
+              <p>La page de resultats vous donnera ensuite une recherche complete et filtrable.</p>
+=======
                 <h2 className="client-dashboard-intro-title">Quelques prestataires pour commencer votre selection.</h2>
               </div>
            
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
             </div>
 
             <div className="client-service-grid">
