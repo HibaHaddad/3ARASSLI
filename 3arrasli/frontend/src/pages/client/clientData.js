@@ -1,8 +1,5 @@
 export const emptyFilters = {
-<<<<<<< HEAD
-=======
   q: "",
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
   city: "",
   budget: "",
   min_price: "",
@@ -41,10 +38,7 @@ export const buildServiceParams = (filters) => {
 };
 
 export const getFiltersFromSearch = (searchParams) => ({
-<<<<<<< HEAD
-=======
   q: searchParams.get("q") || "",
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
   city: searchParams.get("city") || "",
   budget: searchParams.get("budget") || "",
   min_price: "",
@@ -56,15 +50,7 @@ export const getFiltersFromSearch = (searchParams) => ({
 export const toSearchQuery = (filters) => {
   const next = new URLSearchParams();
 
-<<<<<<< HEAD
   ["q", "city", "budget", "type", "provider_id"].forEach((key) => {
-=======
-<<<<<<< HEAD
-  ["city", "budget", "type"].forEach((key) => {
-=======
-  ["q", "city", "budget", "type"].forEach((key) => {
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
->>>>>>> 12c956d61934554a77d0554734114693fcdd7166
     if (filters[key]) {
       next.set(key, filters[key]);
     }

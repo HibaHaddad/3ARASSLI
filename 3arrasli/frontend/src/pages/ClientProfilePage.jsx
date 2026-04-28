@@ -15,10 +15,7 @@ const initialForm = {
 };
 
 const ClientProfilePage = () => {
-<<<<<<< HEAD
-=======
   const profileFileInputId = "client-profile-photo-input";
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -128,15 +125,9 @@ const ClientProfilePage = () => {
 
   return (
     <ClientPageLayout
-<<<<<<< HEAD
       kicker="Profil client"
       title={`${firstName} espace personnel`}
       description="Mettez a jour vos coordonnees, votre photo et votre univers pour garder un compte client plus complet et plus elegant."
-=======
-      kicker="Profile client"
-      title={`${firstName} espace personnel`}
-      description="Mettez à jour vos coordonnées, votre photo et votre univers pour garder un compte client plus complet et plus élégant."
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
     >
       <section className="client-section client-profile-section">
         <div className="client-shell">
@@ -161,15 +152,9 @@ const ClientProfilePage = () => {
                 <p>{form.description || "Ajoutez une petite presentation pour personnaliser votre profil client."}</p>
 
                 <div className="client-profile-pills">
-<<<<<<< HEAD
                   <span>{form.city || "Ville a renseigner"}</span>
                   <span>{form.phone || "Telephone a renseigner"}</span>
                   <span>{form.instagram || "Instagram a renseigner"}</span>
-=======
-                  <span>{form.city || "Ville à renseigner"}</span>
-                  <span>{form.phone || "Telephone à renseigner"}</span>
-                  <span>{form.instagram || "Instagram à renseigner"}</span>
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
                 </div>
               </aside>
 
@@ -179,11 +164,7 @@ const ClientProfilePage = () => {
                     <span className="section-kicker">Edition</span>
                     <h2>Modifier mon profil</h2>
                   </div>
-<<<<<<< HEAD
-                  <p>Gardez vos informations toujours a jour dans la partie client.</p>
-=======
                   
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
                 </div>
 
                 <div className="client-profile-grid">
@@ -211,14 +192,10 @@ const ClientProfilePage = () => {
                     <span>Instagram</span>
                     <input className="client-input" name="instagram" value={form.instagram} onChange={onChange} />
                   </label>
-
                 </div>
 
                 <label className="client-field">
                   <span>Photo de profil</span>
-<<<<<<< HEAD
-                  <input className="client-input" type="file" accept="image/png,image/jpeg,image/jpg" onChange={onFileChange} />
-=======
                   <div className="client-file-upload">
                     <input
                       id={profileFileInputId}
@@ -230,11 +207,8 @@ const ClientProfilePage = () => {
                     <label htmlFor={profileFileInputId} className="client-file-trigger">
                       Choisir une image
                     </label>
-                    <span className="client-file-name">
-                      {profileFile?.name || "Aucun fichier selectionne"}
-                    </span>
+                    <span className="client-file-name">{profileFile?.name || "Aucun fichier selectionne"}</span>
                   </div>
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
                 </label>
 
                 <label className="client-field">

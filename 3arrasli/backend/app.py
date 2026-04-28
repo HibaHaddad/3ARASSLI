@@ -24,14 +24,6 @@ from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db, socketio
 from models import Appointment, Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
-<<<<<<< HEAD
-
-
-BACKEND_DIR = Path(__file__).resolve().parent
-load_dotenv(BACKEND_DIR / ".env")
-load_dotenv(BACKEND_DIR.parent / ".env")
-=======
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -3145,23 +3137,6 @@ def create_app():
         if rating < 1 or rating > 5:
             return jsonify({"success": False, "message": "La note doit etre comprise entre 1 et 5."}), 400
 
-<<<<<<< HEAD
-        existing = Review.query.filter_by(service_id=service.id, client_id=request.user_id).first()
-        if existing:
-            existing.rating = rating
-            existing.comment = comment
-            existing.updated_at = datetime.utcnow()
-            review = existing
-        else:
-            review = Review(
-                service_id=service.id,
-                client_id=request.user_id,
-                provider_id=get_service_provider_id(service),
-                rating=rating,
-                comment=comment,
-            )
-            db.session.add(review)
-=======
         review = Review(
             service_id=service.id,
             client_id=request.user_id,
@@ -3170,7 +3145,6 @@ def create_app():
             comment=comment,
         )
         db.session.add(review)
->>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
 
         db.session.commit()
         summary = update_service_rating(service)
