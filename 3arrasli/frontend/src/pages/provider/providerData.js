@@ -11,9 +11,9 @@ export const providerSections = [
     id: "reservations",
     icon: "reservations",
     label: "Reservations",
-    title: "Validation des reservations",
+    title: "Reservations",
     description:
-      "Consultez les demandes, acceptez ou refusez et gardez une vue claire sur les statuts.",
+      "Consultez les reservations affectees, ouvrez le calendrier et contactez vos clients.",
   },
   {
     id: "profile",
@@ -58,7 +58,6 @@ export const initialReservations = [
     time: "16:30",
     location: "Sidi Bou Said",
     amount: 1800,
-    status: "En attente",
     details:
       "Seance photo ceremonie et couple au coucher du soleil a Sidi Bou Said.",
   },
@@ -70,7 +69,6 @@ export const initialReservations = [
     time: "10:00",
     location: "La Marsa",
     amount: 2400,
-    status: "Validee",
     details:
       "Decoration florale pour salle, allee ceremonie et table d'honneur.",
   },
@@ -82,7 +80,6 @@ export const initialReservations = [
     time: "18:00",
     location: "Gammarth",
     amount: 5200,
-    status: "En attente",
     details: "Menu signature, atelier desserts et service raffine sur place.",
   },
   {
@@ -93,7 +90,6 @@ export const initialReservations = [
     time: "20:00",
     location: "Sousse",
     amount: 6900,
-    status: "Refusee",
     details:
       "Reception de 220 invites avec mise en scene lumineuse et piste centrale.",
   },
@@ -105,7 +101,6 @@ export const initialReservations = [
     time: "14:00",
     location: "Tunis",
     amount: 3200,
-    status: "Validee",
     details: "Couverture journee complete avec teaser livre sous 72h.",
   },
 ];
@@ -416,9 +411,9 @@ export const initialPriorityActions = [
   {
     id: 1,
     icon: "💌",
-    title: "Reservations a valider",
-    description: "Confirmez les demandes importantes sans doublonner les statistiques.",
-    action: "Voir les demandes",
+    title: "Reservations affectees",
+    description: "Consultez les reservations enregistrees et les creneaux associes.",
+    action: "Voir les reservations",
     target: "reservations",
   },
   {

@@ -9,10 +9,12 @@ import ProviderProfile from "./provider/ProviderProfile";
 import ProviderServices from "./provider/ProviderServices";
 import { resolveAssetUrl } from "../services/assets";
 import { getStoredSession, getStoredToken, saveStoredUser } from "../services/auth";
+import { IMAGE_TOO_LARGE_MESSAGE, showToast, validateImageFileSize } from "../services/toast";
 import {
   deleteProviderCalendarBlock,
   getProviderCalendarWeek,
   occupyProviderCalendarWeekSlot,
+  updateProviderAppointmentStatus,
 } from "../services/providerCalendar";
 import {
   getProviderChat,
@@ -21,7 +23,11 @@ import {
   sendProviderChatMessage,
 } from "../services/providerChats";
 import { connectChatSocket, emitRealtimeMessage, emitTypingStatus, joinConversationRoom } from "../services/socket";
-import { getProviderBookings, updateProviderBookingStatus } from "../services/providerBookings";
+import { getProviderBookings } from "../services/providerBookings";
+import {
+  getProviderNotifications,
+  markProviderNotificationRead,
+} from "../services/providerNotifications";
 import { getProviderProfile, updateProviderProfile } from "../services/providerProfile";
 import { validateServiceForm } from "./provider/serviceForm";
 import {
@@ -97,12 +103,10 @@ const ProviderDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileSidebarViewport());
   const [reservations, setReservations] = useState([]);
-  const [reservationFilter, setReservationFilter] = useState("Tous");
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedReservationId, setSelectedReservationId] = useState(null);
   const [loadingBookings, setLoadingBookings] = useState(false);
   const [bookingsMessage, setBookingsMessage] = useState({ type: "", text: "" });
-  const [updatingBookingId, setUpdatingBookingId] = useState(null);
   const [profileForm, setProfileForm] = useState(initialProfile);
   const [profileMessage, setProfileMessage] = useState({ type: "", text: "" });
   const [profileLoading, setProfileLoading] = useState(false);
@@ -132,6 +136,9 @@ const ProviderDashboard = () => {
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarMessage, setCalendarMessage] = useState({ type: "", text: "" });
   const [calendarUpdatingSlotKeys, setCalendarUpdatingSlotKeys] = useState([]);
+  const [calendarTargetSlot, setCalendarTargetSlot] = useState(null);
+  const [selectedAppointment, setSelectedAppointment] = useState(null);
+  const [updatingAppointmentId, setUpdatingAppointmentId] = useState(null);
   const [calendarWeekStart, setCalendarWeekStart] = useState(() => toIsoDate(getWeekStartDate()));
   const [calendarWeekMeta, setCalendarWeekMeta] = useState({
     weekLabel: "",
@@ -147,6 +154,9 @@ const ProviderDashboard = () => {
   const [typingLabel, setTypingLabel] = useState("");
   const [activeClientOnline, setActiveClientOnline] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsMessage, setNotificationsMessage] = useState("");
   const currentProviderId = Number(getStoredSession()?.user?.id || 0);
   const socketRef = useRef(null);
   const joinedChatIdsRef = useRef(new Set());
@@ -154,6 +164,20 @@ const ProviderDashboard = () => {
   const stopTypingTimeoutRef = useRef(null);
   const messagesEndRef = useRef(null);
   const activeChatIdRef = useRef(null);
+
+  useEffect(() => {
+    [bookingsMessage, profileMessage, serviceFeedback, calendarMessage, chatFeedback].forEach((feedback) => {
+      if (feedback?.type && feedback?.text) {
+        showToast(feedback.type, feedback.text);
+      }
+    });
+  }, [bookingsMessage, profileMessage, serviceFeedback, calendarMessage, chatFeedback]);
+
+  useEffect(() => {
+    if (notificationsMessage) {
+      showToast("error", notificationsMessage);
+    }
+  }, [notificationsMessage]);
 
   const loadBookings = async () => {
     setLoadingBookings(true);
@@ -181,6 +205,31 @@ const ProviderDashboard = () => {
 
   useEffect(() => {
     loadBookings();
+  }, []);
+
+  const loadNotifications = async (options = {}) => {
+    const { silent = false } = options;
+    if (!silent) {
+      setNotificationsLoading(true);
+    }
+    setNotificationsMessage("");
+
+    try {
+      const response = await getProviderNotifications();
+      setNotifications(response.notifications || []);
+    } catch (error) {
+      setNotificationsMessage(
+        error.response?.data?.message || "Impossible de charger les notifications."
+      );
+    } finally {
+      if (!silent) {
+        setNotificationsLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadNotifications();
   }, []);
 
   const loadProviderServices = async (options = {}) => {
@@ -478,15 +527,14 @@ const ProviderDashboard = () => {
   const filteredReservations = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
     return reservations.filter((item) => {
-      const filterMatch = reservationFilter === "Tous" || item.status === reservationFilter;
       const searchMatch =
         !normalized ||
         String(item.client || "").toLowerCase().includes(normalized) ||
         String(item.service || "").toLowerCase().includes(normalized) ||
         String(item.location || "").toLowerCase().includes(normalized);
-      return filterMatch && searchMatch;
+      return searchMatch;
     });
-  }, [reservationFilter, reservations, searchTerm]);
+  }, [reservations, searchTerm]);
 
   const selectedReservation =
     filteredReservations.find((item) => item.id === selectedReservationId) ||
@@ -504,10 +552,20 @@ const ProviderDashboard = () => {
     }
   }, [filteredReservations, selectedReservationId]);
 
+  useEffect(() => {
+    if (activeSection !== "calendar" || !calendarTargetSlot) {
+      return;
+    }
+
+    const target = window.document.querySelector(
+      `[data-slot-date="${calendarTargetSlot.date}"][data-slot-time="${calendarTargetSlot.time}"]`
+    );
+    target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }, [activeSection, calendarDays, calendarTargetSlot]);
+
   const upcomingReservations = useMemo(
     () =>
       [...reservations]
-        .filter((item) => item.status !== "Refusee")
         .sort((a, b) => new Date(a.date) - new Date(b.date))
         .slice(0, 3),
     [reservations]
@@ -516,15 +574,11 @@ const ProviderDashboard = () => {
   const recentChats = useMemo(() => chats.slice(0, 3), [chats]);
 
   const dashboardStats = useMemo(() => {
-    const pending = reservations.filter((item) => item.status === "En attente").length;
-    const validated = reservations.filter((item) => item.status === "Validee").length;
+    const reservationCount = reservations.length;
     const unread = chats.reduce((total, chat) => total + Number(chat.unread || 0), 0);
     const activeServices = services.filter((service) => service.status !== "Inactif").length;
     const freeDates = calendarDays.filter((day) => day.status === "free").length;
-    const totalRevenue = reservations
-      .filter((item) => item.status !== "Refusee")
-      .reduce((total, item) => total + Number(item.amount || 0), 0);
-    const totalDemand = Math.max(pending + validated, 1);
+    const totalRevenue = reservations.reduce((total, item) => total + Number(item.amount || 0), 0);
     const totalCalendarDays = Math.max(calendarDays.length, 1);
     const availabilityProgress = Math.round((freeDates / totalCalendarDays) * 100);
     const revenueProgress = Math.min(Math.round(totalRevenue / 80), 100);
@@ -542,13 +596,13 @@ const ProviderDashboard = () => {
       },
       {
         id: "requests",
-        label: "Demandes",
-        value: pending,
-        detail: "couples a confirmer",
+        label: "Reservations",
+        value: reservationCount,
+        detail: "creneaux affectes",
         tone: "rose",
         icon: "💌",
-        trend: pending > 0 ? "A traiter aujourd'hui" : "Aucune urgence",
-        progress: Math.round((pending / totalDemand) * 100),
+        trend: reservationCount > 0 ? "Planning actif" : "Aucune reservation",
+        progress: Math.min(reservationCount * 20, 100),
       },
       {
         id: "availability",
@@ -584,9 +638,8 @@ const ProviderDashboard = () => {
   }, [calendarDays, chats, reservations, services]);
 
   const heroSummary = useMemo(() => {
-    const pending = reservations.filter((item) => item.status === "En attente").length;
-    const weekBookings = reservations.filter((item) => item.status === "Validee").slice(0, 2).length;
-    return `Vous avez ${pending} demande(s) en attente et ${weekBookings} prestation(s) deja validee(s) sur les prochaines semaines.`;
+    const nextBookings = reservations.slice(0, 3).length;
+    return `Vous avez ${reservations.length} reservation(s) enregistree(s), dont ${nextBookings} a suivre en priorite sur les prochaines semaines.`;
   }, [reservations]);
 
   const currentHour = useMemo(() => `${String(new Date().getHours()).padStart(2, "0")}:`, []);
@@ -637,36 +690,6 @@ const ProviderDashboard = () => {
     }
   };
 
-  const updateReservationStatus = async (id, status) => {
-    if (!id || updatingBookingId) {
-      return;
-    }
-
-    setUpdatingBookingId(id);
-    setBookingsMessage({ type: "", text: "" });
-
-    try {
-      const response = await updateProviderBookingStatus(id, status);
-      const updatedBooking = response.booking;
-      setReservations((prev) =>
-        prev.map((item) => (item.id === id ? { ...item, ...updatedBooking } : item))
-      );
-      setSelectedReservationId(id);
-      setBookingsMessage({
-        type: "success",
-        text: response.message || "Statut de la reservation mis a jour avec succes.",
-      });
-      await loadCalendar({ silent: true });
-    } catch (error) {
-      setBookingsMessage({
-        type: "error",
-        text: error.response?.data?.message || "Impossible de mettre a jour cette reservation.",
-      });
-    } finally {
-      setUpdatingBookingId(null);
-    }
-  };
-
   const onProfileChange = (event) => {
     const { name, value } = event.target;
     setProfileErrors((prev) => ({ ...prev, [name]: "" }));
@@ -681,6 +704,14 @@ const ProviderDashboard = () => {
   };
 
   const onProfileImageChange = (fieldName, file) => {
+    const errorField = fieldName === "profilePhoto" ? "profilePhoto" : "coverPhoto";
+
+    if (file && !validateImageFileSize(file)) {
+      setProfileErrors((prev) => ({ ...prev, [errorField]: IMAGE_TOO_LARGE_MESSAGE }));
+      setProfileMessage({ type: "error", text: IMAGE_TOO_LARGE_MESSAGE });
+      return;
+    }
+
     if (fieldName === "profilePhoto") {
       setProfileErrors((prev) => ({ ...prev, profilePhoto: "" }));
       setProfileImageFile(file);
@@ -809,6 +840,13 @@ const ProviderDashboard = () => {
     setServiceFormErrors((prev) => ({ ...prev, image: "" }));
 
     if (files.length === 0) {
+      return;
+    }
+
+    if (!validateImageFileSize(files)) {
+      setServiceFormErrors((prev) => ({ ...prev, image: IMAGE_TOO_LARGE_MESSAGE }));
+      setServiceFeedback({ type: "error", text: IMAGE_TOO_LARGE_MESSAGE });
+      setImageInputKey((prev) => prev + 1);
       return;
     }
 
@@ -1024,6 +1062,11 @@ const ProviderDashboard = () => {
       return;
     }
 
+    if (slot.eventType === "appointment") {
+      setSelectedAppointment(slot);
+      return;
+    }
+
     if (slot.status === "reserved") {
       setCalendarMessage({
         type: "error",
@@ -1059,6 +1102,33 @@ const ProviderDashboard = () => {
       });
     } finally {
       setCalendarUpdatingSlotKeys((prev) => prev.filter((key) => key !== slotKey));
+    }
+  };
+
+  const updateAppointmentStatus = async (appointment, status) => {
+    if (!appointment?.appointmentId || updatingAppointmentId) {
+      return;
+    }
+
+    setUpdatingAppointmentId(appointment.appointmentId);
+    setCalendarMessage({ type: "", text: "" });
+
+    try {
+      const response = await updateProviderAppointmentStatus(appointment.appointmentId, status);
+      setCalendarMessage({
+        type: "success",
+        text: response.message || "Rendez-vous mis a jour avec succes.",
+      });
+      setSelectedAppointment(null);
+      await loadCalendar({ silent: true });
+      await loadNotifications({ silent: true });
+    } catch (error) {
+      setCalendarMessage({
+        type: "error",
+        text: error.response?.data?.message || "Impossible de mettre a jour ce rendez-vous.",
+      });
+    } finally {
+      setUpdatingAppointmentId(null);
     }
   };
 
@@ -1176,6 +1246,45 @@ const ProviderDashboard = () => {
     if (reservation?.date) {
       setCalendarWeekStart(toIsoDate(getWeekStartDate(new Date(reservation.date))));
     }
+    if (reservation?.date && reservation?.time && reservation.time !== "--") {
+      setCalendarTargetSlot({
+        reservationId: reservation.id,
+        date: reservation.date,
+        time: reservation.time,
+      });
+    }
+    setActiveSection("calendar");
+  };
+
+  const openNotification = async (notification) => {
+    if (!notification) {
+      return;
+    }
+
+    if (!notification.isRead) {
+      setNotifications((prev) =>
+        prev.map((item) => (item.id === notification.id ? { ...item, isRead: true } : item))
+      );
+      markProviderNotificationRead(notification.id).catch(() => {
+        setNotifications((prev) =>
+          prev.map((item) => (item.id === notification.id ? { ...item, isRead: false } : item))
+        );
+      });
+    }
+
+    const target = notification.target || notification.reservation;
+    if (target?.date) {
+      setCalendarWeekStart(toIsoDate(getWeekStartDate(new Date(target.date))));
+      setCalendarTargetSlot({
+        reservationId: notification.reservationId || null,
+        appointmentId: notification.appointmentId || null,
+        date: target.date,
+        time: target.time,
+      });
+    }
+    if (notification.reservationId) {
+      setSelectedReservationId(notification.reservationId);
+    }
     setActiveSection("calendar");
   };
 
@@ -1206,18 +1315,13 @@ const ProviderDashboard = () => {
       case "reservations":
         return (
           <ProviderBookings
-            reservationFilter={reservationFilter}
-            onFilterChange={setReservationFilter}
             searchTerm={searchTerm}
             onSearchChange={(event) => setSearchTerm(event.target.value)}
             reservations={filteredReservations}
             selectedReservation={selectedReservation}
             selectedReservationId={selectedReservationId}
             loadingBookings={loadingBookings}
-            bookingsMessage={bookingsMessage}
-            updatingBookingId={updatingBookingId}
             onSelectReservation={setSelectedReservationId}
-            onUpdateStatus={updateReservationStatus}
             onViewInCalendar={goToCalendarForReservation}
             onContactClient={contactReservationClient}
           />
@@ -1227,7 +1331,6 @@ const ProviderDashboard = () => {
           <ProviderProfile
             profileForm={profileForm}
             profileErrors={profileErrors}
-            profileMessage={profileMessage}
             profileLoading={profileLoading}
             profileSubmitting={profileSubmitting}
             profilePhotoPreview={profilePhotoPreview}
@@ -1266,12 +1369,16 @@ const ProviderDashboard = () => {
             calendarDays={calendarDays}
             onToggleSlot={toggleCalendarSlot}
             loadingCalendar={calendarLoading}
-            calendarMessage={calendarMessage}
             updatingSlotKeys={calendarUpdatingSlotKeys}
+            targetSlot={calendarTargetSlot}
             weekMeta={calendarWeekMeta}
             onPreviousWeek={goToPreviousWeek}
             onNextWeek={goToNextWeek}
             onOpenChat={goToChat}
+            selectedAppointment={selectedAppointment}
+            updatingAppointmentId={updatingAppointmentId}
+            onCloseAppointment={() => setSelectedAppointment(null)}
+            onUpdateAppointmentStatus={updateAppointmentStatus}
           />
         );
       case "chat":
@@ -1286,7 +1393,6 @@ const ProviderDashboard = () => {
             onSendMessage={sendMessage}
             loadingChats={loadingChats}
             sendingMessage={sendingMessage}
-            chatFeedback={chatFeedback}
             typingLabel={typingLabel}
             activePresenceLabel={activeClientOnline ? "En ligne" : "Hors ligne"}
             messagesEndRef={messagesEndRef}
@@ -1328,6 +1434,10 @@ const ProviderDashboard = () => {
       isSidebarOpen={sidebarOpen}
       onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
       currentSection={currentSection}
+      notifications={notifications}
+      notificationsLoading={notificationsLoading}
+      notificationsError={notificationsMessage}
+      onNotificationClick={openNotification}
     >
       {renderContent()}
       {shouldShowProfileCompletionPopup ? (

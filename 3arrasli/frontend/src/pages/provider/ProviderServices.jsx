@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { resolveAssetUrl } from "../../services/assets";
+import { serviceCategories } from "../../data/categories";
 
 const ProviderServices = ({
   editingServiceId,
@@ -87,16 +88,6 @@ const ProviderServices = ({
           </div>
 
         <form className="provider-form provider-service-edit-form" onSubmit={onSubmitService}>
-          {serviceFeedback?.text ? (
-            <div
-              className={`provider-alert ${
-                serviceFeedback.type === "success" ? "provider-alert-success" : "provider-alert-error"
-              }`}
-            >
-              {serviceFeedback.text}
-            </div>
-          ) : null}
-
           <div className="provider-form-grid">
             <label>
               Titre
@@ -125,10 +116,11 @@ const ProviderServices = ({
               Categorie
               <select name="category" value={serviceForm.category} onChange={onServiceChange}>
                 <option value="">Selectionner</option>
-                <option>Photographe</option>
-                <option>Decoration</option>
-                <option>Traiteur</option>
-                <option>Salle</option>
+                {serviceCategories.map((category) => (
+                  <option key={category.value} value={category.value}>
+                    {category.label}
+                  </option>
+                ))}
               </select>
               {renderFieldError("category")}
             </label>

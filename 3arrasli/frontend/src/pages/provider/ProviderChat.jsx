@@ -10,7 +10,6 @@ const ProviderChat = ({
   onSendMessage,
   loadingChats,
   sendingMessage,
-  chatFeedback,
   typingLabel,
   activePresenceLabel,
   messagesEndRef,
@@ -83,12 +82,6 @@ const ProviderChat = ({
               </div>
               <span className="provider-status validated">{activePresenceLabel || "Hors ligne"}</span>
             </div>
-
-            {chatFeedback?.text ? (
-              <div className={`provider-chat-feedback ${chatFeedback.type || "success"}`}>
-                {chatFeedback.text}
-              </div>
-            ) : null}
 
             <div className="provider-chat-messages">
               {!hasMessages ? (

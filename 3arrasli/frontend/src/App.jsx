@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import Home from "./Home";
 import SplashScreen from "./components/SplashScreen";
+import ToastContainer from "./components/Toast";
 import AdminDashboard from "./pages/AdminDashboard";
 import ChatPage from "./pages/ChatPage";
 import ClientDashboard from "./pages/ClientDashboard";
@@ -65,6 +66,7 @@ const App = () => {
   return (
     <BrowserRouter>
       {splash.visible ? <SplashScreen isExiting={splash.exiting} /> : null}
+      <ToastContainer />
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<LoginPage />} />

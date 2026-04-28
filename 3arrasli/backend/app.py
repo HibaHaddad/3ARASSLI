@@ -18,12 +18,12 @@ from flask_cors import CORS
 from flask_socketio import ConnectionRefusedError, disconnect, emit, join_room
 from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
-from sqlalchemy import inspect, text
+from sqlalchemy import inspect, or_, text
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db, socketio
-from models import Appointment, Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
+from models import Appointment, Favorite, Message, Notification, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -223,7 +223,7 @@ def stripe_api_request(method, path, form_data=None):
         raise RuntimeError(message) from exc
 
 
-def normalize_reservation_status(status):
+def normalize_payment_status(status):
     value = str(status or "").strip().upper()
     if value in {"PAID", "UNPAID", "PENDING"}:
         return value
@@ -414,8 +414,8 @@ def serialize_admin_provider(user):
 def serialize_service(service, client_id=None):
     provider_id = service.provider_id or service.prestataire_id
     favorite = None
-    if client_id and provider_id:
-        favorite = Favorite.query.filter_by(client_id=client_id, prestataire_id=provider_id).first()
+    if client_id:
+        favorite = Favorite.query.filter_by(user_id=client_id, service_id=service.id).first()
 
     prestataire = User.query.get(provider_id) if provider_id else None
     rating_summary = get_service_rating_summary(service.id)
@@ -469,8 +469,7 @@ def serialize_reservation(reservation):
         "amount": reservation.amount if reservation.amount is not None else (service.price if service else 0),
         "notes": reservation.notes,
         "details": reservation.details,
-        "status": normalize_reservation_status(reservation.status),
-        "payment_status": normalize_reservation_status(getattr(reservation, "payment_status", reservation.status)),
+        "payment_status": normalize_payment_status(getattr(reservation, "payment_status", None)),
         "payment_option": getattr(reservation, "payment_option", None) or "full",
         "invoice_url": resolve_document_url(getattr(reservation, "invoice_path", None)),
         "contract_url": resolve_document_url(getattr(reservation, "contract_path", None)),
@@ -479,16 +478,6 @@ def serialize_reservation(reservation):
         "created_at": reservation.created_at.isoformat() if reservation.created_at else None,
         "updated_at": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
     }
-
-
-def normalize_booking_status(status):
-    normalized = str(status or "").strip().lower()
-
-    if normalized in {"validee", "paid", "confirmed", "accepted", "acceptee"}:
-        return "Validee"
-    if normalized in {"refusee", "refused", "cancelled", "canceled", "rejected"}:
-        return "Refusee"
-    return "En attente"
 
 
 def split_booking_datetime(value):
@@ -510,6 +499,24 @@ def serialize_provider_booking(reservation):
     booking_date, booking_time = split_booking_datetime(reservation.date)
     details = getattr(reservation, "details", None) or reservation.notes or ""
     amount = getattr(reservation, "amount", None)
+    total_amount = amount if amount is not None else (service.price if service else 0)
+    paid_amount = total_amount if normalize_payment_status(getattr(reservation, "payment_status", None)) == "PAID" else 0
+    remaining_amount = max(float(total_amount or 0) - float(paid_amount or 0), 0)
+    provider_id = get_service_provider_id(service)
+    slot_date = parse_date_value(booking_date)
+    calendar_slot_locked = False
+    calendar_block_id = None
+
+    if provider_id and slot_date and booking_time:
+        block = ProviderCalendarBlock.query.filter_by(
+            provider_id=provider_id,
+            date=slot_date,
+            start_time=booking_time,
+            type="reserved",
+            reservation_id=reservation.id,
+        ).first()
+        calendar_slot_locked = block is not None
+        calendar_block_id = block.id if block else None
 
     return {
         "id": reservation.id,
@@ -520,11 +527,58 @@ def serialize_provider_booking(reservation):
         "date": booking_date,
         "time": booking_time,
         "location": getattr(reservation, "location", None) or (service.city if service else "") or "--",
-        "amount": amount if amount is not None else (service.price if service else 0),
-        "status": normalize_booking_status(reservation.status),
+        "amount": total_amount,
+        "totalAmount": total_amount,
+        "paidAmount": paid_amount,
+        "remainingAmount": remaining_amount,
+        "paymentStatus": normalize_payment_status(getattr(reservation, "payment_status", None)),
+        "notes": reservation.notes or "",
         "details": details,
+        "invoiceUrl": resolve_document_url(getattr(reservation, "invoice_path", None)),
+        "contractUrl": resolve_document_url(getattr(reservation, "contract_path", None)),
+        "calendarSlotLocked": calendar_slot_locked,
+        "calendarBlockId": calendar_block_id,
+        "calendarMessage": (
+            "Cette reservation est liee a un creneau calendrier et ne peut pas etre validee ou refusee manuellement."
+            if calendar_slot_locked
+            else ""
+        ),
         "createdAt": reservation.created_at.isoformat() if reservation.created_at else None,
         "updatedAt": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
+    }
+
+
+def serialize_notification(notification):
+    reservation = Reservation.query.get(notification.reservation_id) if notification.reservation_id else None
+    appointment = Appointment.query.get(notification.appointment_id) if getattr(notification, "appointment_id", None) else None
+    booking_date, booking_time = split_booking_datetime(reservation.date) if reservation else (None, None)
+    appointment_date = appointment.date.isoformat() if appointment else None
+    return {
+        "id": notification.id,
+        "userId": notification.user_id,
+        "type": notification.type,
+        "title": notification.title,
+        "message": notification.message,
+        "reservationId": notification.reservation_id,
+        "appointmentId": getattr(notification, "appointment_id", None),
+        "isRead": bool(notification.is_read),
+        "createdAt": notification.created_at.isoformat() if notification.created_at else None,
+        "target": {
+            "kind": "appointment",
+            "id": appointment.id,
+            "date": appointment_date,
+            "time": appointment.start_time,
+        } if appointment else {
+            "kind": "reservation",
+            "id": reservation.id,
+            "date": booking_date,
+            "time": booking_time,
+        } if reservation else None,
+        "reservation": {
+            "id": reservation.id,
+            "date": booking_date,
+            "time": booking_time,
+        } if reservation else None,
     }
 
 
@@ -958,14 +1012,11 @@ def ensure_reservation_schema():
                 "WHERE updated_at IS NULL"
             )
         )
-    if "payment_status" in columns and "status" in columns:
+    if "payment_status" in columns:
         db.session.execute(
             text(
                 "UPDATE reservations "
-                "SET payment_status = CASE "
-                "WHEN LOWER(COALESCE(status, '')) = 'paid' THEN 'PAID' "
-                "WHEN LOWER(COALESCE(status, '')) = 'pending' THEN 'UNPAID' "
-                "ELSE COALESCE(payment_status, 'UNPAID') END "
+                "SET payment_status = COALESCE(payment_status, 'UNPAID') "
                 "WHERE payment_status IS NULL OR payment_status = ''"
             )
         )
@@ -1017,6 +1068,118 @@ def ensure_review_schema():
         db.session.commit()
 
 
+def ensure_notification_schema():
+    inspector = inspect(db.engine)
+    if "notifications" not in inspector.get_table_names():
+        Notification.__table__.create(db.engine, checkfirst=True)
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("notifications")}
+    if "appointment_id" not in columns:
+        db.session.execute(text("ALTER TABLE notifications ADD COLUMN appointment_id INTEGER NULL"))
+        db.session.commit()
+
+
+def ensure_favorite_schema():
+    inspector = inspect(db.engine)
+    if "favorites" not in inspector.get_table_names():
+        Favorite.__table__.create(db.engine, checkfirst=True)
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("favorites")}
+    if "user_id" not in columns:
+        db.session.execute(text("ALTER TABLE favorites ADD COLUMN user_id INTEGER NULL"))
+        if "client_id" in columns:
+            db.session.execute(text("UPDATE favorites SET user_id = client_id WHERE user_id IS NULL"))
+        db.session.commit()
+        columns.add("user_id")
+
+    if "service_id" not in columns:
+        db.session.execute(text("ALTER TABLE favorites ADD COLUMN service_id INTEGER NULL"))
+        db.session.commit()
+        columns.add("service_id")
+
+    if db.engine.dialect.name == "mysql":
+        # Keep the legacy unique index because MySQL may use it to support the
+        # prestataire_id foreign key. New rows use NULL in legacy columns, so it
+        # does not block service-level favorites.
+        if "client_id" in columns:
+            db.session.execute(text("ALTER TABLE favorites MODIFY client_id INTEGER NULL"))
+        if "prestataire_id" in columns:
+            db.session.execute(text("ALTER TABLE favorites MODIFY prestataire_id INTEGER NULL"))
+        db.session.commit()
+
+    if "prestataire_id" in columns:
+        legacy_rows = db.session.execute(
+            text("SELECT id, prestataire_id FROM favorites WHERE service_id IS NULL AND prestataire_id IS NOT NULL")
+        ).mappings().all()
+        for row in legacy_rows:
+            service = (
+                Service.query.filter(
+                    or_(
+                        Service.prestataire_id == row["prestataire_id"],
+                        Service.provider_id == row["prestataire_id"],
+                    )
+                )
+                .order_by(Service.id.asc())
+                .first()
+            )
+            if service:
+                db.session.execute(
+                    text("UPDATE favorites SET service_id = :service_id WHERE id = :favorite_id"),
+                    {"service_id": service.id, "favorite_id": row["id"]},
+                )
+        db.session.commit()
+
+    duplicate_rows = db.session.execute(
+        text(
+            """
+            SELECT user_id, service_id, MIN(id) AS keep_id
+            FROM favorites
+            WHERE user_id IS NOT NULL AND service_id IS NOT NULL
+            GROUP BY user_id, service_id
+            HAVING COUNT(*) > 1
+            """
+        )
+    ).mappings().all()
+    for row in duplicate_rows:
+        db.session.execute(
+            text(
+                """
+                DELETE FROM favorites
+                WHERE user_id = :user_id
+                  AND service_id = :service_id
+                  AND id <> :keep_id
+                """
+            ),
+            {"user_id": row["user_id"], "service_id": row["service_id"], "keep_id": row["keep_id"]},
+        )
+    if duplicate_rows:
+        db.session.commit()
+
+    inspector = inspect(db.engine)
+    unique_names = {
+        (constraint.get("name") or "").strip()
+        for constraint in inspector.get_unique_constraints("favorites")
+        if (constraint.get("name") or "").strip()
+    }
+    index_names = {
+        (index.get("name") or "").strip()
+        for index in inspector.get_indexes("favorites")
+        if (index.get("name") or "").strip()
+    }
+    if "uq_user_service_favorite" not in unique_names and "uq_user_service_favorite" not in index_names:
+        if db.engine.dialect.name == "mysql":
+            db.session.execute(
+                text("ALTER TABLE favorites ADD CONSTRAINT uq_user_service_favorite UNIQUE (user_id, service_id)")
+            )
+        else:
+            db.session.execute(
+                text("CREATE UNIQUE INDEX IF NOT EXISTS uq_user_service_favorite ON favorites (user_id, service_id)")
+            )
+        db.session.commit()
+
+
 def create_app():
     app = Flask(__name__)
     database_uri = build_database_uri()
@@ -1051,6 +1214,8 @@ def create_app():
         ensure_service_images_schema()
         ensure_reservation_schema()
         ensure_message_schema()
+        ensure_notification_schema()
+        ensure_favorite_schema()
         ensure_review_schema()
         seed_data()
 
@@ -1234,9 +1399,6 @@ def create_app():
         services_by_id = {service.id: service for service in services}
 
         for reservation in reservations:
-            if reservation.status in {"cancelled", "refused", "refusee"}:
-                continue
-
             service = services_by_id.get(reservation.service_id)
             if not service:
                 continue
@@ -1576,6 +1738,20 @@ def create_app():
 
         return reservation, None
 
+    def get_provider_appointment_or_404(appointment_id):
+        appointment = Appointment.query.get(appointment_id)
+        if not appointment:
+            return None, (
+                jsonify({"success": False, "message": "Rendez-vous introuvable."}),
+                404,
+            )
+        if appointment.provider_id != request.user_id:
+            return None, (
+                jsonify({"success": False, "message": "Acces non autorise."}),
+                403,
+            )
+        return appointment, None
+
     def get_provider_week_reservations(provider_id, start_date, end_date):
         services = Service.query.filter(
             db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
@@ -1589,8 +1765,6 @@ def create_app():
         client_ids = set()
 
         for reservation in reservations:
-            if normalize_booking_status(reservation.status) != "Validee":
-                continue
             reservation_dt = parse_reservation_datetime(reservation.date)
             if not reservation_dt:
                 continue
@@ -1624,6 +1798,43 @@ def create_app():
 
         return reservations_by_slot
 
+    def serialize_provider_appointment(appointment):
+        service = Service.query.get(appointment.service_id)
+        client = User.query.get(appointment.client_id)
+        provider = User.query.get(appointment.provider_id)
+        return {
+            "appointmentId": appointment.id,
+            "id": appointment.id,
+            "clientId": appointment.client_id,
+            "clientName": client.username if client else "Client",
+            "serviceId": appointment.service_id,
+            "serviceTitle": service.title if service else "Service",
+            "providerName": provider.username if provider else "Prestataire",
+            "date": appointment.date.isoformat() if appointment.date else None,
+            "time": appointment.start_time,
+            "start_time": appointment.start_time,
+            "end_time": appointment.end_time,
+            "note": appointment.message or "",
+            "message": appointment.message or "",
+            "appointmentStatus": appointment.status or "pending",
+        }
+
+    def get_provider_week_appointments(provider_id, start_date, end_date):
+        appointments = (
+            Appointment.query.filter(
+                Appointment.provider_id == provider_id,
+                Appointment.date >= start_date,
+                Appointment.date <= end_date,
+                Appointment.status != "refused",
+            )
+            .order_by(Appointment.date.asc(), Appointment.start_time.asc())
+            .all()
+        )
+        return {
+            (appointment.date.isoformat(), appointment.start_time): serialize_provider_appointment(appointment)
+            for appointment in appointments
+        }
+
     def build_provider_week_calendar(provider_id, start_date):
         end_date = start_date + timedelta(days=6)
         blocks = (
@@ -1631,15 +1842,16 @@ def create_app():
                 ProviderCalendarBlock.provider_id == provider_id,
                 ProviderCalendarBlock.date >= start_date,
                 ProviderCalendarBlock.date <= end_date,
-                ProviderCalendarBlock.type == "occupied",
+                ProviderCalendarBlock.type.in_(("occupied", "reserved")),
             )
             .order_by(ProviderCalendarBlock.date.asc(), ProviderCalendarBlock.start_time.asc())
             .all()
         )
-        occupied_by_slot = {
+        blocked_by_slot = {
             (block.date.isoformat(), block.start_time): block for block in blocks
         }
         reservations_by_slot = get_provider_week_reservations(provider_id, start_date, end_date)
+        appointments_by_slot = get_provider_week_appointments(provider_id, start_date, end_date)
 
         days = []
         for offset in range(7):
@@ -1648,22 +1860,39 @@ def create_app():
             for start_time_label in STANDARD_WORKING_HOURS:
                 slot_key = (current_date.isoformat(), start_time_label)
                 reservation_payload = reservations_by_slot.get(slot_key)
-                occupied_block = occupied_by_slot.get(slot_key)
+                appointment_payload = appointments_by_slot.get(slot_key)
+                calendar_block = blocked_by_slot.get(slot_key)
 
                 status = "free"
+                event_type = None
                 block_id = None
                 reservation_id = None
+                appointment_id = None
                 client_name = None
                 service_title = None
+                appointment_status = None
+                note = None
+                provider_name = None
 
                 if reservation_payload:
                     status = "reserved"
+                    event_type = "reservation"
                     reservation_id = reservation_payload["reservationId"]
                     client_name = reservation_payload["clientName"]
                     service_title = reservation_payload["serviceTitle"]
-                elif occupied_block:
-                    status = "occupied"
-                    block_id = occupied_block.id
+                elif appointment_payload:
+                    status = "appointment"
+                    event_type = "appointment"
+                    appointment_id = appointment_payload["appointmentId"]
+                    client_name = appointment_payload["clientName"]
+                    service_title = appointment_payload["serviceTitle"]
+                    appointment_status = appointment_payload["appointmentStatus"]
+                    note = appointment_payload["note"]
+                    provider_name = appointment_payload["providerName"]
+                elif calendar_block:
+                    status = calendar_block.type
+                    block_id = calendar_block.id
+                    reservation_id = calendar_block.reservation_id
 
                 slots.append(
                     {
@@ -1672,10 +1901,15 @@ def create_app():
                         "start_time": start_time_label,
                         "end_time": plus_one_hour(start_time_label),
                         "status": status,
+                        "eventType": event_type,
                         "blockId": block_id,
                         "reservationId": reservation_id,
+                        "appointmentId": appointment_id,
                         "clientName": client_name,
                         "serviceTitle": service_title,
+                        "appointmentStatus": appointment_status,
+                        "note": note,
+                        "providerName": provider_name,
                     }
                 )
 
@@ -1716,7 +1950,7 @@ def create_app():
             ProviderCalendarBlock.provider_id == provider_id,
             ProviderCalendarBlock.date >= start_date,
             ProviderCalendarBlock.date <= end_date,
-            ProviderCalendarBlock.type == "occupied",
+            ProviderCalendarBlock.type.in_(("occupied", "reserved", "appointment")),
         ).all()
         return {(block.date.isoformat(), block.start_time): block for block in blocks}
 
@@ -1774,6 +2008,142 @@ def create_app():
         slot_key = (slot_date.isoformat(), start_time_label)
         return slot_key not in reservations_by_slot and slot_key not in occupied_by_slot
 
+    def accepted_appointment_exists(provider_id, slot_date, start_time_label, excluded_appointment_id=None):
+        query = Appointment.query.filter_by(
+            provider_id=provider_id,
+            date=slot_date,
+            start_time=start_time_label,
+            status="accepted",
+        )
+        if excluded_appointment_id:
+            query = query.filter(Appointment.id != excluded_appointment_id)
+        return query.first() is not None
+
+    def reserve_calendar_slot(provider_id, reservation, slot_date, start_time_label):
+        block = ProviderCalendarBlock.query.filter_by(
+            provider_id=provider_id,
+            date=slot_date,
+            start_time=start_time_label,
+        ).first()
+        if not block:
+            block = ProviderCalendarBlock(
+                provider_id=provider_id,
+                date=slot_date,
+                start_time=start_time_label,
+                end_time=plus_one_hour(start_time_label),
+            )
+            db.session.add(block)
+
+        block.type = "reserved"
+        block.reservation_id = reservation.id
+        block.end_time = plus_one_hour(start_time_label)
+        block.updated_at = datetime.utcnow()
+
+        availability_slot = ProviderAvailabilitySlot.query.filter_by(
+            provider_id=provider_id,
+            date=slot_date,
+            start_time=start_time_label,
+        ).first()
+        if availability_slot:
+            availability_slot.status = "reserved"
+            availability_slot.reservation_id = reservation.id
+            availability_slot.note = f"Reservation #{reservation.id}"
+            availability_slot.updated_at = datetime.utcnow()
+        return block
+
+    def create_reservation_notification(provider_id, reservation, service, client, slot_date, start_time_label):
+        date_label = slot_date.isoformat() if slot_date else reservation.date
+        time_label = start_time_label or "--"
+        notification = Notification(
+            user_id=provider_id,
+            type="reservation",
+            title="Nouvelle reservation",
+            message=(
+                f"{client.username if client else 'Client'} a reserve {service.title if service else 'un service'} "
+                f"le {date_label} a {time_label}."
+            ),
+            reservation_id=reservation.id,
+            is_read=False,
+        )
+        db.session.add(notification)
+        return notification
+
+    def create_appointment_notification(provider_id, appointment, service, client):
+        notification = Notification(
+            user_id=provider_id,
+            type="appointment_request",
+            title="Nouvelle demande de rendez-vous",
+            message=(
+                f"{client.username if client else 'Client'} demande un rendez-vous pour "
+                f"{service.title if service else 'un service'} le {appointment.date.isoformat()} a {appointment.start_time}."
+            ),
+            appointment_id=appointment.id,
+            is_read=False,
+        )
+        db.session.add(notification)
+        return notification
+
+    def create_reminder_notifications(provider_id):
+        tomorrow = datetime.utcnow().date() + timedelta(days=1)
+        service_ids = get_provider_service_ids(provider_id)
+
+        if service_ids:
+            reservations = Reservation.query.filter(Reservation.service_id.in_(service_ids)).all()
+            for reservation in reservations:
+                reservation_dt = parse_reservation_datetime(reservation.date)
+                if not reservation_dt or reservation_dt.date() != tomorrow:
+                    continue
+                exists = Notification.query.filter_by(
+                    user_id=provider_id,
+                    type="reservation_reminder",
+                    reservation_id=reservation.id,
+                ).first()
+                if exists:
+                    continue
+                service = Service.query.get(reservation.service_id)
+                db.session.add(
+                    Notification(
+                        user_id=provider_id,
+                        type="reservation_reminder",
+                        title="Rappel reservation demain",
+                        message=(
+                            f"Reservation demain pour {service.title if service else 'un service'} "
+                            f"a {reservation_dt.strftime('%H:%M')}."
+                        ),
+                        reservation_id=reservation.id,
+                        is_read=False,
+                    )
+                )
+
+        appointments = Appointment.query.filter(
+            Appointment.provider_id == provider_id,
+            Appointment.date == tomorrow,
+            Appointment.status == "accepted",
+        ).all()
+        for appointment in appointments:
+            exists = Notification.query.filter_by(
+                user_id=provider_id,
+                type="appointment_reminder",
+                appointment_id=appointment.id,
+            ).first()
+            if exists:
+                continue
+            service = Service.query.get(appointment.service_id)
+            db.session.add(
+                Notification(
+                    user_id=provider_id,
+                    type="appointment_reminder",
+                    title="Rappel rendez-vous demain",
+                    message=(
+                        f"Rendez-vous demain pour {service.title if service else 'un service'} "
+                        f"a {appointment.start_time}."
+                    ),
+                    appointment_id=appointment.id,
+                    is_read=False,
+                )
+            )
+        db.session.commit()
+
     def generate_reservation_documents(reservation):
         service = Service.query.get(reservation.service_id)
         client = User.query.get(reservation.client_id)
@@ -1793,7 +2163,7 @@ def create_app():
             f"Service: {service.title if service else 'Service'}",
             f"Date: {reservation.date}",
             f"Montant: {format_currency(reservation.amount if reservation.amount is not None else (service.price if service else 0))}",
-            f"Paiement: {normalize_reservation_status(reservation.payment_status)}",
+            f"Paiement: {normalize_payment_status(reservation.payment_status)}",
         ]
         contract_lines = [
             f"Contrat reservation #{reservation.id}",
@@ -1820,7 +2190,6 @@ def create_app():
         reservation.contract_path = contract_relative
 
     def mark_reservation_paid(reservation, payment_intent_id=None, stripe_session_id=None):
-        reservation.status = "PAID"
         reservation.payment_status = "PAID"
         reservation.stripe_payment_intent_id = payment_intent_id or reservation.stripe_payment_intent_id
         reservation.stripe_session_id = stripe_session_id or reservation.stripe_session_id
@@ -1876,7 +2245,6 @@ def create_app():
                 stripe_session_id=session.get("id"),
             )
         else:
-            reservation.status = "UNPAID"
             reservation.payment_status = "UNPAID"
             reservation.stripe_session_id = session.get("id")
             reservation.updated_at = datetime.utcnow()
@@ -1901,7 +2269,6 @@ def create_app():
                 payment_intent_id=payment_intent.get("id"),
             )
         else:
-            reservation.status = "UNPAID"
             reservation.payment_status = "UNPAID"
             reservation.stripe_payment_intent_id = payment_intent.get("id")
             reservation.updated_at = datetime.utcnow()
@@ -2648,8 +3015,9 @@ def create_app():
             provider_id=request.user_id,
             date=slot_date,
             start_time=start_time_label,
-            type="occupied",
         ).first()
+        if existing_block and existing_block.type == "reserved":
+            return jsonify({"success": False, "message": "Ce creneau est deja reserve et ne peut pas etre bloque manuellement."}), 409
         if existing_block:
             return jsonify(
                 {
@@ -2687,6 +3055,63 @@ def create_app():
                 },
             }
         ), 201
+
+    @app.patch("/api/provider/appointments/<int:appointment_id>/status")
+    @auth_required(allowed_roles={"prestataire"})
+    def update_provider_appointment_status(appointment_id):
+        appointment, error_response = get_provider_appointment_or_404(appointment_id)
+        if error_response:
+            return error_response
+
+        payload = request.get_json(silent=True) or {}
+        next_status = str(payload.get("status") or "").strip().lower()
+        if next_status not in {"accepted", "refused"}:
+            return jsonify({"success": False, "message": "Statut rendez-vous invalide."}), 400
+
+        if next_status == "accepted":
+            if not assert_slot_available(appointment.provider_id, appointment.date, appointment.start_time):
+                return jsonify({"success": False, "message": "Cette date et cette heure ne sont pas disponibles."}), 409
+            if accepted_appointment_exists(
+                appointment.provider_id,
+                appointment.date,
+                appointment.start_time,
+                excluded_appointment_id=appointment.id,
+            ):
+                return jsonify({"success": False, "message": "Cette date et cette heure ne sont pas disponibles."}), 409
+
+            block = ProviderCalendarBlock.query.filter_by(
+                provider_id=appointment.provider_id,
+                date=appointment.date,
+                start_time=appointment.start_time,
+                type="appointment",
+            ).first()
+            if not block:
+                block = ProviderCalendarBlock(
+                    provider_id=appointment.provider_id,
+                    date=appointment.date,
+                    start_time=appointment.start_time,
+                    end_time=appointment.end_time,
+                    type="appointment",
+                )
+                db.session.add(block)
+        else:
+            ProviderCalendarBlock.query.filter_by(
+                provider_id=appointment.provider_id,
+                date=appointment.date,
+                start_time=appointment.start_time,
+                type="appointment",
+            ).delete()
+
+        appointment.status = next_status
+        appointment.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Rendez-vous mis a jour avec succes.",
+                "appointment": serialize_provider_appointment(appointment),
+            }
+        )
 
     @app.delete("/api/provider/calendar/blocks/<int:block_id>")
     @auth_required(allowed_roles={"prestataire"})
@@ -2805,7 +3230,6 @@ def create_app():
     @auth_required(allowed_roles={"prestataire"})
     def list_provider_bookings():
         service_ids = get_provider_service_ids(request.user_id)
-        status_filter = str(request.args.get("status") or "").strip()
 
         if not service_ids:
             return jsonify(
@@ -2822,10 +3246,6 @@ def create_app():
             .all()
         )
         bookings = [serialize_provider_booking(item) for item in reservations]
-
-        if status_filter and status_filter != "Tous":
-            expected_status = normalize_booking_status(status_filter)
-            bookings = [booking for booking in bookings if booking["status"] == expected_status]
 
         return jsonify(
             {
@@ -2844,32 +3264,40 @@ def create_app():
 
         return jsonify({"success": True, "booking": serialize_provider_booking(reservation)})
 
-    @app.patch("/api/provider/bookings/<int:booking_id>/status")
+    @app.get("/api/provider/notifications")
     @auth_required(allowed_roles={"prestataire"})
-    def update_provider_booking_status(booking_id):
-        reservation, error_response = get_provider_booking_or_404(booking_id)
-        if error_response:
-            return error_response
-
-        payload = request.get_json(silent=True) or {}
-        next_status = normalize_booking_status(payload.get("status"))
-        if next_status not in {"Validee", "Refusee"}:
-            return jsonify(
-                {
-                    "success": False,
-                    "message": "Statut invalide. Utilisez Validee ou Refusee.",
-                }
-            ), 400
-
-        reservation.status = next_status
-        reservation.updated_at = datetime.utcnow()
-        db.session.commit()
-
+    def list_provider_notifications():
+        create_reminder_notifications(request.user_id)
+        notifications = (
+            Notification.query.filter_by(user_id=request.user_id)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .limit(30)
+            .all()
+        )
+        unread_count = Notification.query.filter_by(user_id=request.user_id, is_read=False).count()
         return jsonify(
             {
                 "success": True,
-                "message": "Statut de la reservation mis a jour avec succes.",
-                "booking": serialize_provider_booking(reservation),
+                "message": "Notifications recuperees avec succes.",
+                "notifications": [serialize_notification(item) for item in notifications],
+                "unreadCount": unread_count,
+            }
+        )
+
+    @app.patch("/api/provider/notifications/<int:notification_id>/read")
+    @auth_required(allowed_roles={"prestataire"})
+    def mark_provider_notification_read(notification_id):
+        notification = Notification.query.filter_by(id=notification_id, user_id=request.user_id).first()
+        if not notification:
+            return jsonify({"success": False, "message": "Notification introuvable."}), 404
+
+        notification.is_read = True
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Notification marquee comme lue.",
+                "notification": serialize_notification(notification),
             }
         )
 
@@ -3170,8 +3598,8 @@ def create_app():
         amount = payload.get("amount")
         payment_option = str(payload.get("payment_option") or "full").strip().lower()
 
-        if not service_id or not date_value:
-            return jsonify({"success": False, "message": "service_id et date sont requis."}), 400
+        if not service_id or not date_value or not start_time_label:
+            return jsonify({"success": False, "message": "service_id, date et start_time sont requis."}), 400
 
         service = Service.query.get(service_id)
         if not service:
@@ -3179,10 +3607,16 @@ def create_app():
 
         provider_id = get_service_provider_id(service)
         parsed_date = parse_date_value(date_value)
+        if not parsed_date:
+            return jsonify({"success": False, "message": "date est invalide."}), 400
         if start_time_label and not parse_time_value(start_time_label):
             return jsonify({"success": False, "message": "start_time est invalide."}), 400
-        if parsed_date and start_time_label and provider_id and not assert_slot_available(provider_id, parsed_date, start_time_label):
-            return jsonify({"success": False, "message": "Ce creneau n'est plus disponible."}), 409
+        if start_time_label not in STANDARD_WORKING_HOURS:
+            return jsonify({"success": False, "message": "Cette heure n'est pas proposee par le calendrier."}), 400
+        if not provider_id:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+        if not assert_slot_available(provider_id, parsed_date, start_time_label):
+            return jsonify({"success": False, "message": "Cette date et cette heure ne sont pas disponibles."}), 409
 
         try:
             if amount in (None, ""):
@@ -3212,13 +3646,23 @@ def create_app():
             amount=amount_value,
             notes=notes,
             details=details,
-            status="UNPAID",
             payment_status="UNPAID",
             payment_option=payment_option,
         )
         db.session.add(reservation)
+        db.session.flush()
+
+        client = User.query.get(request.user_id)
+        reserve_calendar_slot(provider_id, reservation, parsed_date, start_time_label)
+        create_reservation_notification(provider_id, reservation, service, client, parsed_date, start_time_label)
         db.session.commit()
-        return jsonify({"success": True, "reservation": serialize_reservation(reservation)}), 201
+        return jsonify(
+            {
+                "success": True,
+                "message": "Reservation effectuee avec succes.",
+                "reservation": serialize_reservation(reservation),
+            }
+        ), 201
 
     @app.post("/api/appointments")
     @auth_required(allowed_roles={"client"})
@@ -3240,8 +3684,8 @@ def create_app():
         provider_id = get_service_provider_id(service)
         if not provider_id:
             return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
-        if not assert_slot_available(provider_id, slot_date, start_time_label):
-            return jsonify({"success": False, "message": "Ce creneau n'est plus disponible."}), 409
+        if not assert_slot_available(provider_id, slot_date, start_time_label) or accepted_appointment_exists(provider_id, slot_date, start_time_label):
+            return jsonify({"success": False, "message": "Cette date et cette heure ne sont pas disponibles."}), 409
 
         appointment = Appointment(
             client_id=request.user_id,
@@ -3255,15 +3699,8 @@ def create_app():
         )
         db.session.add(appointment)
         db.session.flush()
-
-        block = ProviderCalendarBlock(
-            provider_id=provider_id,
-            date=slot_date,
-            start_time=start_time_label,
-            end_time=end_time_label,
-            type="occupied",
-        )
-        db.session.add(block)
+        client = User.query.get(request.user_id)
+        create_appointment_notification(provider_id, appointment, service, client)
         db.session.commit()
         return jsonify(
             {
@@ -3292,22 +3729,19 @@ def create_app():
     @app.get("/api/favorites")
     @auth_required(allowed_roles={"client"})
     def list_favorites():
-        favorites = Favorite.query.filter_by(client_id=request.user_id).order_by(Favorite.created_at.desc()).all()
-        services = (
-            Service.query.filter(Service.prestataire_id.in_([item.prestataire_id for item in favorites]))
-            .order_by(Service.rating.desc())
-            .all()
-            if favorites
-            else []
-        )
+        favorites = Favorite.query.filter_by(user_id=request.user_id).order_by(Favorite.created_at.desc()).all()
+        services_by_id = {
+            service.id: service
+            for service in Service.query.filter(Service.id.in_([item.service_id for item in favorites])).all()
+        } if favorites else {}
+        services = [services_by_id[item.service_id] for item in favorites if item.service_id in services_by_id]
         return jsonify(
             {
                 "success": True,
                 "favorites": [
                     {
                         "favorite_id": item.id,
-                        "prestataire_id": item.prestataire_id,
-                        "prestataire_name": User.query.get(item.prestataire_id).username if User.query.get(item.prestataire_id) else "",
+                        "service_id": item.service_id,
                     }
                     for item in favorites
                 ],
@@ -3319,28 +3753,34 @@ def create_app():
     @auth_required(allowed_roles={"client"})
     def add_favorite():
         payload = request.get_json(silent=True) or {}
-        prestataire_id = payload.get("prestataire_id")
+        service_id = payload.get("service_id")
 
-        if not prestataire_id:
-            return jsonify({"success": False, "message": "prestataire_id est requis."}), 400
+        if not service_id:
+            return jsonify({"success": False, "message": "service_id est requis."}), 400
 
-        prestataire = User.query.filter_by(id=prestataire_id, role="prestataire").first()
-        if not prestataire:
-            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
 
-        existing = Favorite.query.filter_by(client_id=request.user_id, prestataire_id=prestataire_id).first()
+        existing = Favorite.query.filter_by(user_id=request.user_id, service_id=service.id).first()
         if existing:
-            return jsonify({"success": True, "message": "Deja en favoris.", "favorite": {"id": existing.id}})
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Deja en favoris.",
+                    "favorite": {"id": existing.id, "service_id": service.id},
+                }
+            )
 
-        favorite = Favorite(client_id=request.user_id, prestataire_id=prestataire_id)
+        favorite = Favorite(user_id=request.user_id, service_id=service.id)
         db.session.add(favorite)
         db.session.commit()
-        return jsonify({"success": True, "favorite": {"id": favorite.id}}), 201
+        return jsonify({"success": True, "favorite": {"id": favorite.id, "service_id": service.id}}), 201
 
     @app.delete("/api/favorites/<int:favorite_id>")
     @auth_required(allowed_roles={"client"})
     def remove_favorite(favorite_id):
-        favorite = Favorite.query.filter_by(id=favorite_id, client_id=request.user_id).first()
+        favorite = Favorite.query.filter_by(id=favorite_id, user_id=request.user_id).first()
         if not favorite:
             return jsonify({"success": False, "message": "Favori introuvable."}), 404
         db.session.delete(favorite)
@@ -3565,7 +4005,7 @@ def create_app():
         reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
         if not reservation:
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
-        if normalize_reservation_status(reservation.payment_status) != "PAID":
+        if normalize_payment_status(reservation.payment_status) != "PAID":
             return jsonify({"success": False, "message": "Le contrat peut etre signe apres le paiement."}), 409
 
         payload = request.get_json(silent=True) or {}
@@ -3770,4 +4210,4 @@ def seed_data():
 app = create_app()
 
 if __name__ == "__main__":
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True, allow_unsafe_werkzeug=True)

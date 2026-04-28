@@ -26,14 +26,15 @@ const FavoritesPage = () => {
   }, []);
 
   const removeFavorite = async (service) => {
-    const fav = favorites.find((item) => item.prestataire_id === service.prestataire_id);
+    const fav = favorites.find((item) => item.service_id === service.id);
     if (!fav) {
       return;
     }
     try {
       await api.delete(`/api/favorites/${fav.favorite_id}`);
-      setMessage("Prestataire retire des favoris.");
-      load();
+      setFavorites((current) => current.filter((item) => item.favorite_id !== fav.favorite_id));
+      setServices((current) => current.filter((item) => item.id !== service.id));
+      setMessage("Service retire des favoris.");
     } catch (err) {
       setError(err.response?.data?.message || "Suppression impossible.");
     }

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import ClientPageLayout from "./client/ClientPageLayout";
@@ -11,6 +11,8 @@ import {
   toSearchQuery,
 } from "./client/clientData";
 
+const SERVICES_PER_PAGE = 9;
+
 const ClientSearchPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -19,6 +21,7 @@ const ClientSearchPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const loadServices = async (nextFilters = filters) => {
     setLoading(true);
@@ -36,8 +39,27 @@ const ClientSearchPage = () => {
   useEffect(() => {
     const nextFilters = getFiltersFromSearch(searchParams);
     setFilters(nextFilters);
+    setCurrentPage(1);
     loadServices(nextFilters);
   }, [searchParams]);
+
+  const totalPages = Math.max(Math.ceil(services.length / SERVICES_PER_PAGE), 1);
+  const paginatedServices = useMemo(() => {
+    const startIndex = (currentPage - 1) * SERVICES_PER_PAGE;
+    return services.slice(startIndex, startIndex + SERVICES_PER_PAGE);
+  }, [currentPage, services]);
+  const pageNumbers = useMemo(
+    () => Array.from({ length: totalPages }, (_, index) => index + 1),
+    [totalPages]
+  );
+  const firstResultIndex = services.length === 0 ? 0 : (currentPage - 1) * SERVICES_PER_PAGE + 1;
+  const lastResultIndex = Math.min(currentPage * SERVICES_PER_PAGE, services.length);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
 
   const onFilterChange = (event) => {
     const { name, value } = event.target;
@@ -60,12 +82,23 @@ const ClientSearchPage = () => {
     try {
       if (service.is_favorite && service.favorite_id) {
         await api.delete(`/api/favorites/${service.favorite_id}`);
-        setMessage("Prestataire retire de vos favoris.");
+        setServices((current) =>
+          current.map((item) =>
+            item.id === service.id ? { ...item, is_favorite: false, favorite_id: null } : item
+          )
+        );
+        setMessage("Service retire de vos favoris.");
       } else {
-        await api.post("/api/favorites", { prestataire_id: service.prestataire_id });
-        setMessage("Prestataire ajoute a vos favoris.");
+        const response = await api.post("/api/favorites", { service_id: service.id });
+        setServices((current) =>
+          current.map((item) =>
+            item.id === service.id
+              ? { ...item, is_favorite: true, favorite_id: response.data.favorite?.id }
+              : item
+          )
+        );
+        setMessage("Service ajoute a vos favoris.");
       }
-      await loadServices(filters);
     } catch (err) {
       setError(err.response?.data?.message || "Action favoris impossible.");
     }
@@ -150,13 +183,17 @@ const ClientSearchPage = () => {
               <span className="section-kicker">Resultats</span>
               <h2>{services.length} service(s) disponible(s)</h2>
             </div>
-           
+            {services.length > 0 ? (
+              <p>
+                Affichage {firstResultIndex} - {lastResultIndex} sur {services.length}
+              </p>
+            ) : null}
           </div>
 
           {loading ? <p className="client-loading">Chargement des prestataires...</p> : null}
 
           <div className="client-service-grid client-search-service-grid">
-            {services.map((service) => (
+            {paginatedServices.map((service) => (
               <ServiceCard
                 key={service.id}
                 service={service}
@@ -165,6 +202,42 @@ const ClientSearchPage = () => {
               />
             ))}
           </div>
+
+          {!loading && services.length > SERVICES_PER_PAGE ? (
+            <nav className="client-search-pagination" aria-label="Pagination des services">
+              <button
+                type="button"
+                className="client-pagination-btn"
+                disabled={currentPage === 1}
+                onClick={() => setCurrentPage((page) => Math.max(page - 1, 1))}
+              >
+                Precedent
+              </button>
+
+              <div className="client-pagination-pages">
+                {pageNumbers.map((page) => (
+                  <button
+                    key={page}
+                    type="button"
+                    className={`client-pagination-page ${page === currentPage ? "active" : ""}`}
+                    onClick={() => setCurrentPage(page)}
+                    aria-current={page === currentPage ? "page" : undefined}
+                  >
+                    {page}
+                  </button>
+                ))}
+              </div>
+
+              <button
+                type="button"
+                className="client-pagination-btn"
+                disabled={currentPage === totalPages}
+                onClick={() => setCurrentPage((page) => Math.min(page + 1, totalPages))}
+              >
+                Suivant
+              </button>
+            </nav>
+          ) : null}
 
           {!loading && services.length === 0 ? (
             <div className="client-empty-state">

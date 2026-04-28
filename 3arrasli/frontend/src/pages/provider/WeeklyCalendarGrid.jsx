@@ -1,7 +1,7 @@
 import React, { useMemo } from "react";
 import WeeklyTimeCell from "./WeeklyTimeCell";
 
-const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
+const WeeklyCalendarGrid = ({ days, updatingSlotKeys, targetSlot, onToggleSlot }) => {
   const today = new Date().toISOString().slice(0, 10);
   const timeLabels = useMemo(() => {
     const sourceDay = days.find((day) => day.slots?.length > 0);
@@ -43,6 +43,10 @@ const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
           {days.map((day) => {
             const slot = day.slots.find((item) => item.time === timeLabel);
             const slotKey = slot ? `${slot.date}-${slot.start_time}` : "";
+            const isTargeted =
+              Boolean(slot) &&
+              targetSlot?.date === slot.date &&
+              targetSlot?.time === slot.time;
 
             return (
               <div key={`${day.date}-${timeLabel}`} className="provider-week-cell-wrap">
@@ -50,6 +54,7 @@ const WeeklyCalendarGrid = ({ days, updatingSlotKeys, onToggleSlot }) => {
                   <WeeklyTimeCell
                     slot={{ ...slot, weekDay: day.weekDay }}
                     isUpdating={updatingSlotKeys.includes(slotKey)}
+                    isTargeted={isTargeted}
                     onToggle={onToggleSlot}
                   />
                 ) : (

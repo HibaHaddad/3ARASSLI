@@ -48,12 +48,23 @@ const ClientDashboard = () => {
     try {
       if (service.is_favorite && service.favorite_id) {
         await api.delete(`/api/favorites/${service.favorite_id}`);
-        setMessage("Prestataire retire de vos favoris.");
+        setServices((current) =>
+          current.map((item) =>
+            item.id === service.id ? { ...item, is_favorite: false, favorite_id: null } : item
+          )
+        );
+        setMessage("Service retire de vos favoris.");
       } else {
-        await api.post("/api/favorites", { prestataire_id: service.prestataire_id });
-        setMessage("Prestataire ajoute a vos favoris.");
+        const response = await api.post("/api/favorites", { service_id: service.id });
+        setServices((current) =>
+          current.map((item) =>
+            item.id === service.id
+              ? { ...item, is_favorite: true, favorite_id: response.data.favorite?.id }
+              : item
+          )
+        );
+        setMessage("Service ajoute a vos favoris.");
       }
-      await loadServices();
     } catch (err) {
       setError(err.response?.data?.message || "Action favoris impossible.");
     }

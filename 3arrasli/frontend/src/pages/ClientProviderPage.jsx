@@ -296,12 +296,17 @@ const ClientProviderPage = () => {
     try {
       if (service.is_favorite && service.favorite_id) {
         await api.delete(`/api/favorites/${service.favorite_id}`);
-        setMessage("Prestataire retire de vos favoris.");
+        setService((current) =>
+          current ? { ...current, is_favorite: false, favorite_id: null } : current
+        );
+        setMessage("Service retire de vos favoris.");
       } else {
-        await api.post("/api/favorites", { prestataire_id: service.prestataire_id });
-        setMessage("Prestataire ajoute a vos favoris.");
+        const response = await api.post("/api/favorites", { service_id: service.id });
+        setService((current) =>
+          current ? { ...current, is_favorite: true, favorite_id: response.data.favorite?.id } : current
+        );
+        setMessage("Service ajoute a vos favoris.");
       }
-      await loadService();
     } catch (err) {
       setError(err.response?.data?.message || "Action favoris impossible.");
     }

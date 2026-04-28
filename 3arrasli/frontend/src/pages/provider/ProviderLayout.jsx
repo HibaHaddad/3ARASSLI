@@ -10,11 +10,20 @@ const ProviderLayout = ({
   onToggleSidebar,
   currentSection,
   sidebarAddon,
+  notifications,
+  notificationsLoading,
+  notificationsError,
+  onNotificationClick,
   children,
 }) => {
   return (
     <div className="provider-page">
-      <Navbar />
+      <Navbar
+        providerNotifications={notifications}
+        providerNotificationsLoading={notificationsLoading}
+        providerNotificationsError={notificationsError}
+        onProviderNotificationClick={onNotificationClick}
+      />
 
       <main className="provider-main">
         <section className={`provider-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>

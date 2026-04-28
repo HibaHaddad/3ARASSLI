@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import logo from "../logo (2).png";
 import "../pages/auth.css";
+import NotificationMenu from "./NotificationMenu";
 import { clearStoredUser, getStoredUser, hasRole } from "../services/auth";
 
 const publicLinks = [
@@ -84,7 +85,16 @@ const BellIcon = () => (
   </svg>
 );
 
-const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onNotificationClick }) => {
+const Navbar = ({
+  onLogoClick,
+  notifications = [],
+  onDismissNotification,
+  onNotificationClick,
+  providerNotifications = [],
+  providerNotificationsLoading = false,
+  providerNotificationsError = "",
+  onProviderNotificationClick,
+}) => {
   const location = useLocation();
   const user = getStoredUser();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -143,6 +153,17 @@ const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onNoti
         </Link>
 
         <nav className="auth-nav-shell">
+          {hasRole(user, "Prestataire") ? (
+            <NotificationMenu
+              notifications={providerNotifications}
+              loading={providerNotificationsLoading}
+              error={providerNotificationsError}
+              title="Notifications prestataire"
+              emptyText="Aucune notification prestataire."
+              onNotificationClick={onProviderNotificationClick}
+            />
+          ) : null}
+
           {hasRole(user, "Admin") ? (
             <div className="admin-notifications auth-admin-notifications">
               <button

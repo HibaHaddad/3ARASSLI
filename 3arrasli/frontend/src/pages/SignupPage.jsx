@@ -4,6 +4,8 @@ import Navbar from "../components/Navbar";
 import Spinner from "../components/Spinner";
 import api from "../services/api";
 import { getDashboardPathForUser, saveStoredUser } from "../services/auth";
+import { IMAGE_TOO_LARGE_MESSAGE, showToast, validateImageFileSize } from "../services/toast";
+import { serviceCategories } from "../data/categories";
 import "./auth.css";
 
 const SignupPage = () => {
@@ -68,6 +70,18 @@ const SignupPage = () => {
     });
   }, [isProviderRole]);
 
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
+
   const onChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
@@ -75,9 +89,21 @@ const SignupPage = () => {
 
   const onFileChange = (event) => {
     const { name, files } = event.target;
+    const nextFile = files?.[0] || null;
+
+    if (nextFile && !validateImageFileSize(nextFile)) {
+      setProviderFiles((prev) => ({
+        ...prev,
+        [name]: null,
+      }));
+      event.target.value = "";
+      setError(IMAGE_TOO_LARGE_MESSAGE);
+      return;
+    }
+
     setProviderFiles((prev) => ({
       ...prev,
-      [name]: files?.[0] || null,
+      [name]: nextFile,
     }));
   };
 
@@ -230,13 +256,19 @@ const SignupPage = () => {
 
                   <div className="auth-field">
                     <label htmlFor="category">Service du prestataire</label>
-                    <input
+                    <select
                       id="category"
                       name="category"
-                      placeholder="Photographe, Traiteur, Salle..."
                       value={form.category}
                       onChange={onChange}
-                    />
+                    >
+                      <option value="">Selectionner un service</option>
+                      {serviceCategories.map((category) => (
+                        <option key={category.value} value={category.value}>
+                          {category.label}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="auth-field">
@@ -322,9 +354,6 @@ const SignupPage = () => {
                 )}
               </button>
             </form>
-
-            {error && <p className="auth-alert error">{error}</p>}
-            {message && <p className="auth-alert success">{message}</p>}
 
             <p className="auth-link-text">
               Vous avez deja un compte ? <Link to="/login">Se connecter</Link>

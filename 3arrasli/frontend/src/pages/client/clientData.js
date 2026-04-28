@@ -1,3 +1,5 @@
+import { serviceCategories } from "../../data/categories";
+
 export const emptyFilters = {
   q: "",
   city: "",
@@ -15,12 +17,7 @@ export const budgetMap = {
   plus5000: { min: "5000", max: "" },
 };
 
-export const serviceTypes = [
-  { value: "photographer", label: "Photographe" },
-  { value: "salle", label: "Salle" },
-  { value: "traiteur", label: "Traiteur" },
-  { value: "decoration", label: "Decoration" },
-];
+export const serviceTypes = serviceCategories;
 
 export const cities = ["Tunis", "Sousse", "Sfax", "Monastir"];
 

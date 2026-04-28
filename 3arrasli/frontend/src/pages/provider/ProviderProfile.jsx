@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { serviceCategories } from "../../data/categories";
 
 const UploadZone = ({
   fieldName,
@@ -63,7 +64,6 @@ const UploadZone = ({
 const ProviderProfile = ({
   profileForm,
   profileErrors,
-  profileMessage,
   profileLoading,
   profileSubmitting,
   profilePhotoPreview,
@@ -92,16 +92,6 @@ const ProviderProfile = ({
           {isEditing ? "Voir la fiche" : "Modifier le profil"}
         </button>
       </div>
-
-      {profileMessage?.text ? (
-        <div
-          className={`provider-alert ${
-            profileMessage.type === "success" ? "provider-alert-success" : "provider-alert-error"
-          }`}
-        >
-          {profileMessage.text}
-        </div>
-      ) : null}
 
       {!isEditing ? (
         <section className="provider-profile-showcase">
@@ -204,7 +194,14 @@ const ProviderProfile = ({
           </label>
           <label>
             Categorie
-            <input name="category" value={profileForm.category} onChange={onProfileChange} />
+            <select name="category" value={profileForm.category} onChange={onProfileChange}>
+              <option value="">Selectionner</option>
+              {serviceCategories.map((category) => (
+                <option key={category.value} value={category.value}>
+                  {category.label}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Instagram

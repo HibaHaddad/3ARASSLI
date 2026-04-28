@@ -14,6 +14,19 @@ const WeeklyCalendarEventBlock = ({ slot, isUpdating }) => {
     );
   }
 
+  if (slot.eventType === "appointment" || slot.status === "appointment") {
+    return (
+      <div className="provider-week-event appointment">
+        <div className="provider-week-event-topline">
+          <span className="provider-week-event-badge">Rendez-vous</span>
+          <small>{slot.time}</small>
+        </div>
+        <strong>{slot.clientName || "Client"}</strong>
+        <p>{slot.serviceTitle || "Service"} - {slot.appointmentStatus === "accepted" ? "Accepte" : "En attente"}</p>
+      </div>
+    );
+  }
+
   return (
     <div className="provider-week-event reserved">
       <div className="provider-week-event-topline">

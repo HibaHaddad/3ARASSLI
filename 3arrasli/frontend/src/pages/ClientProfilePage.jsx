@@ -3,6 +3,7 @@ import ClientPageLayout from "./client/ClientPageLayout";
 import api from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
 import { getStoredSession, saveStoredUser } from "../services/auth";
+import { IMAGE_TOO_LARGE_MESSAGE, showToast, validateImageFileSize } from "../services/toast";
 
 const initialForm = {
   name: "",
@@ -52,6 +53,18 @@ const ClientProfilePage = () => {
   }, []);
 
   useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
+
+  useEffect(() => {
     if (!profileFile) {
       return undefined;
     }
@@ -68,6 +81,14 @@ const ClientProfilePage = () => {
 
   const onFileChange = (event) => {
     const nextFile = event.target.files?.[0] || null;
+
+    if (nextFile && !validateImageFileSize(nextFile)) {
+      event.target.value = "";
+      setProfileFile(null);
+      setError(IMAGE_TOO_LARGE_MESSAGE);
+      return;
+    }
+
     setProfileFile(nextFile);
   };
 
@@ -132,8 +153,6 @@ const ClientProfilePage = () => {
       <section className="client-section client-profile-section">
         <div className="client-shell">
           {loading ? <p className="client-loading">Chargement du profil...</p> : null}
-          {message ? <p className="client-message">{message}</p> : null}
-          {error ? <p className="client-error">{error}</p> : null}
 
           {!loading ? (
             <div className="client-profile-layout">

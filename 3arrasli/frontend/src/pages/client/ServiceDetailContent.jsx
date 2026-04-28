@@ -60,6 +60,14 @@ const ServiceDetailContent = ({
             value={booking.date}
             onChange={(event) => onBookingChange("date", event.target.value)}
           />
+          <input
+            type="time"
+            min="08:00"
+            max="20:00"
+            step="3600"
+            value={booking.start_time}
+            onChange={(event) => onBookingChange("start_time", event.target.value)}
+          />
           <input value={`${service.price} TND`} readOnly />
         </div>
         <textarea

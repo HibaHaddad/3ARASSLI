@@ -607,6 +607,56 @@ body.client-modal-open .auth-navbar {
   font-size: 0.84rem;
 }
 
+.client-search-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 28px;
+  flex-wrap: wrap;
+}
+
+.client-pagination-pages {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.client-pagination-btn,
+.client-pagination-page {
+  min-width: 42px;
+  min-height: 42px;
+  border: 1px solid rgba(119, 66, 84, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #4a2735;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 12px 24px rgba(87, 45, 59, 0.08);
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.client-pagination-btn {
+  padding: 0 18px;
+}
+
+.client-pagination-btn:hover:not(:disabled),
+.client-pagination-page:hover,
+.client-pagination-page.active {
+  transform: translateY(-1px);
+  border-color: rgba(151, 73, 99, 0.38);
+  background: linear-gradient(135deg, #b14555, #d0a04c);
+  color: #fff;
+}
+
+.client-pagination-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
 .client-experience .client-service-grid {
   gap: 14px;
 }

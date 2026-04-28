@@ -16,3 +16,8 @@ export const deleteProviderCalendarBlock = async (blockId) => {
   const response = await api.delete(`/api/provider/calendar/blocks/${blockId}`);
   return response.data;
 };
+
+export const updateProviderAppointmentStatus = async (appointmentId, status) => {
+  const response = await api.patch(`/api/provider/appointments/${appointmentId}/status`, { status });
+  return response.data;
+};
