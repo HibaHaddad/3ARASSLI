@@ -15,6 +15,7 @@ const initialForm = {
 };
 
 const ClientProfilePage = () => {
+  const profileFileInputId = "client-profile-photo-input";
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -124,9 +125,9 @@ const ClientProfilePage = () => {
 
   return (
     <ClientPageLayout
-      kicker="Profil client"
+      kicker="Profile client"
       title={`${firstName} espace personnel`}
-      description="Mettez a jour vos coordonnees, votre photo et votre univers pour garder un compte client plus complet et plus elegant."
+      description="Mettez à jour vos coordonnées, votre photo et votre univers pour garder un compte client plus complet et plus élégant."
     >
       <section className="client-section client-profile-section">
         <div className="client-shell">
@@ -151,9 +152,9 @@ const ClientProfilePage = () => {
                 <p>{form.description || "Ajoutez une petite presentation pour personnaliser votre profil client."}</p>
 
                 <div className="client-profile-pills">
-                  <span>{form.city || "Ville a renseigner"}</span>
-                  <span>{form.phone || "Telephone a renseigner"}</span>
-                  <span>{form.instagram || "Instagram a renseigner"}</span>
+                  <span>{form.city || "Ville à renseigner"}</span>
+                  <span>{form.phone || "Telephone à renseigner"}</span>
+                  <span>{form.instagram || "Instagram à renseigner"}</span>
                 </div>
               </aside>
 
@@ -163,7 +164,7 @@ const ClientProfilePage = () => {
                     <span className="section-kicker">Edition</span>
                     <h2>Modifier mon profil</h2>
                   </div>
-                  <p>Gardez vos informations toujours a jour dans la partie client.</p>
+                  
                 </div>
 
                 <div className="client-profile-grid">
@@ -196,7 +197,21 @@ const ClientProfilePage = () => {
 
                 <label className="client-field">
                   <span>Photo de profil</span>
-                  <input className="client-input" type="file" accept="image/png,image/jpeg,image/jpg" onChange={onFileChange} />
+                  <div className="client-file-upload">
+                    <input
+                      id={profileFileInputId}
+                      className="client-file-input"
+                      type="file"
+                      accept="image/png,image/jpeg,image/jpg"
+                      onChange={onFileChange}
+                    />
+                    <label htmlFor={profileFileInputId} className="client-file-trigger">
+                      Choisir une image
+                    </label>
+                    <span className="client-file-name">
+                      {profileFile?.name || "Aucun fichier selectionne"}
+                    </span>
+                  </div>
                 </label>
 
                 <label className="client-field">

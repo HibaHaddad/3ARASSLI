@@ -83,7 +83,7 @@
 .client-profile-showcase h2 {
   margin: 0;
   color: #432431;
-  font-size: clamp(2rem, 4vw, 3.2rem);
+  font-size: clamp(1.5rem, 2.6vw, 2.2rem);
   line-height: 0.98;
 }
 
@@ -152,6 +152,69 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+
+.client-file-upload {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  padding: 10px 12px;
+  border: 1px solid rgba(116, 65, 82, 0.13);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.client-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.client-file-trigger {
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid rgba(117, 66, 84, 0.18);
+  color: #71384c;
+  font-size: 0.86rem;
+  font-weight: 800;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(255, 245, 247, 0.9));
+  cursor: pointer;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease, color 220ms ease;
+}
+
+.client-file-trigger:hover {
+  transform: translateY(-1px);
+  border-color: rgba(137, 74, 94, 0.28);
+  color: #5f2f3f;
+  box-shadow: 0 10px 18px rgba(92, 47, 63, 0.12);
+}
+
+.client-file-input:focus-visible + .client-file-trigger {
+  outline: none;
+  border-color: rgba(151, 73, 99, 0.52);
+  box-shadow: 0 0 0 4px rgba(247, 206, 218, 0.38);
+}
+
+.client-file-name {
+  flex: 1;
+  min-width: 0;
+  color: rgba(82, 49, 61, 0.7);
+  font-size: 0.88rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .client-site-nav {
@@ -243,7 +306,7 @@
 .client-page-heading h1 {
   margin: 14px 0 18px;
   color: #432431;
-  font-size: clamp(2.9rem, 7vw, 6.2rem);
+  font-size: clamp(2rem, 4.4vw, 3.7rem);
   line-height: 0.9;
   letter-spacing: -0.06em;
   text-wrap: balance;
@@ -293,25 +356,27 @@
 }
 
 .client-modal-open {
-  overflow: auto;
+  overflow: hidden;
 }
 
 body.client-modal-open .auth-navbar {
   opacity: 0;
   visibility: hidden;
+  display: none;
   pointer-events: none;
   transform: translateY(-140%);
 }
 
 .client-modal-overlay {
-  position: absolute;
+  position: fixed;
   inset: 0;
   z-index: 1200;
-  display: grid;
-  align-items: start;
-  justify-items: center;
-  padding: 120px 24px 24px;
-  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px 24px;
+  min-height: 100vh;
+  overflow-y: auto;
   background:
     radial-gradient(circle at 20% 10%, rgba(255, 225, 231, 0.24), transparent 30%),
     rgba(42, 20, 29, 0.58);
@@ -323,7 +388,7 @@ body.client-modal-open .auth-navbar {
   position: relative;
   z-index: 1201;
   width: min(760px, calc(100vw - 32px));
-  max-height: min(calc(100vh - 48px), 860px);
+  max-height: min(calc(100vh - 96px), 860px);
   display: grid;
   grid-template-columns: 0.92fr 1.08fr;
   overflow: hidden;
@@ -382,7 +447,7 @@ body.client-modal-open .auth-navbar {
 .client-modal-content h2 {
   margin: 10px 0 10px;
   color: #432431;
-  font-size: clamp(2rem, 4vw, 3.8rem);
+  font-size: clamp(1.7rem, 3.2vw, 3rem);
   line-height: 0.98;
   letter-spacing: -0.05em;
 }
@@ -420,7 +485,7 @@ body.client-modal-open .auth-navbar {
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: minmax(0, 1fr);
   align-items: end;
   gap: 54px;
 }
@@ -433,7 +498,7 @@ body.client-modal-open .auth-navbar {
 .client-hero-copy h1 {
   margin: 20px 0 24px;
   max-width: 860px;
-  font-size: clamp(3.2rem, 7vw, 7rem);
+  font-size: clamp(2rem, 4.8vw, 4rem);
   line-height: 0.89;
   letter-spacing: -0.055em;
   text-wrap: balance;
@@ -509,6 +574,79 @@ body.client-modal-open .auth-navbar {
   backdrop-filter: blur(22px);
 }
 
+.client-experience .client-search-card {
+  margin-top: 24px;
+}
+
+.client-search-top-section {
+  padding-top: 10px;
+  padding-bottom: 32px;
+}
+
+.client-search-top-section .client-search-card {
+  margin-top: 0;
+}
+
+.client-search-results-section {
+  padding-top: 0;
+}
+
+.client-search-service-grid {
+  gap: 12px;
+}
+
+.client-search-service-grid .client-service-card {
+  border-radius: 16px;
+  box-shadow: 0 12px 26px rgba(87, 45, 59, 0.09);
+}
+
+.client-search-service-grid .client-service-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 16px 36px rgba(87, 45, 59, 0.12);
+}
+
+.client-search-service-grid .client-service-image {
+  aspect-ratio: 1.38 / 1;
+}
+
+.client-search-service-grid .client-service-image span {
+  left: 10px;
+  bottom: 10px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+}
+
+.client-search-service-grid .client-service-content {
+  padding: 12px;
+}
+
+.client-search-service-grid .client-service-meta span,
+.client-search-service-grid .client-status {
+  font-size: 0.68rem;
+}
+
+.client-search-service-grid .client-service-meta strong {
+  font-size: 0.92rem;
+}
+
+.client-search-service-grid .client-service-content h3 {
+  margin: 10px 0 6px;
+  font-size: 1rem;
+}
+
+.client-search-service-grid .client-service-content p {
+  min-height: 44px;
+  margin: 0 0 10px;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.client-search-service-grid .client-card-action {
+  min-height: 38px;
+  margin-top: 8px;
+  font-size: 0.84rem;
+}
+
 .client-search-heading {
   display: flex;
   align-items: end;
@@ -521,7 +659,7 @@ body.client-modal-open .auth-navbar {
   max-width: 650px;
   margin: 10px 0 0;
   color: #482735;
-  font-size: clamp(1.7rem, 3vw, 2.75rem);
+  font-size: clamp(1.2rem, 1.8vw, 1.7rem);
   line-height: 1;
   letter-spacing: -0.04em;
   text-wrap: balance;
@@ -529,7 +667,7 @@ body.client-modal-open .auth-navbar {
 
 .client-search-fields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  grid-template-columns: repeat(4, minmax(0, 1fr)) auto;
   gap: 12px;
 }
 
@@ -585,7 +723,7 @@ body.client-modal-open .auth-navbar {
 }
 
 .client-section {
-  padding: 88px 0;
+  padding: 40px 0;
 }
 
 .client-results-section {
@@ -604,10 +742,18 @@ body.client-modal-open .auth-navbar {
   max-width: 720px;
   margin: 10px 0 0;
   color: #482735;
-  font-size: clamp(2.1rem, 4vw, 4.1rem);
+  font-size: clamp(1.5rem, 2.4vw, 2.3rem);
   line-height: 0.94;
   letter-spacing: -0.048em;
   text-wrap: balance;
+}
+
+.client-dashboard-intro-title {
+  margin-top: 8px;
+  font-size: clamp(1.2rem, 1.6vw, 1.6rem) !important;
+  white-space: nowrap;
+  text-wrap: nowrap;
+  letter-spacing: -0.02em;
 }
 
 .client-section-head p {
@@ -728,7 +874,7 @@ body.client-modal-open .auth-navbar {
 .client-service-content h3 {
   margin: 16px 0 10px;
   color: #442431;
-  font-size: 1.42rem;
+  font-size: 1.22rem;
   line-height: 1.12;
   letter-spacing: -0.02em;
 }
@@ -828,7 +974,7 @@ body.client-modal-open .auth-navbar {
 .client-detail-card h2 {
   margin: 10px 0 10px;
   color: #432431;
-  font-size: clamp(2rem, 4vw, 3.6rem);
+  font-size: clamp(1.4rem, 2.3vw, 2.2rem);
   line-height: 1;
   letter-spacing: -0.045em;
 }
@@ -985,32 +1131,52 @@ body.client-modal-open .auth-navbar {
 }
 
 .client-provider-review-grid {
-  margin-top: 28px;
+  margin-top: 16px;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
 }
 
 .client-provider-inline-head {
-  margin-bottom: 22px;
+  margin-bottom: 12px;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .client-provider-inline-head h2 {
-  font-size: clamp(1.8rem, 3vw, 2.8rem);
+  font-size: clamp(1.5rem, 2.4vw, 2.3rem);
+  margin: 4px 0 0;
+  line-height: 1.06;
+}
+
+.client-provider-inline-head p {
+  max-width: 40ch;
+  margin: 2px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .client-review-list {
   display: grid;
-  gap: 14px;
+  gap: 10px;
+  justify-items: start;
 }
 
 .client-review-card {
-  padding: 18px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  width: min(100%, 560px);
 }
 
 .client-review-card p {
-  margin: 12px 0 0;
+  margin: 8px 0 0;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: rgba(82, 49, 61, 0.76);
 }
 
 .client-review-head {
   align-items: start;
+  gap: 8px;
 }
 
 .client-review-head strong,
@@ -1020,27 +1186,28 @@ body.client-modal-open .auth-navbar {
 
 .client-review-head span {
   display: block;
-  margin-top: 4px;
+  margin-top: 2px;
   color: rgba(82, 49, 61, 0.65);
-  font-size: 0.9rem;
+  font-size: 0.8rem;
+  line-height: 1.3;
 }
 
 .client-review-form,
 .client-modal-form {
   display: grid;
-  gap: 16px;
+  gap: 12px;
 }
 
 .client-modal-shell {
   grid-template-columns: 1fr;
   width: min(760px, calc(100vw - 32px));
-  max-height: min(calc(100vh - 48px), 860px);
+  max-height: min(calc(100vh - 96px), 860px);
 }
 
 .client-modal-panel {
-  margin: 20px;
+  margin: 0;
   padding: 24px;
-  max-height: calc(100vh - 88px);
+  max-height: calc(100vh - 132px);
   overflow: hidden;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
@@ -1049,7 +1216,7 @@ body.client-modal-open .auth-navbar {
 .client-modal-panel-head h2 {
   margin: 10px 0 0;
   color: #432431;
-  font-size: clamp(1.8rem, 3.6vw, 2.8rem);
+  font-size: clamp(1.5rem, 2.7vw, 2.2rem);
 }
 
 .client-modal-panel-body {
@@ -1367,7 +1534,7 @@ body.client-modal-open .auth-navbar {
 .client-planner-copy h2 {
   margin: 10px 0 14px;
   color: #432431;
-  font-size: clamp(2.2rem, 4.5vw, 4.4rem);
+  font-size: clamp(1.5rem, 2.5vw, 2.4rem);
   line-height: 0.98;
   letter-spacing: -0.05em;
 }
@@ -1432,7 +1599,7 @@ body.client-modal-open .auth-navbar {
   display: block;
   margin: 12px 0 6px;
   color: #432431;
-  font-size: clamp(2rem, 4vw, 3rem);
+  font-size: clamp(1.6rem, 3.2vw, 2.4rem);
   line-height: 1;
 }
 
@@ -1555,7 +1722,7 @@ body.client-modal-open .auth-navbar {
 .client-tool-card h3 {
   margin: 42px 0 12px;
   color: #432431;
-  font-size: 1.6rem;
+  font-size: 1.35rem;
 }
 
 .client-tool-card p {
@@ -1692,7 +1859,7 @@ body.client-modal-open .auth-navbar {
 
 .client-sidebar-brand h1 {
   margin: 14px 0 10px;
-  font-size: clamp(2.4rem, 5vw, 4.8rem);
+  font-size: clamp(1.6rem, 3vw, 2.8rem);
   line-height: 0.95;
   letter-spacing: -0.05em;
 }
@@ -1750,7 +1917,7 @@ body.client-modal-open .auth-navbar {
 .client-content-header h2 {
   margin: 8px 0 8px;
   color: #432431;
-  font-size: clamp(2rem, 4vw, 4rem);
+  font-size: clamp(1.4rem, 2.2vw, 2.2rem);
   line-height: 1;
   letter-spacing: -0.045em;
 }
@@ -1774,6 +1941,7 @@ body.client-modal-open .auth-navbar {
 .client-panel h2 {
   margin: 0 0 16px;
   color: #432431;
+  font-size: clamp(1.3rem, 2vw, 1.9rem);
 }
 
 .client-filters {
@@ -1855,6 +2023,7 @@ body.client-modal-open .auth-navbar {
 .provider-chat-window-head h3 {
   margin: 0 0 6px;
   color: #432431;
+  font-size: 1.08rem;
 }
 
 .provider-panel-head p,
@@ -2128,7 +2297,7 @@ body.client-modal-open .auth-navbar {
   }
 
   .client-hero-copy h1 {
-    font-size: clamp(2.8rem, 14vw, 4.2rem);
+    font-size: clamp(1.8rem, 9vw, 2.8rem);
   }
 
   .client-search-card,
@@ -2142,13 +2311,13 @@ body.client-modal-open .auth-navbar {
 
   .client-modal-overlay {
     padding: 12px;
-    align-items: start;
-    padding-top: 96px;
+    align-items: center;
+    justify-content: center;
   }
 
   .client-service-modal {
     width: min(100%, calc(100vw - 24px));
-    max-height: min(calc(100vh - 24px), 920px);
+    max-height: min(calc(100vh - 40px), 920px);
   }
 
   .client-modal-media {
@@ -2207,8 +2376,17 @@ body.client-modal-open .auth-navbar {
   }
 
   .client-modal-panel {
-    margin: 12px;
+    margin: 0;
     padding: 18px;
-    max-height: calc(100vh - 48px);
+    max-height: calc(100vh - 64px);
+  }
+
+  .client-file-upload {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .client-file-trigger {
+    width: 100%;
   }
 }

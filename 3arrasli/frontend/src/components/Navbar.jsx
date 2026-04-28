@@ -237,20 +237,19 @@ const Navbar = ({ onLogoClick, notifications = [], onDismissNotification, onNoti
                 </a>
               )
             ))}
+            {user && (
+              <button
+                type="button"
+                className="auth-nav-link auth-nav-button auth-nav-link-soft"
+                onClick={() => {
+                  clearStoredUser();
+                  window.location.href = "/";
+                }}
+              >
+                Logout
+              </button>
+            )}
           </div>
-
-          {user && (
-            <button
-              type="button"
-              className="auth-nav-link auth-nav-button auth-nav-link-soft"
-              onClick={() => {
-                clearStoredUser();
-                window.location.href = "/";
-              }}
-            >
-              Logout
-            </button>
-          )}
         </nav>
       </div>
     </header>

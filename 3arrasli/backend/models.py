@@ -172,11 +172,6 @@ class Review(db.Model):
         onupdate=datetime.utcnow,
     )
 
-    __table_args__ = (
-        db.UniqueConstraint("service_id", "client_id", name="uq_service_client_review"),
-    )
-
-
 class ProviderAvailabilitySlot(db.Model):
     __tablename__ = "provider_availability_slots"
 

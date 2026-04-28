@@ -175,7 +175,7 @@
   align-items: center;
   justify-content: flex-end;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   position: relative;
   z-index: 1;
 }
@@ -184,7 +184,8 @@
   display: flex;
   gap: 0.48rem;
   align-items: center;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  justify-content: flex-end;
   padding: 8px;
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.48);
@@ -194,6 +195,10 @@
 }
 
 .auth-nav-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
   position: relative;
   border: none;
   background: transparent;
@@ -958,24 +963,29 @@
 
   .auth-nav-shell {
     gap: 8px;
+    flex-wrap: nowrap;
   }
 
   .auth-nav-links {
     width: 100%;
     gap: 0.26rem;
     padding: 6px;
+    justify-content: stretch;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   .auth-nav-link {
     padding: 0.66rem 0.86rem;
     font-size: 0.9rem;
-    flex: 1 1 auto;
+    flex: 0 0 auto;
     text-align: center;
+    white-space: nowrap;
   }
 
   .auth-nav-button {
-    width: 100%;
-    justify-content: center;
+    width: auto;
   }
 
   .auth-visual-panel {

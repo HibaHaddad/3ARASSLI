@@ -31,9 +31,12 @@ load_dotenv(BACKEND_DIR / ".env")
 load_dotenv(BACKEND_DIR.parent / ".env")
 
 
-JWT_SECRET = "change-this-secret-in-production"
-JWT_ALGORITHM = "HS256"
-JWT_EXP_HOURS = 12
+JWT_SECRET = (os.getenv("JWT_SECRET") or "").strip()
+if not JWT_SECRET:
+    JWT_SECRET = "dev-only-change-me"
+    print("WARNING: JWT_SECRET is not set. Using insecure development fallback.")
+JWT_ALGORITHM = (os.getenv("JWT_ALGORITHM") or "HS256").strip()
+JWT_EXP_HOURS = int(os.getenv("JWT_EXP_HOURS", "12") or 12)
 
 DEFAULT_ADMIN = {
     "username": "Administrateur Principal",
@@ -987,6 +990,33 @@ def ensure_message_schema():
         db.session.commit()
 
 
+def ensure_review_schema():
+    inspector = inspect(db.engine)
+    tables = set(inspector.get_table_names())
+    if "reviews" not in tables:
+        return
+
+    try:
+        unique_constraints = inspector.get_unique_constraints("reviews")
+    except Exception:
+        unique_constraints = []
+
+    unique_names = {
+        (constraint.get("name") or "").strip()
+        for constraint in unique_constraints
+        if (constraint.get("name") or "").strip()
+    }
+
+    target_unique = "uq_service_client_review"
+    if target_unique not in unique_names:
+        return
+
+    engine_name = db.engine.dialect.name
+    if engine_name == "mysql":
+        db.session.execute(text(f"ALTER TABLE reviews DROP INDEX {target_unique}"))
+        db.session.commit()
+
+
 def create_app():
     app = Flask(__name__)
     database_uri = build_database_uri()
@@ -1021,6 +1051,7 @@ def create_app():
         ensure_service_images_schema()
         ensure_reservation_schema()
         ensure_message_schema()
+        ensure_review_schema()
         seed_data()
 
     connected_socket_counts = {}
@@ -2849,6 +2880,7 @@ def create_app():
         min_price = request.args.get("min_price")
         max_price = request.args.get("max_price")
         service_type = (request.args.get("type") or "").strip().lower()
+        q = (request.args.get("q") or "").strip().lower()
 
         query = Service.query
         if city:
@@ -2858,6 +2890,18 @@ def create_app():
                 db.or_(
                     db.func.lower(Service.type).contains(service_type),
                     db.func.lower(Service.category).contains(service_type),
+                )
+            )
+        if q:
+            provider_ids = db.session.query(User.id).filter(db.func.lower(User.username).contains(q))
+            query = query.filter(
+                db.or_(
+                    db.func.lower(Service.title).contains(q),
+                    db.func.lower(Service.description).contains(q),
+                    db.func.lower(Service.type).contains(q),
+                    db.func.lower(Service.category).contains(q),
+                    Service.provider_id.in_(provider_ids),
+                    Service.prestataire_id.in_(provider_ids),
                 )
             )
         if min_price:
@@ -3081,21 +3125,14 @@ def create_app():
         if rating < 1 or rating > 5:
             return jsonify({"success": False, "message": "La note doit etre comprise entre 1 et 5."}), 400
 
-        existing = Review.query.filter_by(service_id=service.id, client_id=request.user_id).first()
-        if existing:
-            existing.rating = rating
-            existing.comment = comment
-            existing.updated_at = datetime.utcnow()
-            review = existing
-        else:
-            review = Review(
-                service_id=service.id,
-                client_id=request.user_id,
-                provider_id=get_service_provider_id(service),
-                rating=rating,
-                comment=comment,
-            )
-            db.session.add(review)
+        review = Review(
+            service_id=service.id,
+            client_id=request.user_id,
+            provider_id=get_service_provider_id(service),
+            rating=rating,
+            comment=comment,
+        )
+        db.session.add(review)
 
         db.session.commit()
         summary = update_service_rating(service)

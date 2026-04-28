@@ -291,7 +291,7 @@ const ClientProviderPage = () => {
     setSubmitting(true);
     try {
       await api.post(`/api/services/${id}/reviews`, reviewForm);
-      setMessage("Votre avis a ete enregistre.");
+      setMessage("");
       setReviewForm({ rating: 5, comment: "" });
       await loadService();
     } catch (err) {
@@ -507,7 +507,7 @@ const ClientProviderPage = () => {
                       <span className="section-kicker">Avis clients</span>
                       <h2>{reviews.length} commentaire(s)</h2>
                     </div>
-                    <p>Les retours renforcent la confiance avant la reservation.</p>
+                    
                   </div>
 
                   <div className="client-review-list">

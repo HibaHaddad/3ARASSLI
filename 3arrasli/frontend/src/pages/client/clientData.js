@@ -1,4 +1,5 @@
 export const emptyFilters = {
+  q: "",
   city: "",
   budget: "",
   min_price: "",
@@ -36,6 +37,7 @@ export const buildServiceParams = (filters) => {
 };
 
 export const getFiltersFromSearch = (searchParams) => ({
+  q: searchParams.get("q") || "",
   city: searchParams.get("city") || "",
   budget: searchParams.get("budget") || "",
   min_price: "",
@@ -46,7 +48,7 @@ export const getFiltersFromSearch = (searchParams) => ({
 export const toSearchQuery = (filters) => {
   const next = new URLSearchParams();
 
-  ["city", "budget", "type"].forEach((key) => {
+  ["q", "city", "budget", "type"].forEach((key) => {
     if (filters[key]) {
       next.set(key, filters[key]);
     }

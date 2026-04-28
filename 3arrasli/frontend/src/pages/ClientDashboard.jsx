@@ -89,16 +89,6 @@ const ClientDashboard = () => {
                 </div>
               </div>
 
-              <div className="client-hero-card" aria-label="Resume mariage">
-                <span className="client-section-label">Inspiration</span>
-                <strong>{services.length}</strong>
-                <p>prestataires a explorer pour composer une journee douce, elegante et bien rythmee.</p>
-                <div className="client-mini-stats">
-                  <span>Recherche par ville</span>
-                  <span>Favoris connectes</span>
-                  <span>Reservation fluide</span>
-                </div>
-              </div>
             </div>
 
             <form className="client-search-card" onSubmit={submitSearch}>
@@ -108,6 +98,17 @@ const ClientDashboard = () => {
               </div>
 
               <div className="client-search-fields">
+                <label className="client-field">
+                  <span>Nom / Service</span>
+                  <input
+                    type="text"
+                    name="q"
+                    value={filters.q}
+                    onChange={onFilterChange}
+                    placeholder="Ex: Studio Lumiere, Photographe..."
+                  />
+                </label>
+
                 <label className="client-field">
                   <span>Ville</span>
                   <select name="city" value={filters.city} onChange={onFilterChange}>
@@ -161,9 +162,9 @@ const ClientDashboard = () => {
             <div className="client-section-head">
               <div>
                 <span className="section-kicker">A decouvrir</span>
-                <h2>Quelques prestataires pour commencer votre selection.</h2>
+                <h2 className="client-dashboard-intro-title">Quelques prestataires pour commencer votre selection.</h2>
               </div>
-              <p>La page de resultats vous donnera ensuite une recherche complete et filtrable.</p>
+           
             </div>
 
             <div className="client-service-grid">
