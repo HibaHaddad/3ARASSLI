@@ -1,5 +1,5 @@
 export const validateServiceForm = (values, options = {}) => {
-  const { imageFile = null, hasExistingImage = false } = options;
+  const { imageFiles = [], hasExistingImages = false } = options;
   const errors = {};
 
   if (!String(values.title || "").trim()) {
@@ -16,8 +16,8 @@ export const validateServiceForm = (values, options = {}) => {
     errors.category = "La categorie est obligatoire.";
   }
 
-  if (!imageFile && !hasExistingImage) {
-    errors.image = "L'image est obligatoire.";
+  if (imageFiles.length === 0 && !hasExistingImages) {
+    errors.image = "Ajoutez au moins une image.";
   }
 
   if (!String(values.description || "").trim()) {

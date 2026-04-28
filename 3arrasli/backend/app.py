@@ -1,20 +1,34 @@
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
+from email.message import EmailMessage
 from functools import wraps
+import json
 import os
+import smtplib
+from pathlib import Path
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 from uuid import uuid4
 
 import jwt
 import pymysql
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from flask_socketio import ConnectionRefusedError, disconnect, emit, join_room
+from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 from sqlalchemy import inspect, text
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
-from extensions import bcrypt, db
-from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, User
+from extensions import bcrypt, db, socketio
+from models import Appointment, Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
+
+
+BACKEND_DIR = Path(__file__).resolve().parent
+load_dotenv(BACKEND_DIR / ".env")
+load_dotenv(BACKEND_DIR.parent / ".env")
 
 
 JWT_SECRET = "change-this-secret-in-production"
@@ -85,6 +99,225 @@ FRENCH_MONTHS = [
     "Decembre",
 ]
 STANDARD_WORKING_HOURS = STANDARD_SLOT_TIMES
+DEFAULT_ADVANCE_RATIO = 0.3
+
+
+def get_frontend_base_url():
+    return (os.getenv("FRONTEND_BASE_URL") or "http://localhost:5173").rstrip("/")
+
+
+def get_stripe_secret_key():
+    return (os.getenv("STRIPE_SECRET_KEY") or "").strip()
+
+
+def get_stripe_publishable_key():
+    return (os.getenv("STRIPE_PUBLISHABLE_KEY") or "").strip()
+
+
+def is_stripe_configured():
+    return bool(get_stripe_secret_key() and get_stripe_publishable_key())
+
+
+def get_stripe_currency():
+    return (os.getenv("STRIPE_CURRENCY") or "eur").strip().lower()
+
+
+def format_currency(amount):
+    value = float(amount or 0)
+    return f"{value:.2f} TND"
+
+
+def amount_to_minor_units(amount):
+    return max(int(round(float(amount or 0) * 100)), 0)
+
+
+def build_storage_relative_path(folder, filename):
+    return f"uploads/{folder}/{filename}"
+
+
+def resolve_document_url(path):
+    value = str(path or "").strip()
+    if not value:
+        return None
+    return f"/{value.lstrip('/')}"
+
+
+def escape_pdf_text(value):
+    return str(value or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def write_simple_pdf(file_path, title, lines):
+    text_lines = [str(title or "").strip()] + [str(line or "").strip() for line in lines if str(line or "").strip()]
+    stream_parts = ["BT", "/F1 18 Tf", "50 780 Td"]
+    first_line = True
+    for line in text_lines:
+        if not first_line:
+            stream_parts.append("0 -24 Td")
+        stream_parts.append(f"({escape_pdf_text(line)}) Tj")
+        first_line = False
+    stream_parts.append("ET")
+    stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
+
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
+    ]
+
+    content = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(content))
+        content.extend(obj)
+
+    xref_offset = len(content)
+    content.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    content.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    content.extend(
+        (
+            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF"
+        ).encode("ascii")
+    )
+
+    with open(file_path, "wb") as pdf_file:
+        pdf_file.write(content)
+
+
+def stripe_api_request(method, path, form_data=None):
+    secret_key = get_stripe_secret_key()
+    if not secret_key:
+        raise RuntimeError("Stripe n'est pas configure.")
+
+    encoded = None
+    if form_data is not None:
+        encoded = urllib_parse.urlencode(form_data, doseq=True).encode("utf-8")
+
+    request_obj = urllib_request.Request(
+        f"https://api.stripe.com{path}",
+        data=encoded,
+        method=method.upper(),
+        headers={
+            "Authorization": f"Bearer {secret_key}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+
+    try:
+        with urllib_request.urlopen(request_obj, timeout=25) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except urllib_error.HTTPError as exc:
+        payload = exc.read().decode("utf-8", errors="replace")
+        try:
+            parsed = json.loads(payload)
+            message = parsed.get("error", {}).get("message") or "Erreur Stripe."
+        except json.JSONDecodeError:
+            message = payload or "Erreur Stripe."
+        raise RuntimeError(message) from exc
+
+
+def normalize_reservation_status(status):
+    value = str(status or "").strip().upper()
+    if value in {"PAID", "UNPAID", "PENDING"}:
+        return value
+    if value in {"PAID_FULL", "CONFIRMED"}:
+        return "PAID"
+    return "UNPAID"
+
+
+def serialize_review(review):
+    client = User.query.get(review.client_id)
+    return {
+        "id": review.id,
+        "rating": review.rating,
+        "comment": review.comment or "",
+        "client_id": review.client_id,
+        "client_name": client.username if client else "Client",
+        "created_at": review.created_at.isoformat() if review.created_at else None,
+    }
+
+
+def get_service_rating_summary(service_id):
+    reviews = Review.query.filter_by(service_id=service_id).order_by(Review.created_at.desc()).all()
+    review_count = len(reviews)
+    average_rating = round(sum(review.rating for review in reviews) / review_count, 1) if review_count else 0
+    return {
+        "average": average_rating,
+        "count": review_count,
+        "reviews": reviews,
+    }
+
+
+def update_service_rating(service):
+    summary = get_service_rating_summary(service.id)
+    service.rating = summary["average"] or service.rating or 0
+    db.session.commit()
+    return summary
+
+
+def send_provider_approval_email(recipient_email, provider_name):
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_sender = os.getenv("SMTP_SENDER", smtp_user or "").strip()
+    use_tls = str(os.getenv("SMTP_USE_TLS", "true")).strip().lower() != "false"
+    use_ssl = str(os.getenv("SMTP_USE_SSL", "false")).strip().lower() == "true"
+
+    if not smtp_host or not smtp_sender:
+        return False, "Configuration SMTP manquante. Definissez SMTP_HOST et SMTP_SENDER."
+
+    login_url = f"{get_frontend_base_url()}/login"
+    message = EmailMessage()
+    message["Subject"] = "Votre compte prestataire 3arrasli a ete approuve"
+    message["From"] = smtp_sender
+    message["To"] = recipient_email
+    message.set_content(
+        "\n".join(
+            [
+                f"Bonjour {provider_name},",
+                "",
+                "Votre compte prestataire 3arrasli a ete approuve par l'administrateur.",
+                f"Email de connexion : {recipient_email}",
+                "Mot de passe : utilisez le mot de passe que vous avez choisi lors de l'inscription.",
+                f"Vous pouvez maintenant vous connecter ici : {login_url}",
+                "",
+                "Merci,",
+                "L'equipe 3arrasli",
+            ]
+        )
+    )
+    message.add_alternative(
+        "\n".join(
+            [
+                "<html><body>",
+                f"<p>Bonjour {provider_name},</p>",
+                "<p>Votre compte prestataire 3arrasli a ete approuve par l'administrateur.</p>",
+                f"<p><strong>Email de connexion :</strong> {recipient_email}</p>",
+                "<p><strong>Mot de passe :</strong> utilisez le mot de passe choisi lors de l'inscription.</p>",
+                f"<p><a href=\"{login_url}\">Acceder a la page de connexion</a></p>",
+                "<p>Merci,<br/>L'equipe 3arrasli</p>",
+                "</body></html>",
+            ]
+        ),
+        subtype="html",
+    )
+
+    try:
+        smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+        with smtp_class(smtp_host, smtp_port, timeout=20) as server:
+            if not use_ssl and use_tls:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(message)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
 
 
 def build_database_uri():
@@ -132,6 +365,8 @@ def serialize_user(user):
         "username": user.username,
         "email": user.email,
         "role": user.role.capitalize(),
+        "is_active": bool(getattr(user, "is_active", True)),
+        "approval_status": str(getattr(user, "approval_status", "approved") or "approved"),
         "phone": user.phone,
         "city": user.city,
         "category": user.category,
@@ -143,6 +378,36 @@ def serialize_user(user):
     }
 
 
+def serialize_admin_provider(user):
+    services = Service.query.filter(
+        db.or_(Service.provider_id == user.id, Service.prestataire_id == user.id)
+    ).all()
+    ratings = [float(service.rating) for service in services if getattr(service, "rating", None) is not None]
+    average_rating = round(sum(ratings) / len(ratings), 1) if ratings else 0
+
+    return {
+        "id": user.id,
+        "name": user.username,
+        "category": user.category or "",
+        "city": user.city or "",
+        "email": user.email,
+        "phone": user.phone or "",
+        "description": user.description or "",
+        "instagram": user.instagram or "",
+        "website": user.website or "",
+        "profilePhoto": user.profile_photo,
+        "coverPhoto": user.cover_photo,
+        "rating": average_rating,
+        "status": (
+            "pending-approval"
+            if str(getattr(user, "approval_status", "approved") or "approved") == "pending"
+            else ("active" if bool(getattr(user, "is_active", True)) else "inactive")
+        ),
+        "joinedAt": user.created_at.date().isoformat() if user.created_at else None,
+        "updatedAt": user.updated_at.isoformat() if getattr(user, "updated_at", None) else None,
+    }
+
+
 def serialize_service(service, client_id=None):
     provider_id = service.provider_id or service.prestataire_id
     favorite = None
@@ -150,6 +415,14 @@ def serialize_service(service, client_id=None):
         favorite = Favorite.query.filter_by(client_id=client_id, prestataire_id=provider_id).first()
 
     prestataire = User.query.get(provider_id) if provider_id else None
+    rating_summary = get_service_rating_summary(service.id)
+    gallery = [
+        {"id": item.id, "image_path": item.image_path, "url": item.image_path}
+        for item in getattr(service, "images", [])
+    ]
+    if not gallery and (service.image or service.image_url):
+        gallery = [{"id": None, "image_path": service.image or service.image_url, "url": service.image or service.image_url}]
+    primary_image = gallery[0]["image_path"] if gallery else (service.image or service.image_url)
     return {
         "id": service.id,
         "title": service.title,
@@ -158,12 +431,20 @@ def serialize_service(service, client_id=None):
         "city": service.city,
         "type": service.category or service.type,
         "category": service.category or service.type,
-        "image": service.image or service.image_url,
+        "image": primary_image,
+        "images": gallery,
         "rating": service.rating,
         "status": service.status or "Actif",
         "provider_id": provider_id,
         "prestataire_id": provider_id,
         "prestataire_name": prestataire.username if prestataire else "Prestataire",
+        "provider_name": prestataire.username if prestataire else "Prestataire",
+        "provider_description": prestataire.description if prestataire else "",
+        "provider_image": prestataire.profile_photo if prestataire else None,
+        "provider_cover": prestataire.cover_photo if prestataire else None,
+        "provider_category": prestataire.category if prestataire else (service.category or service.type),
+        "provider_city": prestataire.city if prestataire else service.city,
+        "review_count": rating_summary["count"],
         "is_favorite": bool(favorite),
         "favorite_id": favorite.id if favorite else None,
         "created_at": service.created_at.isoformat() if service.created_at else None,
@@ -173,15 +454,27 @@ def serialize_service(service, client_id=None):
 
 def serialize_reservation(reservation):
     service = Service.query.get(reservation.service_id)
+    provider = User.query.get(get_service_provider_id(service)) if service else None
     return {
         "id": reservation.id,
         "client_id": reservation.client_id,
         "service_id": reservation.service_id,
         "service_title": service.title if service else "",
+        "provider_name": provider.username if provider else "Prestataire",
         "date": reservation.date,
+        "location": reservation.location,
+        "amount": reservation.amount if reservation.amount is not None else (service.price if service else 0),
         "notes": reservation.notes,
-        "status": reservation.status,
+        "details": reservation.details,
+        "status": normalize_reservation_status(reservation.status),
+        "payment_status": normalize_reservation_status(getattr(reservation, "payment_status", reservation.status)),
+        "payment_option": getattr(reservation, "payment_option", None) or "full",
+        "invoice_url": resolve_document_url(getattr(reservation, "invoice_path", None)),
+        "contract_url": resolve_document_url(getattr(reservation, "contract_path", None)),
+        "signed_at": reservation.signed_at.isoformat() if getattr(reservation, "signed_at", None) else None,
+        "has_signature": bool(getattr(reservation, "signature_data", None)),
         "created_at": reservation.created_at.isoformat() if reservation.created_at else None,
+        "updated_at": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
     }
 
 
@@ -285,6 +578,21 @@ def serialize_planner_item(item):
         "title": item.title,
         "completed": item.completed,
     }
+
+
+def normalize_socket_role(value):
+    role = str(value or "").strip().lower()
+    if role == "prestataire":
+        return "prestataire"
+    if role == "client":
+        return "client"
+    if role == "admin":
+        return "admin"
+    return ""
+
+
+def build_chat_room(client_id, provider_id):
+    return f"chat:client:{int(client_id)}:provider:{int(provider_id)}"
 
 
 def make_token(user_id, role):
@@ -430,6 +738,10 @@ def ensure_user_schema():
 
     if "phone" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN phone VARCHAR(40) NULL")
+    if "is_active" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1")
+    if "approval_status" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN approval_status VARCHAR(30) NOT NULL DEFAULT 'approved'")
     if "city" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN city VARCHAR(120) NULL")
     if "category" not in columns:
@@ -454,6 +766,23 @@ def ensure_user_schema():
         db.session.commit()
 
     columns = {column["name"] for column in inspect(db.engine).get_columns("users")}
+    if "is_active" in columns:
+        db.session.execute(
+            text(
+                "UPDATE users "
+                "SET is_active = COALESCE(is_active, 1)"
+            )
+        )
+    if "approval_status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE users "
+                "SET approval_status = CASE "
+                "WHEN approval_status IS NULL OR approval_status = '' THEN "
+                "CASE WHEN role = 'prestataire' AND COALESCE(is_active, 1) = 0 THEN 'pending' ELSE 'approved' END "
+                "ELSE approval_status END"
+            )
+        )
     if "updated_at" in columns:
         db.session.execute(
             text(
@@ -546,6 +875,30 @@ def ensure_service_schema():
     db.session.commit()
 
 
+def ensure_service_images_schema():
+    inspector = inspect(db.engine)
+    table_names = inspector.get_table_names()
+    if "service_images" not in table_names:
+        ServiceImage.__table__.create(db.engine, checkfirst=True)
+        inspector = inspect(db.engine)
+        table_names = inspector.get_table_names()
+
+    if "services" in table_names:
+        db.session.execute(
+            text(
+                "INSERT INTO service_images (service_id, image_path, created_at) "
+                "SELECT services.id, COALESCE(services.image, services.image_url), COALESCE(services.created_at, CURRENT_TIMESTAMP) "
+                "FROM services "
+                "WHERE COALESCE(services.image, services.image_url) IS NOT NULL "
+                "AND COALESCE(services.image, services.image_url) != '' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM service_images WHERE service_images.service_id = services.id"
+                ")"
+            )
+        )
+        db.session.commit()
+
+
 def ensure_reservation_schema():
     inspector = inspect(db.engine)
     if "reservations" not in inspector.get_table_names():
@@ -562,6 +915,22 @@ def ensure_reservation_schema():
         statements.append("ALTER TABLE reservations ADD COLUMN details TEXT NULL")
     if "updated_at" not in columns:
         statements.append("ALTER TABLE reservations ADD COLUMN updated_at DATETIME NULL")
+    if "payment_status" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN payment_status VARCHAR(40) NOT NULL DEFAULT 'UNPAID'")
+    if "payment_option" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN payment_option VARCHAR(40) NULL")
+    if "stripe_session_id" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN stripe_session_id VARCHAR(255) NULL")
+    if "stripe_payment_intent_id" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN stripe_payment_intent_id VARCHAR(255) NULL")
+    if "invoice_path" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN invoice_path TEXT NULL")
+    if "contract_path" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN contract_path TEXT NULL")
+    if "signature_data" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN signature_data LONGTEXT NULL")
+    if "signed_at" not in columns:
+        statements.append("ALTER TABLE reservations ADD COLUMN signed_at DATETIME NULL")
 
     for statement in statements:
         db.session.execute(text(statement))
@@ -584,6 +953,17 @@ def ensure_reservation_schema():
                 "UPDATE reservations "
                 "SET updated_at = COALESCE(updated_at, created_at, NOW()) "
                 "WHERE updated_at IS NULL"
+            )
+        )
+    if "payment_status" in columns and "status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE reservations "
+                "SET payment_status = CASE "
+                "WHEN LOWER(COALESCE(status, '')) = 'paid' THEN 'PAID' "
+                "WHEN LOWER(COALESCE(status, '')) = 'pending' THEN 'UNPAID' "
+                "ELSE COALESCE(payment_status, 'UNPAID') END "
+                "WHERE payment_status IS NULL OR payment_status = ''"
             )
         )
     db.session.commit()
@@ -619,23 +999,32 @@ def create_app():
     app.config["SERVICE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "services")
     app.config["PROFILE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "profile")
     app.config["COVER_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "cover")
+    app.config["INVOICE_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "invoices")
+    app.config["CONTRACT_UPLOAD_FOLDER"] = os.path.join(app.config["UPLOAD_ROOT"], "contracts")
 
     os.makedirs(app.config["SERVICE_UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["PROFILE_UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["COVER_UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["INVOICE_UPLOAD_FOLDER"], exist_ok=True)
+    os.makedirs(app.config["CONTRACT_UPLOAD_FOLDER"], exist_ok=True)
 
     CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
 
     db.init_app(app)
     bcrypt.init_app(app)
+    socketio.init_app(app, cors_allowed_origins="*")
 
     with app.app_context():
         db.create_all()
         ensure_user_schema()
         ensure_service_schema()
+        ensure_service_images_schema()
         ensure_reservation_schema()
         ensure_message_schema()
         seed_data()
+
+    connected_socket_counts = {}
+    socket_session_state = {}
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(_error):
@@ -673,7 +1062,7 @@ def create_app():
         relative_dir = os.path.relpath(folder_path, app.root_path).replace("\\", "/")
         return f"{relative_dir}/{unique_filename}", None
 
-    def validate_provider_profile_payload(payload, profile_photo=None, cover_photo=None):
+    def validate_provider_profile_payload(payload, profile_photo=None, cover_photo=None, require_provider_assets=False):
         errors = {}
 
         name = str(payload.get("name") or "").strip()
@@ -692,6 +1081,18 @@ def create_app():
             errors["email"] = "L'email est obligatoire."
         elif "@" not in email or "." not in email.split("@")[-1]:
             errors["email"] = "L'email est invalide."
+
+        if require_provider_assets:
+            if not category:
+                errors["category"] = "Le service du prestataire est obligatoire."
+            if not city:
+                errors["city"] = "La ville du prestataire est obligatoire."
+            if not website:
+                errors["website"] = "Le lien du prestataire est obligatoire."
+            if not profile_photo:
+                errors["profilePhoto"] = "La photo principale du service est obligatoire."
+            if not cover_photo:
+                errors["coverPhoto"] = "La photo supplementaire du service est obligatoire."
 
         for field_name, image_file in {
             "profilePhoto": profile_photo,
@@ -902,8 +1303,26 @@ def create_app():
             )
         return slot, None
 
-    def validate_service_payload(payload, image_file=None, existing_image=None):
+    def get_service_image_files():
+        files = []
+        for field_name in ("images[]", "images", "image"):
+            files.extend([item for item in request.files.getlist(field_name) if item and item.filename])
+        return files
+
+    def get_removed_service_image_ids(payload):
+        raw_values = payload.getlist("removed_image_ids[]") if hasattr(payload, "getlist") else []
+        raw_values.extend(payload.getlist("removed_image_ids") if hasattr(payload, "getlist") else [])
+        ids = []
+        for raw_value in raw_values:
+            for item in str(raw_value or "").split(","):
+                item = item.strip()
+                if item.isdigit():
+                    ids.append(int(item))
+        return ids
+
+    def validate_service_payload(payload, image_files=None, existing_images_count=0):
         errors = {}
+        image_files = image_files or []
 
         title = str(payload.get("title") or "").strip()
         price_raw = payload.get("price")
@@ -929,12 +1348,13 @@ def create_app():
         if not category:
             errors["category"] = "category est requis."
 
-        if not image_file and not str(existing_image or "").strip():
+        if not image_files and existing_images_count <= 0:
             errors["image"] = "image est requis."
-        elif image_file:
+        for image_file in image_files:
             filename = image_file.filename or ""
             if not filename or not allowed_image_file(filename):
                 errors["image"] = "Formats acceptes: jpg, jpeg, png."
+                break
 
         if not description:
             errors["description"] = "description est requis."
@@ -946,6 +1366,31 @@ def create_app():
             "description": description,
             "status": status,
         }
+
+    def refresh_service_primary_image(service):
+        first_image = (
+            ServiceImage.query.filter_by(service_id=service.id)
+            .order_by(ServiceImage.id.asc())
+            .first()
+        )
+        image_path = first_image.image_path if first_image else ""
+        service.image = image_path
+        service.image_url = image_path
+
+    def save_service_gallery_images(service, image_files):
+        saved_paths = []
+        for image_file in image_files:
+            image_path, image_error = save_service_image(image_file)
+            if image_error:
+                for saved_path in saved_paths:
+                    delete_uploaded_file(app, saved_path)
+                return image_error
+            saved_paths.append(image_path)
+            db.session.add(ServiceImage(service_id=service.id, image_path=image_path))
+        if saved_paths and not service.image:
+            service.image = saved_paths[0]
+            service.image_url = saved_paths[0]
+        return None
 
     def get_provider_service_or_404(service_id):
         service = Service.query.filter_by(id=service_id, provider_id=request.user_id).first()
@@ -971,33 +1416,50 @@ def create_app():
 
     def get_provider_client_contexts(provider_id):
         service_ids = get_provider_service_ids(provider_id)
-        if not service_ids:
-            return {}
+        contexts = {}
+        if service_ids:
+            reservations = (
+                Reservation.query.filter(Reservation.service_id.in_(service_ids))
+                .order_by(Reservation.created_at.desc(), Reservation.id.desc())
+                .all()
+            )
+            for reservation in reservations:
+                service = Service.query.get(reservation.service_id)
+                if not service or get_service_provider_id(service) != provider_id:
+                    continue
 
-        reservations = (
-            Reservation.query.filter(Reservation.service_id.in_(service_ids))
-            .order_by(Reservation.created_at.desc(), Reservation.id.desc())
+                current = contexts.get(reservation.client_id)
+                if not current:
+                    contexts[reservation.client_id] = {
+                        "client_id": reservation.client_id,
+                        "subject": service.title if service else "Reservation mariage",
+                        "reservation": reservation,
+                    }
+                    continue
+
+                if reservation.created_at and current["reservation"].created_at:
+                    if reservation.created_at > current["reservation"].created_at:
+                        current["subject"] = service.title if service else current["subject"]
+                        current["reservation"] = reservation
+
+        direct_messages = (
+            Message.query.filter(
+                db.or_(Message.sender_id == provider_id, Message.receiver_id == provider_id)
+            )
+            .order_by(Message.timestamp.desc(), Message.id.desc())
             .all()
         )
-        contexts = {}
-        for reservation in reservations:
-            service = Service.query.get(reservation.service_id)
-            if not service or get_service_provider_id(service) != provider_id:
+        for message in direct_messages:
+            other_user_id = message.receiver_id if message.sender_id == provider_id else message.sender_id
+            client = User.query.filter_by(id=other_user_id, role="client").first()
+            if not client or other_user_id in contexts:
                 continue
 
-            current = contexts.get(reservation.client_id)
-            if not current:
-                contexts[reservation.client_id] = {
-                    "client_id": reservation.client_id,
-                    "subject": service.title if service else "Reservation mariage",
-                    "reservation": reservation,
-                }
-                continue
-
-            if reservation.created_at and current["reservation"].created_at:
-                if reservation.created_at > current["reservation"].created_at:
-                    current["subject"] = service.title if service else current["subject"]
-                    current["reservation"] = reservation
+            contexts[other_user_id] = {
+                "client_id": other_user_id,
+                "subject": "Conversation client",
+                "reservation": None,
+            }
 
         return contexts
 
@@ -1195,6 +1657,190 @@ def create_app():
             "days": days,
         }
 
+    def get_provider_reservations_lookup(provider_id, start_date, end_date):
+        provider_services = Service.query.filter(
+            db.or_(Service.provider_id == provider_id, Service.prestataire_id == provider_id)
+        ).all()
+        if not provider_services:
+            return {}
+
+        services_by_id = {service.id: service for service in provider_services}
+        reservations = Reservation.query.filter(
+            Reservation.service_id.in_(services_by_id.keys())
+        ).all()
+
+        reservations_by_slot = {}
+        for reservation in reservations:
+            reservation_dt = parse_reservation_datetime(reservation.date)
+            if not reservation_dt:
+                continue
+            reservation_date = reservation_dt.date()
+            if reservation_date < start_date or reservation_date > end_date:
+                continue
+            reservations_by_slot[(reservation_date.isoformat(), reservation_dt.strftime("%H:%M"))] = reservation
+        return reservations_by_slot
+
+    def get_provider_occupied_blocks_lookup(provider_id, start_date, end_date):
+        blocks = ProviderCalendarBlock.query.filter(
+            ProviderCalendarBlock.provider_id == provider_id,
+            ProviderCalendarBlock.date >= start_date,
+            ProviderCalendarBlock.date <= end_date,
+            ProviderCalendarBlock.type == "occupied",
+        ).all()
+        return {(block.date.isoformat(), block.start_time): block for block in blocks}
+
+    def build_service_availability(provider_id, start_date=None, days_count=14):
+        base_date = start_date or datetime.utcnow().date()
+        end_date = base_date + timedelta(days=max(days_count - 1, 0))
+        reservations_by_slot = get_provider_reservations_lookup(provider_id, base_date, end_date)
+        occupied_by_slot = get_provider_occupied_blocks_lookup(provider_id, base_date, end_date)
+
+        days = []
+        next_available = None
+        for offset in range(days_count):
+            current_date = base_date + timedelta(days=offset)
+            slots = []
+            for start_time_label in STANDARD_WORKING_HOURS:
+                slot_key = (current_date.isoformat(), start_time_label)
+                is_available = slot_key not in reservations_by_slot and slot_key not in occupied_by_slot
+                if is_available and next_available is None:
+                    next_available = {
+                        "date": current_date.isoformat(),
+                        "time": start_time_label,
+                    }
+                slots.append(
+                    {
+                        "time": start_time_label,
+                        "end_time": plus_one_hour(start_time_label),
+                        "available": is_available,
+                    }
+                )
+
+            available_count = sum(1 for slot in slots if slot["available"])
+            days.append(
+                {
+                    "date": current_date.isoformat(),
+                    "label": f"{FRENCH_WEEKDAYS[current_date.weekday()]} {current_date.day} {FRENCH_MONTHS[current_date.month]}",
+                    "available": available_count > 0,
+                    "available_count": available_count,
+                    "slots": slots,
+                }
+            )
+
+        return {
+            "days": days,
+            "next_available": next_available,
+            "availability_label": (
+                f"Prochain creneau: {next_available['date']} a {next_available['time']}"
+                if next_available
+                else "Aucun creneau disponible pour le moment"
+            ),
+        }
+
+    def assert_slot_available(provider_id, slot_date, start_time_label):
+        reservations_by_slot = get_provider_reservations_lookup(provider_id, slot_date, slot_date)
+        occupied_by_slot = get_provider_occupied_blocks_lookup(provider_id, slot_date, slot_date)
+        slot_key = (slot_date.isoformat(), start_time_label)
+        return slot_key not in reservations_by_slot and slot_key not in occupied_by_slot
+
+    def generate_reservation_documents(reservation):
+        service = Service.query.get(reservation.service_id)
+        client = User.query.get(reservation.client_id)
+        provider = User.query.get(get_service_provider_id(service)) if service else None
+
+        invoice_name = f"invoice-{reservation.id}.pdf"
+        contract_name = f"contract-{reservation.id}.pdf"
+        invoice_relative = build_storage_relative_path("invoices", invoice_name)
+        contract_relative = build_storage_relative_path("contracts", contract_name)
+        invoice_absolute = os.path.join(app.root_path, invoice_relative.replace("/", os.sep))
+        contract_absolute = os.path.join(app.root_path, contract_relative.replace("/", os.sep))
+
+        invoice_lines = [
+            f"Reservation #{reservation.id}",
+            f"Client: {client.username if client else 'Client'}",
+            f"Prestataire: {provider.username if provider else 'Prestataire'}",
+            f"Service: {service.title if service else 'Service'}",
+            f"Date: {reservation.date}",
+            f"Montant: {format_currency(reservation.amount if reservation.amount is not None else (service.price if service else 0))}",
+            f"Paiement: {normalize_reservation_status(reservation.payment_status)}",
+        ]
+        contract_lines = [
+            f"Contrat reservation #{reservation.id}",
+            f"Client: {client.username if client else 'Client'}",
+            f"Prestataire: {provider.username if provider else 'Prestataire'}",
+            f"Service: {service.title if service else 'Service'}",
+            f"Lieu: {reservation.location or (service.city if service else 'Tunisie')}",
+            f"Date: {reservation.date}",
+            f"Montant: {format_currency(reservation.amount if reservation.amount is not None else (service.price if service else 0))}",
+        ]
+
+        if reservation.signature_data:
+            contract_lines.extend(
+                [
+                    "Signature electronique: enregistree",
+                    f"Signe le: {reservation.signed_at.isoformat() if reservation.signed_at else datetime.utcnow().isoformat()}",
+                ]
+            )
+
+        write_simple_pdf(invoice_absolute, "Facture 3arrasli", invoice_lines)
+        write_simple_pdf(contract_absolute, "Contrat 3arrasli", contract_lines)
+
+        reservation.invoice_path = invoice_relative
+        reservation.contract_path = contract_relative
+
+    def mark_reservation_paid(reservation, payment_intent_id=None, stripe_session_id=None):
+        reservation.status = "PAID"
+        reservation.payment_status = "PAID"
+        reservation.stripe_payment_intent_id = payment_intent_id or reservation.stripe_payment_intent_id
+        reservation.stripe_session_id = stripe_session_id or reservation.stripe_session_id
+        reservation.updated_at = datetime.utcnow()
+        generate_reservation_documents(reservation)
+
+    def create_checkout_session(reservation, service):
+        frontend_base_url = get_frontend_base_url()
+        payment_amount = reservation.amount if reservation.amount is not None else service.price
+        form_data = {
+            "mode": "payment",
+            "success_url": (
+                f"{frontend_base_url}/client/reservations"
+                f"?checkout=success&reservation_id={reservation.id}&session_id={{CHECKOUT_SESSION_ID}}"
+            ),
+            "cancel_url": f"{frontend_base_url}/client/reservations?checkout=cancel&reservation_id={reservation.id}",
+            "metadata[reservation_id]": str(reservation.id),
+            "metadata[client_id]": str(reservation.client_id),
+            "line_items[0][quantity]": "1",
+            "line_items[0][price_data][currency]": get_stripe_currency(),
+            "line_items[0][price_data][unit_amount]": str(amount_to_minor_units(payment_amount)),
+            "line_items[0][price_data][product_data][name]": service.title,
+            "line_items[0][price_data][product_data][description]": service.description or service.title,
+        }
+        return stripe_api_request("POST", "/v1/checkout/sessions", form_data=form_data)
+
+    def confirm_checkout_session(session_id):
+        encoded_session_id = urllib_parse.quote(session_id, safe="")
+        session = stripe_api_request("GET", f"/v1/checkout/sessions/{encoded_session_id}")
+        reservation_id = int(session.get("metadata", {}).get("reservation_id") or 0)
+        if not reservation_id:
+            raise RuntimeError("Session Stripe invalide.")
+        reservation = Reservation.query.get(reservation_id)
+        if not reservation:
+            raise RuntimeError("Reservation introuvable.")
+
+        if session.get("payment_status") == "paid":
+            mark_reservation_paid(
+                reservation,
+                payment_intent_id=session.get("payment_intent"),
+                stripe_session_id=session.get("id"),
+            )
+        else:
+            reservation.status = "UNPAID"
+            reservation.payment_status = "UNPAID"
+            reservation.stripe_session_id = session.get("id")
+            reservation.updated_at = datetime.utcnow()
+
+        db.session.commit()
+        return reservation
+
     def auth_required(allowed_roles=None):
         def decorator(view_func):
             @wraps(view_func)
@@ -1223,6 +1869,253 @@ def create_app():
 
         return decorator
 
+    def decode_auth_token(token):
+        cleaned = str(token or "").replace("Bearer ", "").strip()
+        if not cleaned:
+            raise ValueError("Authentification requise.")
+
+        try:
+            payload = jwt.decode(cleaned, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except jwt.ExpiredSignatureError as exc:
+            raise ValueError("Session expiree.") from exc
+        except jwt.InvalidTokenError as exc:
+            raise ValueError("Token invalide.") from exc
+
+        user_id = int(payload["sub"])
+        user_role = normalize_socket_role(payload.get("role"))
+        if not user_role:
+            raise ValueError("Role utilisateur invalide.")
+        return user_id, user_role
+
+    def get_socket_identity(auth_payload=None):
+        auth_payload = auth_payload or {}
+        token = auth_payload.get("token") or request.args.get("token") or request.headers.get("Authorization", "")
+        user_id, user_role = decode_auth_token(token)
+        user = User.query.get(user_id)
+        if not user:
+            raise ValueError("Utilisateur introuvable.")
+        return user, user_role
+
+    def get_or_create_client_provider_pair(current_user_id, current_user_role, other_user_id):
+        other_user = User.query.get(int(other_user_id)) if other_user_id else None
+        if not other_user:
+            return None, None, None, "Conversation introuvable."
+
+        other_role = normalize_socket_role(other_user.role)
+        if current_user_role == "client":
+            if other_role != "prestataire":
+                return None, None, None, "Prestataire introuvable."
+            return current_user_id, other_user.id, other_user, None
+
+        if current_user_role == "prestataire":
+            if other_role != "client":
+                return None, None, None, "Client introuvable."
+            provider_contexts = get_provider_client_contexts(current_user_id)
+            if int(other_user.id) not in provider_contexts:
+                return None, None, None, "Conversation non autorisee."
+            return other_user.id, current_user_id, other_user, None
+
+        return None, None, None, "Permission insuffisante."
+
+    def get_room_presence_payload(client_id, provider_id):
+        client_online = connected_socket_counts.get(int(client_id), 0) > 0
+        provider_online = connected_socket_counts.get(int(provider_id), 0) > 0
+        return {
+            "client_id": int(client_id),
+            "provider_id": int(provider_id),
+            "online_users": [user_id for user_id, online in ((int(client_id), client_online), (int(provider_id), provider_online)) if online],
+            "client_online": client_online,
+            "provider_online": provider_online,
+        }
+
+    def emit_presence_update(room, client_id, provider_id):
+        socketio.emit(
+            "presence:update",
+            {
+                "room": room,
+                **get_room_presence_payload(client_id, provider_id),
+            },
+            room=room,
+        )
+
+    def emit_provider_chat_update(provider_id, client_id):
+        provider = User.query.get(int(provider_id))
+        client = User.query.filter_by(id=int(client_id), role="client").first()
+        if not provider or not client:
+            return
+
+        contexts = get_provider_client_contexts(provider.id)
+        context = contexts.get(client.id)
+        if not context:
+            return
+
+        socketio.emit(
+            "provider_chat_updated",
+            {
+                "chat": serialize_provider_chat(client, context, provider.id),
+            },
+            room=f"user:{provider.id}",
+        )
+
+    @socketio.on("connect")
+    def on_socket_connect(auth):
+        try:
+            user, user_role = get_socket_identity(auth)
+        except ValueError as error:
+            raise ConnectionRefusedError(str(error)) from error
+
+        print(f"[socket] connect user={user.id} role={user_role} sid={request.sid}")
+        join_room(f"user:{user.id}")
+        connected_socket_counts[user.id] = connected_socket_counts.get(user.id, 0) + 1
+        socket_session_state[request.sid] = {
+            "user_id": user.id,
+            "user_role": user_role,
+            "rooms": set(),
+        }
+        emit(
+            "socket:ready",
+            {
+                "user_id": user.id,
+                "role": user_role,
+            },
+        )
+
+    @socketio.on("disconnect")
+    def on_socket_disconnect():
+        session_state = socket_session_state.pop(request.sid, None)
+        if not session_state:
+            return
+
+        user_id = int(session_state["user_id"])
+        print(f"[socket] disconnect user={user_id} sid={request.sid}")
+        next_count = max(connected_socket_counts.get(user_id, 0) - 1, 0)
+        if next_count == 0:
+            connected_socket_counts.pop(user_id, None)
+        else:
+            connected_socket_counts[user_id] = next_count
+
+        for room in session_state.get("rooms", set()):
+            parts = room.split(":")
+            if len(parts) != 5:
+                continue
+            emit_presence_update(room, parts[2], parts[4])
+
+    @socketio.on("join_conversation")
+    def on_join_conversation(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return
+
+        client_id, provider_id, _, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("other_user_id"),
+        )
+        if error_message:
+            emit("socket:error", {"message": error_message})
+            return
+
+        room = build_chat_room(client_id, provider_id)
+        print(
+            f"[socket] join_conversation user={session_state['user_id']} other={payload.get('other_user_id')} room={room}"
+        )
+        join_room(room)
+        session_state["rooms"].add(room)
+        emit(
+            "conversation_joined",
+            {
+                "room": room,
+                "client_id": client_id,
+                "provider_id": provider_id,
+            },
+        )
+        emit_presence_update(room, client_id, provider_id)
+
+    @socketio.on("typing_status")
+    def on_typing_status(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return
+
+        client_id, provider_id, _, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("other_user_id"),
+        )
+        if error_message:
+            emit("socket:error", {"message": error_message})
+            return
+
+        room = build_chat_room(client_id, provider_id)
+        print(
+            f"[socket] typing_status user={session_state['user_id']} other={payload.get('other_user_id')} room={room} typing={bool(payload.get('is_typing'))}"
+        )
+        emit(
+            "typing_status",
+            {
+                "room": room,
+                "user_id": session_state["user_id"],
+                "user_role": session_state["user_role"],
+                "is_typing": bool(payload.get("is_typing")),
+            },
+            room=room,
+            include_self=False,
+        )
+
+    @socketio.on("send_message")
+    def on_send_message(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return {"success": False, "message": "Session socket invalide."}
+
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return {"success": False, "message": "Le message ne peut pas etre vide."}
+
+        client_id, provider_id, other_user, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("receiver_id"),
+        )
+        if error_message:
+            return {"success": False, "message": error_message}
+
+        message = Message(
+            sender_id=session_state["user_id"],
+            receiver_id=other_user.id,
+            content=content,
+            is_read=False,
+        )
+        db.session.add(message)
+        db.session.commit()
+
+        room = build_chat_room(client_id, provider_id)
+        message_payload = serialize_message(message)
+        socket_payload = {
+            "room": room,
+            "message": message_payload,
+            "client_id": client_id,
+            "provider_id": provider_id,
+        }
+
+        print(
+            f"[socket] send_message sender={session_state['user_id']} receiver={other_user.id} room={room} message_id={message.id}"
+        )
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(provider_id, client_id)
+
+        return {
+            "success": True,
+            "message": "Message envoye avec succes.",
+            "messagePayload": socket_payload,
+        }
+
     @app.get("/")
     def root():
         return jsonify({"message": "3arrasli backend is running"})
@@ -1243,12 +2136,17 @@ def create_app():
 
     @app.post("/register")
     def register():
-        payload = request.get_json(silent=True) or {}
+        is_multipart = request.content_type and "multipart/form-data" in request.content_type
+        payload = request.form if is_multipart else (request.get_json(silent=True) or {})
 
         username = (payload.get("name") or payload.get("username") or "").strip()
         email = (payload.get("email") or "").strip().lower()
         password = payload.get("password") or ""
         role = (payload.get("role") or "client").strip().lower()
+        website = (payload.get("website") or "").strip()
+        city = (payload.get("city") or "").strip()
+        profile_photo = request.files.get("profilePhoto") if is_multipart else None
+        cover_photo = request.files.get("coverPhoto") if is_multipart else None
 
         if not username or not email or not password:
             return jsonify({"success": False, "message": "Nom, email et mot de passe sont obligatoires."}), 400
@@ -1262,11 +2160,58 @@ def create_app():
         if User.query.filter_by(email=email).first():
             return jsonify({"success": False, "message": "Cet email est deja utilise."}), 409
 
+        if role == "prestataire":
+            provider_errors, provider_payload = validate_provider_profile_payload(
+                {
+                    "name": username,
+                    "email": email,
+                    "category": payload.get("category"),
+                    "city": city,
+                    "website": website,
+                },
+                profile_photo=profile_photo,
+                cover_photo=cover_photo,
+                require_provider_assets=True,
+            )
+            if provider_errors:
+                first_error = next(iter(provider_errors.values()))
+                return jsonify({"success": False, "message": first_error, "errors": provider_errors}), 400
+
+            profile_photo_path = None
+            cover_photo_path = None
+
+            if profile_photo:
+                profile_photo_path, image_error = save_provider_profile_image(
+                    profile_photo,
+                    "PROFILE_UPLOAD_FOLDER",
+                )
+                if image_error:
+                    return jsonify({"success": False, "message": image_error, "errors": {"profilePhoto": image_error}}), 400
+
+            if cover_photo:
+                cover_photo_path, image_error = save_provider_profile_image(
+                    cover_photo,
+                    "COVER_UPLOAD_FOLDER",
+                )
+                if image_error:
+                    return jsonify({"success": False, "message": image_error, "errors": {"coverPhoto": image_error}}), 400
+        else:
+            provider_payload = {"website": ""}
+            profile_photo_path = None
+            cover_photo_path = None
+
         user = User(
             username=username,
             email=email,
             password=bcrypt.generate_password_hash(password).decode("utf-8"),
             role=role,
+            is_active=False if role == "prestataire" else True,
+            approval_status="pending" if role == "prestataire" else "approved",
+            category=provider_payload.get("category") or None,
+            city=provider_payload.get("city") or None,
+            website=provider_payload.get("website") or None,
+            profile_photo=profile_photo_path,
+            cover_photo=cover_photo_path,
         )
         db.session.add(user)
         db.session.commit()
@@ -1277,6 +2222,18 @@ def create_app():
                     {
                         "success": True,
                         "message": "Compte client cree. Connectez-vous pour acceder a votre interface client.",
+                        "user": serialize_user(user),
+                    }
+                ),
+                201,
+            )
+
+        if role == "prestataire":
+            return (
+                jsonify(
+                    {
+                        "success": True,
+                        "message": "Votre demande d'acces prestataire a bien ete envoyee. Merci d'attendre l'approbation de l'administrateur.",
                         "user": serialize_user(user),
                     }
                 ),
@@ -1306,8 +2263,202 @@ def create_app():
         if not bcrypt.check_password_hash(user.password, password):
             return jsonify({"success": False, "message": "Mot de passe incorrect."}), 401
 
+        if user.role == "prestataire" and str(getattr(user, "approval_status", "approved") or "approved") != "approved":
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Votre demande d'acces prestataire est en attente d'approbation par l'administrateur.",
+                    }
+                ),
+                403,
+            )
+
         token = make_token(user.id, user.role)
         return jsonify({"success": True, "message": "Connexion reussie.", "token": token, "user": serialize_user(user)})
+
+    @app.get("/api/admin/providers")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_providers():
+        providers = (
+            User.query.filter_by(role="prestataire")
+            .order_by(User.created_at.desc(), User.id.desc())
+            .all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "providers": [serialize_admin_provider(provider) for provider in providers],
+            }
+        )
+
+    @app.get("/api/client/profile")
+    @auth_required(allowed_roles={"client"})
+    def get_client_profile():
+        user = User.query.filter_by(id=request.user_id, role="client").first()
+        if not user:
+            return jsonify({"success": False, "message": "Client introuvable."}), 404
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Profil client recupere avec succes.",
+                "user": serialize_user(user),
+            }
+        )
+
+    @app.put("/api/client/profile")
+    @app.post("/api/client/profile")
+    @auth_required(allowed_roles={"client"})
+    def update_client_profile():
+        user = User.query.filter_by(id=request.user_id, role="client").first()
+        if not user:
+            return jsonify({"success": False, "message": "Client introuvable."}), 404
+
+        is_multipart = request.content_type and "multipart/form-data" in request.content_type.lower()
+        payload = request.form if is_multipart else (request.get_json(silent=True) or {})
+        profile_photo = request.files.get("profilePhoto") if is_multipart else None
+
+        errors, normalized = validate_provider_profile_payload(payload, profile_photo=profile_photo)
+
+        if User.query.filter(User.email == normalized["email"], User.id != request.user_id).first():
+            errors["email"] = "Cet email est deja utilise."
+
+        if errors:
+            return jsonify({"success": False, "message": "Erreur de validation", "errors": errors}), 400
+
+        previous_profile_photo = user.profile_photo
+
+        if profile_photo:
+            profile_photo_path, image_error = save_provider_profile_image(
+                profile_photo,
+                "PROFILE_UPLOAD_FOLDER",
+            )
+            if image_error:
+                return jsonify({"success": False, "message": image_error, "errors": {"profilePhoto": image_error}}), 400
+            user.profile_photo = profile_photo_path
+
+        user.username = normalized["name"]
+        user.email = normalized["email"]
+        user.phone = normalized["phone"] or None
+        user.city = normalized["city"] or None
+        user.instagram = normalized["instagram"] or None
+        user.website = normalized["website"] or None
+        user.description = normalized["description"] or None
+        user.updated_at = datetime.utcnow()
+
+        db.session.commit()
+
+        if profile_photo and previous_profile_photo and previous_profile_photo != user.profile_photo:
+            delete_uploaded_file(app, previous_profile_photo)
+
+        return jsonify(
+            {
+                "success": True,
+                "message": "Profil client mis a jour avec succes.",
+                "user": serialize_user(user),
+            }
+        )
+
+    @app.put("/api/admin/providers/<int:provider_id>")
+    @app.patch("/api/admin/providers/<int:provider_id>")
+    @auth_required(allowed_roles={"admin"})
+    def update_admin_provider(provider_id):
+        provider = User.query.filter_by(id=provider_id, role="prestataire").first()
+        if not provider:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        previous_approval_status = str(getattr(provider, "approval_status", "approved") or "approved")
+        previous_is_active = bool(getattr(provider, "is_active", True))
+
+        payload = request.get_json(silent=True) or {}
+        name = (payload.get("name") or "").strip()
+        category = (payload.get("category") or "").strip()
+        city = (payload.get("city") or "").strip()
+        email = (payload.get("email") or "").strip().lower()
+        phone = (payload.get("phone") or "").strip()
+        description = (payload.get("description") or "").strip()
+        instagram = (payload.get("instagram") or "").strip()
+        website = (payload.get("website") or "").strip()
+        status = str(payload.get("status") or "").strip().lower()
+
+        if not name or not category or not city or not email:
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Nom, categorie, ville et email sont obligatoires.",
+                    }
+                ),
+                400,
+            )
+
+        if status and status not in {"active", "inactive", "pending-approval"}:
+            return jsonify({"success": False, "message": "Statut invalide."}), 400
+
+        existing_user = User.query.filter(User.email == email, User.id != provider.id).first()
+        if existing_user:
+            return jsonify({"success": False, "message": "Cet email est deja utilise."}), 409
+
+        provider.username = name
+        provider.category = category
+        provider.city = city
+        provider.email = email
+        provider.phone = phone or None
+        provider.description = description or None
+        provider.instagram = instagram or None
+        provider.website = website or None
+        required_for_approval = [
+            ("category", provider.category),
+            ("website", provider.website),
+            ("profile_photo", provider.profile_photo),
+            ("cover_photo", provider.cover_photo),
+        ]
+        if status == "active" and any(not str(value or "").strip() for _, value in required_for_approval):
+            return (
+                jsonify(
+                    {
+                        "success": False,
+                        "message": "Impossible d'approuver ce prestataire tant que les champs service, lien et photos ne sont pas completes.",
+                    }
+                ),
+                400,
+            )
+
+        if status == "pending-approval":
+            provider.approval_status = "pending"
+            provider.is_active = False
+        elif status == "active":
+            provider.approval_status = "approved"
+            provider.is_active = True
+        elif status == "inactive":
+            provider.approval_status = "approved"
+            provider.is_active = False
+        provider.updated_at = datetime.utcnow()
+
+        db.session.commit()
+
+        email_message = "Prestataire mis a jour avec succes."
+        should_send_approval_email = (
+            status == "active" and (previous_approval_status == "pending" or not previous_is_active)
+        )
+        if should_send_approval_email:
+            email_sent, email_error = send_provider_approval_email(provider.email, provider.username)
+            if email_sent:
+                email_message = "Prestataire approuve et email envoye avec succes."
+            else:
+                email_message = (
+                    "Prestataire approuve, mais l'email n'a pas pu etre envoye. "
+                    f"Detail: {email_error}"
+                )
+
+        return jsonify(
+            {
+                "success": True,
+                "message": email_message,
+                "provider": serialize_admin_provider(provider),
+            }
+        )
 
     @app.get("/api/provider/profile")
     @auth_required(allowed_roles={"prestataire"})
@@ -1537,6 +2688,16 @@ def create_app():
         db.session.add(message)
         db.session.commit()
 
+        room = build_chat_room(client.id, request.user_id)
+        socket_payload = {
+            "room": room,
+            "message": serialize_message(message),
+            "client_id": client.id,
+            "provider_id": request.user_id,
+        }
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(request.user_id, client.id)
+
         return (
             jsonify(
                 {
@@ -1544,6 +2705,7 @@ def create_app():
                     "message": "Message envoye avec succes.",
                     "sentMessage": serialize_provider_chat_message(message, request.user_id),
                     "chat": serialize_provider_chat(client, context, request.user_id),
+                    "messagePayload": socket_payload,
                 }
             ),
             201,
@@ -1700,15 +2862,11 @@ def create_app():
     @auth_required(allowed_roles={"prestataire"})
     def create_provider_service():
         payload = request.form or {}
-        image_file = request.files.get("image")
-        errors, normalized = validate_service_payload(payload, image_file=image_file)
+        image_files = get_service_image_files()
+        errors, normalized = validate_service_payload(payload, image_files=image_files)
 
         if errors:
             return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
-
-        image_path, image_error = save_service_image(image_file)
-        if image_error:
-            return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
 
         service = Service(
             provider_id=request.user_id,
@@ -1717,14 +2875,22 @@ def create_app():
             price=normalized["price"],
             category=normalized["category"],
             type=normalized["category"],
-            image=image_path,
-            image_url=image_path,
+            image="",
+            image_url="",
             description=normalized["description"],
             status=normalized["status"],
             rating=4.5,
             city="",
         )
         db.session.add(service)
+        db.session.flush()
+
+        image_error = save_service_gallery_images(service, image_files)
+        if image_error:
+            db.session.rollback()
+            return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
+
+        refresh_service_primary_image(service)
         db.session.commit()
         return (
             jsonify(
@@ -1746,34 +2912,46 @@ def create_app():
             return error_response
 
         payload = request.form or {}
-        image_file = request.files.get("image")
+        image_files = get_service_image_files()
+        removed_image_ids = get_removed_service_image_ids(payload)
+        existing_images_query = ServiceImage.query.filter_by(service_id=service.id)
+        if removed_image_ids:
+            existing_images_query = existing_images_query.filter(~ServiceImage.id.in_(removed_image_ids))
+        existing_images_count = existing_images_query.count()
         errors, normalized = validate_service_payload(
             payload,
-            image_file=image_file,
-            existing_image=service.image,
+            image_files=image_files,
+            existing_images_count=existing_images_count,
         )
 
         if errors:
             return jsonify({"success": False, "message": "Validation echouee.", "errors": errors}), 400
 
-        image_path = service.image
-        if image_file:
-            image_path, image_error = save_service_image(image_file)
+        if image_files:
+            image_error = save_service_gallery_images(service, image_files)
             if image_error:
+                db.session.rollback()
                 return jsonify({"success": False, "message": image_error, "errors": {"image": image_error}}), 400
-            delete_uploaded_file(app, service.image)
+
+        if removed_image_ids:
+            images_to_remove = ServiceImage.query.filter(
+                ServiceImage.service_id == service.id,
+                ServiceImage.id.in_(removed_image_ids),
+            ).all()
+            for image_item in images_to_remove:
+                delete_uploaded_file(app, image_item.image_path)
+                db.session.delete(image_item)
 
         service.title = normalized["title"]
         service.price = normalized["price"]
         service.category = normalized["category"]
         service.type = normalized["category"]
-        service.image = image_path
-        service.image_url = image_path
         service.description = normalized["description"]
         service.status = normalized["status"]
         service.provider_id = request.user_id
         service.prestataire_id = request.user_id
         service.updated_at = datetime.utcnow()
+        refresh_service_primary_image(service)
 
         db.session.commit()
         return jsonify(
@@ -1791,7 +2969,10 @@ def create_app():
         if error_response:
             return error_response
 
-        delete_uploaded_file(app, service.image)
+        for image_item in list(getattr(service, "images", [])):
+            delete_uploaded_file(app, image_item.image_path)
+        if not getattr(service, "images", []):
+            delete_uploaded_file(app, service.image)
         db.session.delete(service)
         db.session.commit()
         return jsonify({"success": True, "message": "Service supprime avec succes."})
@@ -1802,7 +2983,93 @@ def create_app():
         service = Service.query.get(service_id)
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
-        return jsonify({"success": True, "service": serialize_service(service, request.user_id)})
+        provider_id = get_service_provider_id(service)
+        availability = build_service_availability(provider_id) if provider_id else {"days": [], "next_available": None}
+        rating_summary = get_service_rating_summary(service.id)
+        return jsonify(
+            {
+                "success": True,
+                "service": serialize_service(service, request.user_id),
+                "reviews": [serialize_review(review) for review in rating_summary["reviews"]],
+                "availability": availability,
+                "stripe": {
+                    "enabled": is_stripe_configured(),
+                    "publishable_key": get_stripe_publishable_key(),
+                },
+            }
+        )
+
+    @app.get("/api/services/<int:service_id>/availability")
+    @auth_required(allowed_roles={"client"})
+    def get_service_availability(service_id):
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        provider_id = get_service_provider_id(service)
+        if not provider_id:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        start_date = parse_date_value(request.args.get("start")) or datetime.utcnow().date()
+        days_count = min(max(request.args.get("days", type=int) or 14, 1), 30)
+        return jsonify({"success": True, "availability": build_service_availability(provider_id, start_date, days_count)})
+
+    @app.get("/api/services/<int:service_id>/reviews")
+    @auth_required(allowed_roles={"client"})
+    def list_service_reviews(service_id):
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+        rating_summary = get_service_rating_summary(service.id)
+        return jsonify(
+            {
+                "success": True,
+                "rating": rating_summary["average"],
+                "count": rating_summary["count"],
+                "reviews": [serialize_review(review) for review in rating_summary["reviews"]],
+            }
+        )
+
+    @app.post("/api/services/<int:service_id>/reviews")
+    @auth_required(allowed_roles={"client"})
+    def create_service_review(service_id):
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        rating = int(payload.get("rating") or 0)
+        comment = (payload.get("comment") or "").strip()
+
+        if rating < 1 or rating > 5:
+            return jsonify({"success": False, "message": "La note doit etre comprise entre 1 et 5."}), 400
+
+        existing = Review.query.filter_by(service_id=service.id, client_id=request.user_id).first()
+        if existing:
+            existing.rating = rating
+            existing.comment = comment
+            existing.updated_at = datetime.utcnow()
+            review = existing
+        else:
+            review = Review(
+                service_id=service.id,
+                client_id=request.user_id,
+                provider_id=get_service_provider_id(service),
+                rating=rating,
+                comment=comment,
+            )
+            db.session.add(review)
+
+        db.session.commit()
+        summary = update_service_rating(service)
+        return jsonify(
+            {
+                "success": True,
+                "review": serialize_review(review),
+                "rating": summary["average"],
+                "count": summary["count"],
+            }
+        ), 201
 
     @app.post("/api/reservations")
     @auth_required(allowed_roles={"client"})
@@ -1810,10 +3077,12 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         service_id = payload.get("service_id")
         date_value = (payload.get("date") or "").strip()
+        start_time_label = str(payload.get("start_time") or "").strip()
         notes = (payload.get("notes") or "").strip() or None
         location = (payload.get("location") or "").strip() or None
         details = (payload.get("details") or notes or "").strip() or None
         amount = payload.get("amount")
+        payment_option = str(payload.get("payment_option") or "full").strip().lower()
 
         if not service_id or not date_value:
             return jsonify({"success": False, "message": "service_id et date sont requis."}), 400
@@ -1822,24 +3091,107 @@ def create_app():
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
+        provider_id = get_service_provider_id(service)
+        parsed_date = parse_date_value(date_value)
+        if start_time_label and not parse_time_value(start_time_label):
+            return jsonify({"success": False, "message": "start_time est invalide."}), 400
+        if parsed_date and start_time_label and provider_id and not assert_slot_available(provider_id, parsed_date, start_time_label):
+            return jsonify({"success": False, "message": "Ce creneau n'est plus disponible."}), 409
+
         try:
-            amount_value = float(amount) if amount not in (None, "") else service.price
+            if amount in (None, ""):
+                if payment_option == "partial":
+                    amount_value = round(float(service.price) * DEFAULT_ADVANCE_RATIO, 2)
+                else:
+                    amount_value = float(service.price)
+            else:
+                amount_value = float(amount)
         except (TypeError, ValueError):
             return jsonify({"success": False, "message": "amount doit etre numerique."}), 400
+
+        if amount_value <= 0:
+            return jsonify({"success": False, "message": "amount doit etre superieur a zero."}), 400
+        if amount_value > float(service.price):
+            return jsonify({"success": False, "message": "Le montant ne peut pas depasser le prix du service."}), 400
+
+        reservation_datetime = date_value
+        if parsed_date and start_time_label:
+            reservation_datetime = f"{parsed_date.isoformat()} {start_time_label}"
 
         reservation = Reservation(
             client_id=request.user_id,
             service_id=service_id,
-            date=date_value,
+            date=reservation_datetime,
             location=location or service.city,
             amount=amount_value,
             notes=notes,
             details=details,
-            status="pending",
+            status="UNPAID",
+            payment_status="UNPAID",
+            payment_option=payment_option,
         )
         db.session.add(reservation)
         db.session.commit()
         return jsonify({"success": True, "reservation": serialize_reservation(reservation)}), 201
+
+    @app.post("/api/appointments")
+    @auth_required(allowed_roles={"client"})
+    def create_appointment():
+        payload = request.get_json(silent=True) or {}
+        service_id = payload.get("service_id")
+        slot_date = parse_date_value(payload.get("date"))
+        start_time_label = str(payload.get("start_time") or "").strip()
+        end_time_label = str(payload.get("end_time") or plus_one_hour(start_time_label)).strip()
+        message = (payload.get("message") or "").strip() or None
+
+        if not service_id or not slot_date or not parse_time_value(start_time_label):
+            return jsonify({"success": False, "message": "service_id, date et start_time sont requis."}), 400
+
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        provider_id = get_service_provider_id(service)
+        if not provider_id:
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+        if not assert_slot_available(provider_id, slot_date, start_time_label):
+            return jsonify({"success": False, "message": "Ce creneau n'est plus disponible."}), 409
+
+        appointment = Appointment(
+            client_id=request.user_id,
+            provider_id=provider_id,
+            service_id=service.id,
+            date=slot_date,
+            start_time=start_time_label,
+            end_time=end_time_label,
+            message=message,
+            status="pending",
+        )
+        db.session.add(appointment)
+        db.session.flush()
+
+        block = ProviderCalendarBlock(
+            provider_id=provider_id,
+            date=slot_date,
+            start_time=start_time_label,
+            end_time=end_time_label,
+            type="occupied",
+        )
+        db.session.add(block)
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "appointment": {
+                    "id": appointment.id,
+                    "date": appointment.date.isoformat(),
+                    "start_time": appointment.start_time,
+                    "end_time": appointment.end_time,
+                    "message": appointment.message,
+                    "status": appointment.status,
+                },
+            }
+        ), 201
 
     @app.get("/api/reservations")
     @auth_required(allowed_roles={"client"})
@@ -1943,7 +3295,16 @@ def create_app():
         message = Message(sender_id=request.user_id, receiver_id=receiver_id, content=content)
         db.session.add(message)
         db.session.commit()
-        return jsonify({"success": True, "message": serialize_message(message)}), 201
+        room = build_chat_room(request.user_id, receiver_id)
+        socket_payload = {
+            "room": room,
+            "message": serialize_message(message),
+            "client_id": request.user_id,
+            "provider_id": int(receiver_id),
+        }
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(receiver_id, request.user_id)
+        return jsonify({"success": True, "message": serialize_message(message), "messagePayload": socket_payload}), 201
 
     @app.get("/api/planner")
     @auth_required(allowed_roles={"client"})
@@ -1992,10 +3353,90 @@ def create_app():
         if not reservation:
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
 
-        reservation.status = "paid"
-        reservation.updated_at = datetime.utcnow()
+        mark_reservation_paid(reservation)
         db.session.commit()
         return jsonify({"success": True, "reservation": serialize_reservation(reservation), "message": "Paiement simule avec succes."})
+
+    @app.post("/api/reservations/<int:reservation_id>/payment/session")
+    @auth_required(allowed_roles={"client"})
+    def create_reservation_payment_session(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+
+        service = Service.query.get(reservation.service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        if not is_stripe_configured():
+            return jsonify({"success": False, "message": "Stripe n'est pas configure. Ajoutez les cles Stripe dans backend/.env."}), 503
+
+        try:
+            session = create_checkout_session(reservation, service)
+        except RuntimeError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        reservation.stripe_session_id = session.get("id")
+        reservation.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "checkout_url": session.get("url"),
+                "session_id": session.get("id"),
+                "reservation": serialize_reservation(reservation),
+            }
+        )
+
+    @app.get("/api/payments/confirm")
+    @auth_required(allowed_roles={"client"})
+    def confirm_payment():
+        session_id = (request.args.get("session_id") or "").strip()
+        if not session_id:
+            return jsonify({"success": False, "message": "session_id est requis."}), 400
+
+        try:
+            reservation = confirm_checkout_session(session_id)
+        except RuntimeError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        if reservation.client_id != request.user_id:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+
+        return jsonify(
+            {
+                "success": True,
+                "reservation": serialize_reservation(reservation),
+                "message": "Paiement confirme avec succes." if reservation.payment_status == "PAID" else "Paiement non finalise.",
+            }
+        )
+
+    @app.post("/api/reservations/<int:reservation_id>/sign")
+    @auth_required(allowed_roles={"client"})
+    def sign_reservation_contract(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        if normalize_reservation_status(reservation.payment_status) != "PAID":
+            return jsonify({"success": False, "message": "Le contrat peut etre signe apres le paiement."}), 409
+
+        payload = request.get_json(silent=True) or {}
+        signature_data = (payload.get("signature_data") or "").strip()
+        if not signature_data:
+            return jsonify({"success": False, "message": "signature_data est requis."}), 400
+
+        reservation.signature_data = signature_data
+        reservation.signed_at = datetime.utcnow()
+        reservation.updated_at = datetime.utcnow()
+        generate_reservation_documents(reservation)
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "reservation": serialize_reservation(reservation),
+                "message": "Signature enregistree avec succes.",
+            }
+        )
 
     return app
 
@@ -2181,4 +3622,4 @@ def seed_data():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)

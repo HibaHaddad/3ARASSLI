@@ -13,10 +13,15 @@ const AdminLayout = ({
   children,
   notifications,
   onDismissNotification,
+  onNotificationClick,
 }) => {
   return (
     <div className="provider-page admin-page-unified">
-      <Navbar />
+      <Navbar
+        notifications={notifications}
+        onDismissNotification={onDismissNotification}
+        onNotificationClick={onNotificationClick}
+      />
 
       <main className="provider-main">
         <section className="provider-shell">
@@ -48,7 +53,7 @@ const AdminLayout = ({
             isOpen={isSidebarOpen}
           />
 
-          <section className="provider-content admin-content-unified">
+          <section className={`provider-content admin-content-unified ${isSidebarOpen ? "with-sidebar" : "without-sidebar"}`}>
             <header className="provider-content-header">
               <div>
                 <p className="provider-section-label">{currentSection.label}</p>
@@ -61,22 +66,6 @@ const AdminLayout = ({
           </section>
         </section>
       </main>
-
-      <div className="admin-toast-stack" role="status" aria-live="polite">
-        {notifications.map((notification) => (
-          <div key={notification.id} className={`admin-toast ${notification.type}`}>
-            <span>{notification.message}</span>
-            <button
-              type="button"
-              className="provider-ghost-btn admin-toast-close"
-              onClick={() => onDismissNotification(notification.id)}
-              aria-label="Fermer la notification"
-            >
-              Fermer
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 };

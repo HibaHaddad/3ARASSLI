@@ -1,6 +1,7 @@
 export const providerSections = [
   {
     id: "dashboard",
+    icon: "dashboard",
     label: "Dashboard",
     title: "Vue d'ensemble",
     description:
@@ -8,6 +9,7 @@ export const providerSections = [
   },
   {
     id: "reservations",
+    icon: "reservations",
     label: "Reservations",
     title: "Validation des reservations",
     description:
@@ -15,6 +17,7 @@ export const providerSections = [
   },
   {
     id: "profile",
+    icon: "profile",
     label: "Profil",
     title: "Mon profil",
     description:
@@ -22,6 +25,7 @@ export const providerSections = [
   },
   {
     id: "services",
+    icon: "services",
     label: "Services",
     title: "Gestion des services",
     description:
@@ -29,6 +33,7 @@ export const providerSections = [
   },
   {
     id: "calendar",
+    icon: "calendar",
     label: "Calendrier",
     title: "Disponibilites",
     description:
@@ -36,6 +41,7 @@ export const providerSections = [
   },
   {
     id: "chat",
+    icon: "chat",
     label: "Chat",
     title: "Messages clients",
     description:

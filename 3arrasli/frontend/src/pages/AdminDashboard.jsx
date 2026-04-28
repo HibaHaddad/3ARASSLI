@@ -3,6 +3,8 @@ import React, { useEffect, useMemo, useState } from "react";
 import AdminLayout from "../components/admin/AdminLayout";
 import DataTable from "../components/admin/DataTable";
 import Modal from "../components/admin/Modal";
+import api from "../services/api";
+import { resolveAssetUrl } from "../services/assets";
 import {
   adminSections,
   mockAppointments,
@@ -10,17 +12,33 @@ import {
   mockConversations,
   mockInvoices,
   mockPacks,
-  mockProviders,
   mockReviews,
 } from "./admin/adminData";
 import "./provider.css";
 import "./admin.css";
 
 const formatCurrency = (value) => `${value} TND`;
+const formatNotificationDate = (value) => {
+  if (!value) {
+    return "A l'instant";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "A l'instant";
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(parsed);
+};
 
 const statusLabels = {
   active: "Actif",
   inactive: "Inactif",
+  "pending-approval": "En attente d'approbation",
   pending: "En attente",
   confirmed: "Confirme",
   cancelled: "Annule",
@@ -38,18 +56,11 @@ const statusClass = (status) => {
     return "ok";
   }
 
-  if (["pending", "pending-signature", "unpaid", "flagged"].includes(status)) {
+  if (["pending", "pending-approval", "pending-signature", "unpaid", "flagged"].includes(status)) {
     return "warn";
   }
 
   return "neutral";
-};
-
-const defaultProviderForm = {
-  name: "",
-  category: "",
-  city: "",
-  email: "",
 };
 
 const defaultPackForm = {
@@ -59,12 +70,23 @@ const defaultPackForm = {
   services: "",
 };
 
+const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
+const isMobileSidebarViewport = () => window.innerWidth <= 980;
+
 const AdminDashboard = () => {
-const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [activeSection, setActiveSection] = useState("dashboard");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sectionLoading, setSectionLoading] = useState(false);
-  const [notifications, setNotifications] = useState([]);
+  const [adminNotifications, setAdminNotifications] = useState(() => {
+    try {
+      const raw = window.localStorage.getItem(ADMIN_NOTIFICATIONS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch (error) {
+      return [];
+    }
+  });
+  const [feedbackMessage, setFeedbackMessage] = useState(null);
 
   const [providers, setProviders] = useState([]);
   const [appointments, setAppointments] = useState([]);
@@ -80,9 +102,8 @@ const [activeSection, setActiveSection] = useState("dashboard");
   const [appointmentStatusFilter, setAppointmentStatusFilter] = useState("all");
 
   const [providerModalOpen, setProviderModalOpen] = useState(false);
-  const [providerModalMode, setProviderModalMode] = useState("create");
-  const [providerForm, setProviderForm] = useState(defaultProviderForm);
   const [providerDetails, setProviderDetails] = useState(null);
+  const [providersLoading, setProvidersLoading] = useState(true);
 
   const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
   const [appointmentDraft, setAppointmentDraft] = useState(null);
@@ -107,7 +128,6 @@ const [activeSection, setActiveSection] = useState("dashboard");
 
   useEffect(() => {
     const timer = setTimeout(() => {
-      setProviders(mockProviders);
       setAppointments(mockAppointments);
       setContracts(mockContracts);
       setInvoices(mockInvoices);
@@ -126,25 +146,97 @@ const [activeSection, setActiveSection] = useState("dashboard");
       return;
     }
 
-    setSidebarOpen(false);
     setSectionLoading(true);
     const timer = setTimeout(() => setSectionLoading(false), 260);
 
     return () => clearTimeout(timer);
   }, [activeSection, initialLoading]);
 
-  const pushNotification = (type, message) => {
-    const id = Date.now() + Math.random();
-    setNotifications((prev) => [...prev, { id, type, message }]);
+  useEffect(() => {
+    window.localStorage.setItem(ADMIN_NOTIFICATIONS_STORAGE_KEY, JSON.stringify(adminNotifications));
+  }, [adminNotifications]);
 
-    setTimeout(() => {
-      setNotifications((prev) => prev.filter((item) => item.id !== id));
-    }, 3400);
+  useEffect(() => {
+    if (!feedbackMessage) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setFeedbackMessage(null);
+    }, 4200);
+
+    return () => window.clearTimeout(timer);
+  }, [feedbackMessage]);
+
+  const showFeedback = (type, message) => {
+    setFeedbackMessage({
+      id: Date.now() + Math.random(),
+      type,
+      message,
+    });
+  };
+
+  const syncProviderNotifications = (pendingProviders) => {
+    setAdminNotifications((prev) => {
+      const previousById = new Map(prev.map((item) => [item.id, item]));
+      const nextNotifications = pendingProviders.map((provider) => {
+        const notificationId = `provider-request-${provider.id}`;
+        const existing = previousById.get(notificationId);
+
+        return {
+          id: notificationId,
+          type: "provider-request",
+          seen: existing?.seen ?? false,
+          title: "Nouveau prestataire a approuver",
+          message: `${provider.name} a soumis son espace prestataire et attend la validation de l'administration.`,
+          providerId: provider.id,
+          providerName: provider.name,
+          dateLabel: formatNotificationDate(provider.joinedAt || provider.updatedAt),
+          createdAt: provider.joinedAt || provider.updatedAt || new Date().toISOString(),
+        };
+      });
+
+      return nextNotifications.sort(
+        (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
+      );
+    });
   };
 
   const dismissNotification = (id) => {
-    setNotifications((prev) => prev.filter((item) => item.id !== id));
+    setAdminNotifications((prev) => prev.filter((item) => item.id !== id));
   };
+
+  const handleNotificationClick = (notification) => {
+    setAdminNotifications((prev) =>
+      prev.map((item) => (item.id === notification.id ? { ...item, seen: true } : item))
+    );
+    setActiveSection("providers");
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
+  };
+
+  const loadProviders = async () => {
+    setProvidersLoading(true);
+
+    try {
+      const response = await api.get("/api/admin/providers");
+      const nextProviders = response.data.providers || [];
+      setProviders(nextProviders);
+
+      const pendingProviders = nextProviders.filter((provider) => provider.status === "pending-approval");
+      syncProviderNotifications(pendingProviders);
+    } catch (error) {
+      showFeedback("error", error.response?.data?.message || "Impossible de charger les prestataires.");
+      setProviders([]);
+    } finally {
+      setProvidersLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadProviders();
+  }, []);
 
   const openConfirm = (title, message, confirmLabel, action) => {
     setConfirmState({
@@ -247,37 +339,9 @@ const [activeSection, setActiveSection] = useState("dashboard");
     [appointments, contracts, invoices, providers, reviews, packs]
   );
 
-  const openCreateProviderModal = () => {
-    setProviderModalMode("create");
-    setProviderForm(defaultProviderForm);
-    setProviderModalOpen(true);
-  };
-
   const openProviderDetailsModal = (provider) => {
-    setProviderModalMode("details");
     setProviderDetails(provider);
     setProviderModalOpen(true);
-  };
-
-  const submitProvider = (event) => {
-    event.preventDefault();
-
-    if (!providerForm.name || !providerForm.category || !providerForm.city || !providerForm.email) {
-      pushNotification("error", "Tous les champs prestataire sont obligatoires.");
-      return;
-    }
-
-    const nextProvider = {
-      id: Date.now(),
-      ...providerForm,
-      rating: 4.5,
-      status: "active",
-      joinedAt: new Date().toISOString().slice(0, 10),
-    };
-
-    setProviders((prev) => [nextProvider, ...prev]);
-    setProviderModalOpen(false);
-    pushNotification("success", "Prestataire cree avec succes.");
   };
 
   const toggleProviderStatus = (provider) => {
@@ -289,18 +353,27 @@ const [activeSection, setActiveSection] = useState("dashboard");
         ? `Confirmer l'activation du compte ${provider.name} ?`
         : `Confirmer la desactivation du compte ${provider.name} ?`,
       activating ? "Activer" : "Desactiver",
-      () => {
-        setProviders((prev) =>
-          prev.map((item) =>
-            item.id === provider.id
-              ? {
-                  ...item,
-                  status: activating ? "active" : "inactive",
-                }
-              : item
-          )
-        );
-        pushNotification("success", `Compte ${activating ? "active" : "desactive"} avec succes.`);
+      async () => {
+        try {
+          const response = await api.put(`/api/admin/providers/${provider.id}`, {
+            ...provider,
+            status: activating ? "active" : "inactive",
+          });
+          const updatedProvider = response.data.provider;
+
+          setProviders((prev) =>
+            prev.map((item) => (item.id === updatedProvider.id ? updatedProvider : item))
+          );
+          if (providerDetails?.id === updatedProvider.id) {
+            setProviderDetails(updatedProvider);
+          }
+          showFeedback(
+            "success",
+            response.data.message || `Compte ${activating ? "active" : "desactive"} avec succes.`
+          );
+        } catch (error) {
+          showFeedback("error", error.response?.data?.message || "Impossible de modifier le statut.");
+        }
       }
     );
   };
@@ -314,7 +387,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
     event.preventDefault();
 
     if (!appointmentDraft.client || !appointmentDraft.provider || !appointmentDraft.date) {
-      pushNotification("error", "Veuillez completer les champs du rendez-vous.");
+      showFeedback("error", "Veuillez completer les champs du rendez-vous.");
       return;
     }
 
@@ -322,7 +395,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
       prev.map((item) => (item.id === appointmentDraft.id ? appointmentDraft : item))
     );
     setAppointmentModalOpen(false);
-    pushNotification("success", "Rendez-vous modifie avec succes.");
+    showFeedback("success", "Rendez-vous modifie avec succes.");
   };
 
   const deleteAppointment = (appointment) => {
@@ -332,7 +405,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
       "Supprimer",
       () => {
         setAppointments((prev) => prev.filter((item) => item.id !== appointment.id));
-        pushNotification("success", "Rendez-vous supprime.");
+        showFeedback("success", "Rendez-vous supprime.");
       }
     );
   };
@@ -347,7 +420,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
       prev.map((item) => (item.id === contract.id ? { ...item, status: "signed" } : item))
     );
     setSelectedContract((prev) => (prev ? { ...prev, status: "signed" } : prev));
-    pushNotification("success", "Signature numerique (UI) enregistree.");
+    showFeedback("success", "Signature numerique (UI) enregistree.");
   };
 
   const openInvoiceModal = (invoice) => {
@@ -361,7 +434,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
     );
 
     if (!pendingAppointment) {
-      pushNotification("error", "Aucun rendez-vous disponible pour generer une facture.");
+      showFeedback("error", "Aucun rendez-vous disponible pour generer une facture.");
       return;
     }
 
@@ -375,14 +448,14 @@ const [activeSection, setActiveSection] = useState("dashboard");
     };
 
     setInvoices((prev) => [newInvoice, ...prev]);
-    pushNotification("success", "Facture generee avec succes.");
+    showFeedback("success", "Facture generee avec succes.");
   };
 
   const moderateReview = (review, nextStatus) => {
     setReviews((prev) =>
       prev.map((item) => (item.id === review.id ? { ...item, status: nextStatus } : item))
     );
-    pushNotification("success", "Avis modere avec succes.");
+    showFeedback("success", "Avis modere avec succes.");
   };
 
   const deleteReview = (review) => {
@@ -392,7 +465,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
       "Supprimer",
       () => {
         setReviews((prev) => prev.filter((item) => item.id !== review.id));
-        pushNotification("success", "Avis supprime.");
+        showFeedback("success", "Avis supprime.");
       }
     );
   };
@@ -418,7 +491,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
     event.preventDefault();
 
     if (!packForm.name || !packForm.price || !packForm.duration || !packForm.services) {
-      pushNotification("error", "Veuillez renseigner tous les champs du pack.");
+      showFeedback("error", "Veuillez renseigner tous les champs du pack.");
       return;
     }
 
@@ -434,7 +507,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
             : item
         )
       );
-      pushNotification("success", "Pack modifie avec succes.");
+      showFeedback("success", "Pack modifie avec succes.");
     } else {
       setPacks((prev) => [
         {
@@ -445,7 +518,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
         },
         ...prev,
       ]);
-      pushNotification("success", "Pack cree avec succes.");
+      showFeedback("success", "Pack cree avec succes.");
     }
 
     setPackModalOpen(false);
@@ -456,7 +529,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
   const togglePackStatus = (pack) => {
     const nextStatus = pack.status === "active" ? "inactive" : "active";
     setPacks((prev) => prev.map((item) => (item.id === pack.id ? { ...item, status: nextStatus } : item)));
-    pushNotification("success", `Pack ${nextStatus === "active" ? "active" : "desactive"}.`);
+    showFeedback("success", `Pack ${nextStatus === "active" ? "active" : "desactive"}.`);
   };
 
   const providerColumns = [
@@ -615,9 +688,6 @@ const [activeSection, setActiveSection] = useState("dashboard");
               <h3>Provider Management</h3>
               <p>Recherche, filtre et actions sur tous les prestataires.</p>
             </div>
-            <button type="button" className="provider-primary-btn" onClick={openCreateProviderModal}>
-              Creer un prestataire
-            </button>
           </div>
 
           <div className="admin-filter-bar">
@@ -633,6 +703,7 @@ const [activeSection, setActiveSection] = useState("dashboard");
               onChange={(event) => setProviderStatusFilter(event.target.value)}
             >
               <option value="all">Tous les statuts</option>
+              <option value="pending-approval">En attente</option>
               <option value="active">Actif</option>
               <option value="inactive">Inactif</option>
             </select>
@@ -642,17 +713,21 @@ const [activeSection, setActiveSection] = useState("dashboard");
             columns={providerColumns}
             rows={filteredProviders}
             keyField="id"
-            loading={false}
+            loading={providersLoading}
             emptyMessage="Aucun prestataire trouve pour ce filtre."
             renderActions={(row) => (
-              <>
+              <div className="admin-provider-actions-row">
                 <button type="button" className="provider-ghost-btn" onClick={() => openProviderDetailsModal(row)}>
                   Details
                 </button>
                 <button type="button" className="provider-secondary-btn" onClick={() => toggleProviderStatus(row)}>
-                  {row.status === "active" ? "Desactiver" : "Activer"}
+                  {row.status === "pending-approval"
+                    ? "Approuver"
+                    : row.status === "active"
+                      ? "Desactiver"
+                      : "Activer"}
                 </button>
-              </>
+              </div>
             )}
           />
         </section>
@@ -903,76 +978,82 @@ const [activeSection, setActiveSection] = useState("dashboard");
       <AdminLayout
         sections={adminSections}
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={(sectionId) => {
+          setActiveSection(sectionId);
+          if (isMobileSidebarViewport()) {
+            setSidebarOpen(false);
+          }
+        }}
         isSidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         currentSection={currentSection}
-        notifications={notifications}
+        notifications={adminNotifications}
         onDismissNotification={dismissNotification}
+        onNotificationClick={handleNotificationClick}
       >
         <div className="provider-stack provider-stack-simple">
+          {feedbackMessage ? (
+            <div className={`admin-feedback-banner ${feedbackMessage.type === "error" ? "error" : "success"}`}>
+              <span className="admin-feedback-banner-label">
+                {feedbackMessage.type === "error" ? "Attention" : "Confirmation"}
+              </span>
+              <p>{feedbackMessage.message}</p>
+            </div>
+          ) : null}
           {renderSection()}
         </div>
       </AdminLayout>
 
       <Modal
         open={providerModalOpen}
-        title={providerModalMode === "create" ? "Creer un prestataire" : "Details prestataire"}
+        title="Details du prestataire"
         onClose={() => setProviderModalOpen(false)}
         actions={
-          providerModalMode === "create" ? (
-            <>
-              <button type="button" className="provider-ghost-btn" onClick={() => setProviderModalOpen(false)}>
-                Annuler
-              </button>
-              <button type="button" className="provider-primary-btn" onClick={submitProvider}>
-                Enregistrer
-              </button>
-            </>
-          ) : (
-            <button type="button" className="provider-primary-btn" onClick={() => setProviderModalOpen(false)}>
-              Fermer
-            </button>
-          )
+          <button type="button" className="provider-primary-btn" onClick={() => setProviderModalOpen(false)}>
+            Fermer
+          </button>
         }
       >
-        {providerModalMode === "create" ? (
-          <form className="admin-form-grid" onSubmit={submitProvider}>
-            <input
-              className="provider-input"
-              placeholder="Nom"
-              value={providerForm.name}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, name: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Categorie"
-              value={providerForm.category}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, category: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Ville"
-              value={providerForm.city}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, city: event.target.value }))}
-            />
-            <input
-              className="provider-input"
-              placeholder="Email"
-              value={providerForm.email}
-              onChange={(event) => setProviderForm((prev) => ({ ...prev, email: event.target.value }))}
-            />
-          </form>
-        ) : (
+        <div className="admin-provider-details-shell">
           <div className="admin-detail-grid">
-            <div><strong>Nom</strong><p>{providerDetails?.name}</p></div>
-            <div><strong>Categorie</strong><p>{providerDetails?.category}</p></div>
-            <div><strong>Ville</strong><p>{providerDetails?.city}</p></div>
-            <div><strong>Email</strong><p>{providerDetails?.email}</p></div>
+            <div><strong>Nom</strong><p>{providerDetails?.name || "-"}</p></div>
+            <div><strong>Service</strong><p>{providerDetails?.category || "-"}</p></div>
+            <div><strong>Ville</strong><p>{providerDetails?.city || "-"}</p></div>
+            <div><strong>Email</strong><p>{providerDetails?.email || "-"}</p></div>
+            <div><strong>Telephone</strong><p>{providerDetails?.phone || "-"}</p></div>
+            <div><strong>Instagram</strong><p>{providerDetails?.instagram || "-"}</p></div>
+            <div><strong>Site web</strong><p>{providerDetails?.website || "-"}</p></div>
+            <div><strong>Statut</strong><p>{statusLabels[providerDetails?.status] || providerDetails?.status || "-"}</p></div>
             <div><strong>Note</strong><p>{providerDetails?.rating}/5</p></div>
-            <div><strong>Inscription</strong><p>{providerDetails?.joinedAt}</p></div>
+            <div><strong>Inscription</strong><p>{providerDetails?.joinedAt || "-"}</p></div>
           </div>
-        )}
+          <div className="admin-provider-description-card">
+            <strong>Description</strong>
+            <p>{providerDetails?.description || "Aucune description fournie."}</p>
+          </div>
+          <div className="admin-provider-gallery">
+            <article className="admin-provider-photo-card">
+              <div className="admin-provider-photo-frame">
+                {providerDetails?.profilePhoto ? (
+                  <img src={resolveAssetUrl(providerDetails.profilePhoto)} alt={`Photo principale de ${providerDetails?.name || "ce prestataire"}`} />
+                ) : (
+                  <span>Aucune photo principale</span>
+                )}
+              </div>
+              
+            </article>
+            <article className="admin-provider-photo-card">
+              <div className="admin-provider-photo-frame">
+                {providerDetails?.coverPhoto ? (
+                  <img src={resolveAssetUrl(providerDetails.coverPhoto)} alt={`Photo secondaire de ${providerDetails?.name || "ce prestataire"}`} />
+                ) : (
+                  <span>Aucune photo secondaire</span>
+                )}
+              </div>
+              
+            </article>
+          </div>
+        </div>
       </Modal>
 
       <Modal

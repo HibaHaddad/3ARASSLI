@@ -89,10 +89,7 @@ const ProviderDashboardHome = ({
               <strong>{nextHighlight ? nextDateLabel : "Pret pour la prochaine demande"}</strong>
             </div>
           </div>
-          <div className="provider-hero-floating-note">
-            <span>Wow effect</span>
-            <strong>💫</strong>
-          </div>
+          
         </div>
       </section>
 
@@ -128,14 +125,7 @@ const ProviderDashboardHome = ({
             <span>🥂 Jour J</span>
           </div>
         </div>
-        <button
-          type="button"
-          className="provider-signature-action"
-          onClick={() => onGoToSection("services")}
-        >
-          <span>Ameliorer ma vitrine</span>
-          <strong>✨</strong>
-        </button>
+        
       </section>
 
       <section className="provider-actions-grid">

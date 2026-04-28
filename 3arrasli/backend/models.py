@@ -11,6 +11,8 @@ class User(db.Model):
     email = db.Column(db.String(160), unique=True, nullable=False, index=True)
     password = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(30), nullable=False, default="client")
+    is_active = db.Column(db.Boolean, nullable=False, default=True)
+    approval_status = db.Column(db.String(30), nullable=False, default="approved")
     phone = db.Column(db.String(40), nullable=True)
     city = db.Column(db.String(120), nullable=True)
     category = db.Column(db.String(120), nullable=True)
@@ -51,6 +53,22 @@ class Service(db.Model):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+    images = db.relationship(
+        "ServiceImage",
+        backref="service",
+        cascade="all, delete-orphan",
+        lazy=True,
+        order_by="ServiceImage.id.asc()",
+    )
+
+
+class ServiceImage(db.Model):
+    __tablename__ = "service_images"
+
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=False, index=True)
+    image_path = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 
 class Reservation(db.Model):
@@ -65,6 +83,14 @@ class Reservation(db.Model):
     notes = db.Column(db.Text, nullable=True)
     details = db.Column(db.Text, nullable=True)
     status = db.Column(db.String(40), nullable=False, default="pending")
+    payment_status = db.Column(db.String(40), nullable=False, default="UNPAID")
+    payment_option = db.Column(db.String(40), nullable=True)
+    stripe_session_id = db.Column(db.String(255), nullable=True)
+    stripe_payment_intent_id = db.Column(db.String(255), nullable=True)
+    invoice_path = db.Column(db.Text, nullable=True)
+    contract_path = db.Column(db.Text, nullable=True)
+    signature_data = db.Column(db.Text, nullable=True)
+    signed_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,
@@ -106,6 +132,49 @@ class PlannerItem(db.Model):
     title = db.Column(db.String(180), nullable=False)
     completed = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+
+class Appointment(db.Model):
+    __tablename__ = "appointments"
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=False, index=True)
+    date = db.Column(db.Date, nullable=False, index=True)
+    start_time = db.Column(db.String(5), nullable=False)
+    end_time = db.Column(db.String(5), nullable=False)
+    message = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(40), nullable=False, default="pending")
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class Review(db.Model):
+    __tablename__ = "reviews"
+
+    id = db.Column(db.Integer, primary_key=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=False, index=True)
+    client_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    rating = db.Column(db.Integer, nullable=False)
+    comment = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    __table_args__ = (
+        db.UniqueConstraint("service_id", "client_id", name="uq_service_client_review"),
+    )
 
 
 class ProviderAvailabilitySlot(db.Model):

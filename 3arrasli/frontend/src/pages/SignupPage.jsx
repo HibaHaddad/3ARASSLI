@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Spinner from "../components/Spinner";
@@ -14,14 +14,71 @@ const SignupPage = () => {
     password: "",
     confirmPassword: "",
     role: "Client",
+    category: "",
+    city: "",
+    website: "",
   });
+  const [providerFiles, setProviderFiles] = useState({
+    profilePhoto: null,
+    coverPhoto: null,
+  });
+  const [providerPreviews, setProviderPreviews] = useState({
+    profilePhoto: "",
+    coverPhoto: "",
+  });
+  const [providerRequestPopup, setProviderRequestPopup] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  const isProviderRole = form.role === "Prestataire";
+
+  useEffect(() => {
+    const profilePhotoPreview = providerFiles.profilePhoto
+      ? URL.createObjectURL(providerFiles.profilePhoto)
+      : "";
+    const coverPhotoPreview = providerFiles.coverPhoto
+      ? URL.createObjectURL(providerFiles.coverPhoto)
+      : "";
+
+    setProviderPreviews({
+      profilePhoto: profilePhotoPreview,
+      coverPhoto: coverPhotoPreview,
+    });
+
+    return () => {
+      if (profilePhotoPreview) {
+        URL.revokeObjectURL(profilePhotoPreview);
+      }
+      if (coverPhotoPreview) {
+        URL.revokeObjectURL(coverPhotoPreview);
+      }
+    };
+  }, [providerFiles.coverPhoto, providerFiles.profilePhoto]);
+
+  useEffect(() => {
+    if (isProviderRole) {
+      return;
+    }
+
+    setForm((prev) => ({ ...prev, website: "", category: "", city: "" }));
+    setProviderFiles({
+      profilePhoto: null,
+      coverPhoto: null,
+    });
+  }, [isProviderRole]);
+
   const onChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const onFileChange = (event) => {
+    const { name, files } = event.target;
+    setProviderFiles((prev) => ({
+      ...prev,
+      [name]: files?.[0] || null,
+    }));
   };
 
   const onSubmit = async (event) => {
@@ -34,6 +91,14 @@ const SignupPage = () => {
       return;
     }
 
+    if (
+      isProviderRole &&
+      (!form.category || !form.city || !form.website || !providerFiles.profilePhoto || !providerFiles.coverPhoto)
+    ) {
+      setError("Veuillez remplir le service, la ville, le lien et ajouter les deux photos avant de demander l'acces.");
+      return;
+    }
+
     if (form.password !== form.confirmPassword) {
       setError("Les deux mots de passe doivent etre identiques.");
       return;
@@ -41,15 +106,52 @@ const SignupPage = () => {
 
     setLoading(true);
     try {
-      const payload = {
-        name: form.name,
-        email: form.email,
-        password: form.password,
-        role: form.role,
-      };
-      const response = await api.post("/register", payload);
+      const payload = new FormData();
+      payload.append("name", form.name);
+      payload.append("email", form.email);
+      payload.append("password", form.password);
+      payload.append("role", form.role);
+
+      if (isProviderRole) {
+        payload.append("category", form.category);
+        payload.append("city", form.city);
+        payload.append("website", form.website);
+        if (providerFiles.profilePhoto) {
+          payload.append("profilePhoto", providerFiles.profilePhoto);
+        }
+        if (providerFiles.coverPhoto) {
+          payload.append("coverPhoto", providerFiles.coverPhoto);
+        }
+      }
+
+      const response = await api.post("/register", payload, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+        },
+      });
       const signedUser = response.data.user;
-      setMessage(response.data.message || "Inscription reussie.");
+      if (!isProviderRole) {
+        setMessage(response.data.message || "Inscription reussie.");
+      }
+
+      if (isProviderRole) {
+        setForm({
+          name: "",
+          email: "",
+          password: "",
+          confirmPassword: "",
+          role: "Prestataire",
+          category: "",
+          city: "",
+          website: "",
+        });
+        setProviderFiles({
+          profilePhoto: null,
+          coverPhoto: null,
+        });
+        setProviderRequestPopup(true);
+        return;
+      }
 
       if (signedUser?.role === "Client") {
         window.setTimeout(() => navigate("/login"), 900);
@@ -118,13 +220,105 @@ const SignupPage = () => {
                 </select>
               </div>
 
-              <button type="submit" className="auth-btn" disabled={loading}>
+              {isProviderRole ? (
+                <section className="auth-provider-panel">
+                  <div className="auth-provider-head">
+                    <span className="auth-provider-badge">Acces prestataire</span>
+                    <h3>Presentez rapidement votre univers</h3>
+                    <p>Ajoutez un lien et quelques visuels pour renforcer votre demande d'acces.</p>
+                  </div>
+
+                  <div className="auth-field">
+                    <label htmlFor="category">Service du prestataire</label>
+                    <input
+                      id="category"
+                      name="category"
+                      placeholder="Photographe, Traiteur, Salle..."
+                      value={form.category}
+                      onChange={onChange}
+                    />
+                  </div>
+
+                  <div className="auth-field">
+                    <label htmlFor="city">Ville</label>
+                    <input
+                      id="city"
+                      name="city"
+                      placeholder="Tunis, Sousse, Sfax..."
+                      value={form.city}
+                      onChange={onChange}
+                    />
+                  </div>
+
+                  <div className="auth-field">
+                    <label htmlFor="website">Site web / Instagram / Facebook</label>
+                    <input
+                      id="website"
+                      name="website"
+                      type="url"
+                      placeholder="https://instagram.com/moncompte"
+                      value={form.website}
+                      onChange={onChange}
+                    />
+                  </div>
+
+                  <div className="auth-provider-upload-grid">
+                    <label className="auth-upload-card" htmlFor="profilePhoto">
+                      <span className="auth-upload-label">Photo principale du service</span>
+                      <span className="auth-upload-copy">
+                        {providerFiles.profilePhoto ? providerFiles.profilePhoto.name : "Choisir une image JPG ou PNG"}
+                      </span>
+                      <input
+                        id="profilePhoto"
+                        name="profilePhoto"
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg"
+                        onChange={onFileChange}
+                      />
+                      <div className="auth-upload-preview">
+                        {providerPreviews.profilePhoto ? (
+                          <img src={providerPreviews.profilePhoto} alt="Apercu photo principale" />
+                        ) : (
+                          <span className="auth-upload-empty">Apercu principal</span>
+                        )}
+                      </div>
+                    </label>
+
+                    <label className="auth-upload-card" htmlFor="coverPhoto">
+                      <span className="auth-upload-label">Photo supplementaire du service</span>
+                      <span className="auth-upload-copy">
+                        {providerFiles.coverPhoto ? providerFiles.coverPhoto.name : "Ajouter une seconde image inspirante"}
+                      </span>
+                      <input
+                        id="coverPhoto"
+                        name="coverPhoto"
+                        type="file"
+                        accept="image/png,image/jpeg,image/jpg"
+                        onChange={onFileChange}
+                      />
+                      <div className="auth-upload-preview">
+                        {providerPreviews.coverPhoto ? (
+                          <img src={providerPreviews.coverPhoto} alt="Apercu photo supplementaire" />
+                        ) : (
+                          <span className="auth-upload-empty">Apercu secondaire</span>
+                        )}
+                      </div>
+                    </label>
+                  </div>
+                </section>
+              ) : null}
+
+              <button
+                type="submit"
+                className={`auth-btn ${isProviderRole ? "auth-btn-request" : ""}`}
+                disabled={loading}
+              >
                 {loading ? (
                   <>
-                    <Spinner /> Inscription...
+                    <Spinner /> {isProviderRole ? "Envoi de la demande..." : "Inscription..."}
                   </>
                 ) : (
-                  "Creer mon compte"
+                  isProviderRole ? "Demander l'accés" : "Creer mon compte"
                 )}
               </button>
             </form>
@@ -138,6 +332,24 @@ const SignupPage = () => {
           </section>
         </section>
       </main>
+
+      {providerRequestPopup ? (
+        <div className="auth-popup-overlay" role="dialog" aria-modal="true" aria-label="Demande envoyée">
+          <div className="auth-popup-card">
+            <span className="auth-provider-badge">Demande envoyée</span>
+            <h3>Votre demande d'accés a bien été envoyée</h3>
+            <p>
+              Merci. Votre profil prestataire est maintenant en attente d'approbation par
+              l'administrateur. Vous recevrez l'accés après validation.
+            </p>
+            <div className="auth-popup-actions">
+              <button type="button" className="auth-btn auth-btn-request" onClick={() => setProviderRequestPopup(false)}>
+                Compris
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

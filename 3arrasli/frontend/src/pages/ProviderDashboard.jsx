@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import "./provider.css";
 import ProviderBookings from "./provider/ProviderBookings";
 import ProviderCalendar from "./provider/ProviderCalendar";
@@ -8,7 +8,7 @@ import ProviderLayout from "./provider/ProviderLayout";
 import ProviderProfile from "./provider/ProviderProfile";
 import ProviderServices from "./provider/ProviderServices";
 import { resolveAssetUrl } from "../services/assets";
-import { getStoredSession, saveStoredUser } from "../services/auth";
+import { getStoredSession, getStoredToken, saveStoredUser } from "../services/auth";
 import {
   deleteProviderCalendarBlock,
   getProviderCalendarWeek,
@@ -20,6 +20,7 @@ import {
   markProviderChatRead,
   sendProviderChatMessage,
 } from "../services/providerChats";
+import { connectChatSocket, emitRealtimeMessage, emitTypingStatus, joinConversationRoom } from "../services/socket";
 import { getProviderBookings, updateProviderBookingStatus } from "../services/providerBookings";
 import { getProviderProfile, updateProviderProfile } from "../services/providerProfile";
 import { validateServiceForm } from "./provider/serviceForm";
@@ -52,9 +53,49 @@ const toIsoDate = (value) => {
   return `${year}-${month}-${day}`;
 };
 
+const isMobileSidebarViewport = () => window.innerWidth <= 980;
+
+const mergeProviderChat = (items, nextChat) => {
+  if (!nextChat?.id) {
+    return items;
+  }
+
+  const withoutChat = items.filter((chat) => chat.id !== nextChat.id);
+  return [nextChat, ...withoutChat].sort((left, right) =>
+    String(right.lastTimestamp || "").localeCompare(String(left.lastTimestamp || ""))
+  );
+};
+
+const upsertProviderRealtimeMessage = (chat, message, providerId, isActiveChat) => {
+  const nextMessage = {
+    id: message.id,
+    author: Number(message.sender_id) === Number(providerId) ? "provider" : "client",
+    text: message.content,
+    time: message.timestamp
+      ? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "--",
+    timestamp: message.timestamp,
+  };
+
+  const alreadyExists = Array.isArray(chat.messages) && chat.messages.some((item) => item.id === nextMessage.id);
+  const messages = alreadyExists ? chat.messages : [...(chat.messages || []), nextMessage];
+
+  return {
+    ...chat,
+    messages,
+    excerpt: message.content,
+    time: nextMessage.time,
+    lastTimestamp: message.timestamp || chat.lastTimestamp,
+    unread:
+      Number(message.sender_id) === Number(providerId) || isActiveChat
+        ? 0
+        : Number(chat.unread || 0) + 1,
+  };
+};
+
 const ProviderDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [reservations, setReservations] = useState([]);
   const [reservationFilter, setReservationFilter] = useState("Tous");
   const [searchTerm, setSearchTerm] = useState("");
@@ -65,8 +106,10 @@ const ProviderDashboard = () => {
   const [profileForm, setProfileForm] = useState(initialProfile);
   const [profileMessage, setProfileMessage] = useState({ type: "", text: "" });
   const [profileLoading, setProfileLoading] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
   const [profileSubmitting, setProfileSubmitting] = useState(false);
   const [profileErrors, setProfileErrors] = useState({});
+  const [profileCompletionDismissed, setProfileCompletionDismissed] = useState(false);
   const [profileImageFile, setProfileImageFile] = useState(null);
   const [coverImageFile, setCoverImageFile] = useState(null);
   const [profilePhotoPreview, setProfilePhotoPreview] = useState("");
@@ -80,8 +123,10 @@ const ProviderDashboard = () => {
   const [serviceFeedback, setServiceFeedback] = useState({ type: "", text: "" });
   const [servicesLoading, setServicesLoading] = useState(false);
   const [serviceSubmitting, setServiceSubmitting] = useState(false);
-  const [serviceImageFile, setServiceImageFile] = useState(null);
-  const [serviceImagePreview, setServiceImagePreview] = useState("");
+  const [serviceImageFiles, setServiceImageFiles] = useState([]);
+  const [serviceImagePreviews, setServiceImagePreviews] = useState([]);
+  const [serviceRemovedImageIds, setServiceRemovedImageIds] = useState([]);
+  const serviceImagePreviewsRef = useRef([]);
   const [imageInputKey, setImageInputKey] = useState(0);
   const [calendarDays, setCalendarDays] = useState([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
@@ -99,10 +144,16 @@ const ProviderDashboard = () => {
   const [loadingChats, setLoadingChats] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [chatFeedback, setChatFeedback] = useState({ type: "", text: "" });
-
-  useEffect(() => {
-    setSidebarOpen(false);
-  }, [activeSection]);
+  const [typingLabel, setTypingLabel] = useState("");
+  const [activeClientOnline, setActiveClientOnline] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const currentProviderId = Number(getStoredSession()?.user?.id || 0);
+  const socketRef = useRef(null);
+  const joinedChatIdsRef = useRef(new Set());
+  const typingTimeoutRef = useRef(null);
+  const stopTypingTimeoutRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const activeChatIdRef = useRef(null);
 
   const loadBookings = async () => {
     setLoadingBookings(true);
@@ -190,6 +241,7 @@ const ProviderDashboard = () => {
       });
     } finally {
       setProfileLoading(false);
+      setProfileLoaded(true);
     }
   };
 
@@ -261,6 +313,15 @@ const ProviderDashboard = () => {
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
 
   useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+    setActiveClientOnline(false);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [activeChat?.messages, typingLabel]);
+
+  useEffect(() => {
     if (!activeChatId || !activeChat?.unread) {
       return;
     }
@@ -279,6 +340,131 @@ const ProviderDashboard = () => {
         );
       });
   }, [activeChatId, activeChat?.unread]);
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      return undefined;
+    }
+
+    const socket = connectChatSocket(token);
+    socketRef.current = socket;
+
+    socket.on("socket:ready", () => {
+      console.log("[provider-chat] socket:ready");
+      joinedChatIdsRef.current.clear();
+      setSocketConnected(true);
+    });
+
+    socket.on("disconnect", () => {
+      console.log("[provider-chat] disconnect");
+      setSocketConnected(false);
+    });
+
+    socket.on("provider_chat_updated", ({ chat }) => {
+      if (!chat) {
+        return;
+      }
+
+      console.log("[provider-chat] provider_chat_updated", { chatId: chat.id });
+      setChats((prev) => mergeProviderChat(prev, chat));
+      if (chat.id === activeChatIdRef.current) {
+        setTypingLabel("");
+      }
+    });
+
+    socket.on("receive_message", ({ message, room, client_id, provider_id }) => {
+      if (!message) {
+        return;
+      }
+
+      const chatId =
+        Number(message.sender_id) === Number(currentProviderId)
+          ? Number(message.receiver_id)
+          : Number(message.sender_id);
+
+      console.log("[provider-chat] receive_message", {
+        room,
+        client_id,
+        provider_id,
+        messageId: message.id,
+        chatId,
+      });
+
+      setChats((prev) => {
+        const existingChat = prev.find((chat) => chat.id === chatId);
+        if (!existingChat) {
+          return prev;
+        }
+
+        return mergeProviderChat(
+          prev,
+          upsertProviderRealtimeMessage(
+            existingChat,
+            message,
+            currentProviderId,
+            existingChat.id === activeChatIdRef.current
+          )
+        );
+      });
+    });
+
+    socket.on("typing_status", ({ user_id, is_typing }) => {
+      if (String(user_id) !== String(activeChatIdRef.current)) {
+        return;
+      }
+
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+
+      setTypingLabel(is_typing ? "Le client ecrit..." : "");
+      if (is_typing) {
+        typingTimeoutRef.current = window.setTimeout(() => setTypingLabel(""), 1600);
+      }
+    });
+
+    socket.on("presence:update", ({ client_id, client_online }) => {
+      if (String(client_id) === String(activeChatIdRef.current)) {
+        setActiveClientOnline(Boolean(client_online));
+      }
+    });
+
+    socket.on("socket:error", ({ message }) => {
+      if (message) {
+        setChatFeedback({ type: "error", text: message });
+      }
+    });
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+      if (stopTypingTimeoutRef.current) {
+        window.clearTimeout(stopTypingTimeoutRef.current);
+      }
+      socket.removeAllListeners();
+      socket.disconnect();
+      socketRef.current = null;
+      setSocketConnected(false);
+      joinedChatIdsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!socketRef.current || !socketConnected) {
+      return;
+    }
+
+    chats.forEach((chat) => {
+      if (joinedChatIdsRef.current.has(chat.id)) {
+        return;
+      }
+      console.log("[provider-chat] join_conversation", { chatId: chat.id });
+      joinConversationRoom(socketRef.current, chat.id);
+      joinedChatIdsRef.current.add(chat.id);
+    });
+  }, [chats, socketConnected]);
 
   const filteredReservations = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
@@ -396,9 +582,50 @@ const ProviderDashboard = () => {
 
   const currentHour = useMemo(() => `${String(new Date().getHours()).padStart(2, "0")}:`, []);
 
+  const profileCompletion = useMemo(() => {
+    const requiredFields = [
+      { key: "name", label: "Nom de l'entreprise" },
+      { key: "email", label: "Email professionnel" },
+      { key: "phone", label: "Telephone" },
+      { key: "city", label: "Ville" },
+      { key: "category", label: "Categorie" },
+      { key: "description", label: "Presentation" },
+      { key: "profilePhoto", label: "Photo de profil" },
+      { key: "coverPhoto", label: "Photo de couverture" },
+    ];
+
+    const missingFields = requiredFields.filter(({ key }) => {
+      const value = profileForm[key];
+      return !String(value || "").trim();
+    });
+
+    const completed = requiredFields.length - missingFields.length;
+    return {
+      missingFields,
+      progress: Math.round((completed / requiredFields.length) * 100),
+    };
+  }, [profileForm]);
+
+  const shouldShowProfileCompletionPopup =
+    profileLoaded &&
+    !profileLoading &&
+    !profileCompletionDismissed &&
+    activeSection !== "profile" &&
+    profileCompletion.missingFields.length > 0;
+
+  const goToProfileCompletion = () => {
+    setActiveSection("profile");
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
+    setProfileCompletionDismissed(true);
+  };
+
   const handleSectionChange = (sectionId) => {
     setActiveSection(sectionId);
-    setSidebarOpen(false);
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
   };
 
   const updateReservationStatus = async (id, status) => {
@@ -569,36 +796,75 @@ const ProviderDashboard = () => {
   };
 
   const onServiceImageChange = (event) => {
-    const file = event.target.files?.[0] || null;
+    const files = Array.from(event.target.files || []);
     setServiceFormErrors((prev) => ({ ...prev, image: "" }));
 
-    if (!file) {
-      setServiceImageFile(null);
-      setServiceImagePreview(editingServiceId ? serviceForm.image || "" : "");
+    if (files.length === 0) {
       return;
     }
 
-    setServiceImageFile(file);
-    setServiceImagePreview(URL.createObjectURL(file));
-    setServiceFeedback({ type: "success", text: "Image chargee avec succes." });
+    const nextPreviews = files.map((file) => ({
+      key: `${file.name}-${file.lastModified}-${Math.random().toString(16).slice(2)}`,
+      url: URL.createObjectURL(file),
+      name: file.name,
+      isNew: true,
+    }));
+
+    setServiceImageFiles((prev) => [...prev, ...files]);
+    setServiceImagePreviews((prev) => [...prev, ...nextPreviews]);
+    setImageInputKey((prev) => prev + 1);
+    setServiceFeedback({
+      type: "success",
+      text: files.length > 1 ? "Images chargees avec succes." : "Image chargee avec succes.",
+    });
   };
 
   useEffect(() => {
+    serviceImagePreviewsRef.current = serviceImagePreviews;
+  }, [serviceImagePreviews]);
+
+  useEffect(() => {
     return () => {
-      if (serviceImagePreview?.startsWith("blob:")) {
-        URL.revokeObjectURL(serviceImagePreview);
-      }
+      serviceImagePreviewsRef.current.forEach((preview) => {
+        if (preview.url?.startsWith("blob:")) {
+          URL.revokeObjectURL(preview.url);
+        }
+      });
     };
-  }, [serviceImagePreview]);
+  }, []);
+
+  const removeServiceImagePreview = (preview) => {
+    if (preview.url?.startsWith("blob:")) {
+      URL.revokeObjectURL(preview.url);
+    }
+
+    setServiceImagePreviews((prev) => prev.filter((item) => item.key !== preview.key));
+
+    if (preview.isNew) {
+      setServiceImageFiles((prev) => {
+        const nextFiles = [...prev];
+        const previewIndex = serviceImagePreviews.filter((item) => item.isNew).findIndex((item) => item.key === preview.key);
+        if (previewIndex >= 0) {
+          nextFiles.splice(previewIndex, 1);
+        }
+        return nextFiles;
+      });
+    } else if (preview.id) {
+      setServiceRemovedImageIds((prev) => [...new Set([...prev, preview.id])]);
+    }
+  };
 
   const resetServiceEditing = () => {
-    if (serviceImagePreview?.startsWith("blob:")) {
-      URL.revokeObjectURL(serviceImagePreview);
-    }
+    serviceImagePreviews.forEach((preview) => {
+      if (preview.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(preview.url);
+      }
+    });
     setEditingServiceId(null);
     setServiceFormErrors({});
-    setServiceImageFile(null);
-    setServiceImagePreview("");
+    setServiceImageFiles([]);
+    setServiceImagePreviews([]);
+    setServiceRemovedImageIds([]);
     setImageInputKey((prev) => prev + 1);
     setServiceForm(emptyServiceForm);
   };
@@ -607,8 +873,8 @@ const ProviderDashboard = () => {
     event.preventDefault();
 
     const validationErrors = validateServiceForm(serviceForm, {
-      imageFile: serviceImageFile,
-      hasExistingImage: Boolean(serviceForm.image),
+      imageFiles: serviceImageFiles,
+      hasExistingImages: serviceImagePreviews.some((preview) => !preview.isNew),
     });
     if (Object.keys(validationErrors).length > 0) {
       setServiceFormErrors(validationErrors);
@@ -628,9 +894,12 @@ const ProviderDashboard = () => {
     payload.append("category", serviceForm.category.trim());
     payload.append("description", serviceForm.description.trim());
     payload.append("status", serviceForm.status?.trim() || "Actif");
-    if (serviceImageFile) {
-      payload.append("image", serviceImageFile);
-    }
+    serviceImageFiles.forEach((file) => {
+      payload.append("images[]", file);
+    });
+    serviceRemovedImageIds.forEach((imageId) => {
+      payload.append("removed_image_ids[]", String(imageId));
+    });
 
     try {
       if (editingServiceId) {
@@ -662,9 +931,16 @@ const ProviderDashboard = () => {
   };
 
   const editService = (service) => {
-    if (serviceImagePreview?.startsWith("blob:")) {
-      URL.revokeObjectURL(serviceImagePreview);
-    }
+    serviceImagePreviews.forEach((preview) => {
+      if (preview.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(preview.url);
+      }
+    });
+    const savedImages = Array.isArray(service.images) && service.images.length > 0
+      ? service.images
+      : service.image
+        ? [{ id: null, image_path: service.image, url: service.image }]
+        : [];
     setServiceForm({
       title: service.title,
       price: String(service.price),
@@ -674,8 +950,17 @@ const ProviderDashboard = () => {
       status: service.status || "Actif",
     });
     setServiceFormErrors({});
-    setServiceImageFile(null);
-    setServiceImagePreview(resolveAssetUrl(service.image));
+    setServiceImageFiles([]);
+    setServiceImagePreviews(
+      savedImages.map((image, index) => ({
+        key: `saved-${image.id || index}`,
+        id: image.id,
+        url: resolveAssetUrl(image.image_path || image.url || image),
+        name: `Image ${index + 1}`,
+        isNew: false,
+      }))
+    );
+    setServiceRemovedImageIds([]);
     setImageInputKey((prev) => prev + 1);
     setServiceFeedback({ type: "", text: "" });
     setEditingServiceId(service.id);
@@ -779,32 +1064,59 @@ const ProviderDashboard = () => {
     setSendingMessage(true);
     setChatFeedback({ type: "", text: "" });
     setMessageDraft("");
+    emitTypingStatus(socketRef.current, activeChatId, false);
 
     try {
-      const response = await sendProviderChatMessage(activeChatId, content);
-      const updatedChat = response.chat;
-
-      if (updatedChat) {
-        setChats((prev) => {
-          const withoutChat = prev.filter((chat) => chat.id !== updatedChat.id);
-          return [updatedChat, ...withoutChat];
-        });
-        setActiveChatId(updatedChat.id);
+      const socketResponse = await emitRealtimeMessage(socketRef.current, activeChatId, content);
+      console.log("[provider-chat] send_message", {
+        receiverId: activeChatId,
+        success: socketResponse?.success,
+      });
+      if (!socketResponse?.success) {
+        throw new Error(socketResponse?.message || "Impossible d'envoyer ce message.");
       }
 
       setChatFeedback({
         type: "success",
-        text: response.message || "Message envoye avec succes.",
+        text: socketResponse.message || "Message envoye avec succes.",
       });
-    } catch (error) {
-      setMessageDraft(content);
-      setChatFeedback({
-        type: "error",
-        text: error.response?.data?.message || "Impossible d'envoyer ce message.",
-      });
+    } catch (socketError) {
+      try {
+        const response = await sendProviderChatMessage(activeChatId, content);
+        if (response.chat) {
+          setChats((prev) => mergeProviderChat(prev, response.chat));
+        }
+        setChatFeedback({
+          type: "success",
+          text: response.message || "Message envoye avec succes.",
+        });
+      } catch (error) {
+        setMessageDraft(content);
+        setChatFeedback({
+          type: "error",
+          text: error.response?.data?.message || socketError.message || "Impossible d'envoyer ce message.",
+        });
+      }
     } finally {
       setSendingMessage(false);
     }
+  };
+
+  const handleMessageDraftChange = (event) => {
+    const nextValue = event.target.value;
+    setMessageDraft(nextValue);
+
+    if (!activeChatId) {
+      return;
+    }
+
+    emitTypingStatus(socketRef.current, activeChatId, Boolean(nextValue.trim()));
+    if (stopTypingTimeoutRef.current) {
+      window.clearTimeout(stopTypingTimeoutRef.current);
+    }
+    stopTypingTimeoutRef.current = window.setTimeout(() => {
+      emitTypingStatus(socketRef.current, activeChatId, false);
+    }, 1100);
   };
 
   const openChat = async (chatId) => {
@@ -813,10 +1125,16 @@ const ProviderDashboard = () => {
     }
 
     setActiveChatId(chatId);
+    setTypingLabel("");
     setChatFeedback({ type: "", text: "" });
     setChats((prev) =>
       prev.map((chat) => (chat.id === chatId ? { ...chat, unread: 0 } : chat))
     );
+
+    if (socketRef.current && !joinedChatIdsRef.current.has(chatId)) {
+      joinConversationRoom(socketRef.current, chatId);
+      joinedChatIdsRef.current.add(chatId);
+    }
 
     try {
       const [chatResponse, readResponse] = await Promise.all([
@@ -825,13 +1143,7 @@ const ProviderDashboard = () => {
       ]);
       const updatedChat = readResponse.chat || chatResponse.chat;
       if (updatedChat) {
-        setChats((prev) => {
-          const exists = prev.some((chat) => chat.id === updatedChat.id);
-          if (!exists) {
-            return [updatedChat, ...prev];
-          }
-          return prev.map((chat) => (chat.id === updatedChat.id ? updatedChat : chat));
-        });
+        setChats((prev) => mergeProviderChat(prev, updatedChat));
       }
     } catch (error) {
       setChatFeedback({
@@ -927,10 +1239,11 @@ const ProviderDashboard = () => {
             serviceFeedback={serviceFeedback}
             servicesLoading={servicesLoading}
             serviceSubmitting={serviceSubmitting}
-            imagePreviewUrl={serviceImagePreview}
+            imagePreviews={serviceImagePreviews}
             imageInputKey={imageInputKey}
             onServiceChange={onServiceChange}
             onServiceImageChange={onServiceImageChange}
+            onRemoveServiceImage={removeServiceImagePreview}
             onSubmitService={submitService}
             onResetEditing={resetServiceEditing}
             services={services}
@@ -960,11 +1273,15 @@ const ProviderDashboard = () => {
             activeChatId={activeChatId}
             onOpenChat={openChat}
             messageDraft={messageDraft}
-            onMessageDraftChange={(event) => setMessageDraft(event.target.value)}
+            onMessageDraftChange={handleMessageDraftChange}
             onSendMessage={sendMessage}
             loadingChats={loadingChats}
             sendingMessage={sendingMessage}
             chatFeedback={chatFeedback}
+            typingLabel={typingLabel}
+            activePresenceLabel={activeClientOnline ? "En ligne" : "Hors ligne"}
+            messagesEndRef={messagesEndRef}
+            onMessageDraftBlur={() => emitTypingStatus(socketRef.current, activeChatId, false)}
           />
         );
       default:
@@ -1004,6 +1321,65 @@ const ProviderDashboard = () => {
       currentSection={currentSection}
     >
       {renderContent()}
+      {shouldShowProfileCompletionPopup ? (
+        <div className="provider-modal-overlay provider-profile-task-overlay" role="presentation">
+          <section
+            className="provider-profile-task-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="provider-profile-task-title"
+            style={{ "--provider-profile-progress": `${profileCompletion.progress}%` }}
+          >
+            <button
+              type="button"
+              className="provider-modal-close provider-profile-task-close"
+              onClick={() => setProfileCompletionDismissed(true)}
+              aria-label="Fermer"
+            >
+              <span />
+              <span />
+            </button>
+
+            <div className="provider-profile-task-visual" aria-hidden="true">
+              <div className="provider-profile-task-ring">
+                <strong>{profileCompletion.progress}%</strong>
+                <span>Profil</span>
+              </div>
+            </div>
+
+            <div className="provider-profile-task-content">
+              <span className="provider-section-label">Action recommandee</span>
+              <h3 id="provider-profile-task-title">Votre vitrine merite quelques details de plus</h3>
+              <p>
+                Les clients reservent plus facilement quand votre profil presente clairement votre
+                style, votre ville, vos contacts et vos photos principales.
+              </p>
+
+              <div className="provider-profile-task-missing">
+                {profileCompletion.missingFields.slice(0, 5).map((field) => (
+                  <span key={field.key}>{field.label}</span>
+                ))}
+                {profileCompletion.missingFields.length > 5 ? (
+                  <span>+{profileCompletion.missingFields.length - 5} autre(s)</span>
+                ) : null}
+              </div>
+
+              <div className="provider-profile-task-actions">
+                <button type="button" className="provider-primary-btn" onClick={goToProfileCompletion}>
+                  Completer mon profil
+                </button>
+                <button
+                  type="button"
+                  className="provider-ghost-btn"
+                  onClick={() => setProfileCompletionDismissed(true)}
+                >
+                  Plus tard
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </ProviderLayout>
   );
 };
