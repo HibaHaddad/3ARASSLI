@@ -12,6 +12,8 @@ const defaultItems = [
 const PlannerPage = () => {
   const [items, setItems] = useState([]);
   const [title, setTitle] = useState("");
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState("all");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -53,6 +55,17 @@ const PlannerPage = () => {
     }
   };
 
+  const addSuggestedItem = async (suggestion) => {
+    try {
+      await api.post("/api/planner", { title: suggestion });
+      setMessage("Suggestion ajoutee au planner.");
+      setError("");
+      loadItems();
+    } catch (err) {
+      setError(err.response?.data?.message || "Ajout impossible.");
+    }
+  };
+
   const toggleItem = async (item) => {
     try {
       await api.put(`/api/planner/${item.id}`, { completed: !item.completed });
@@ -63,18 +76,53 @@ const PlannerPage = () => {
     }
   };
 
+  const normalizedSearch = search.trim().toLowerCase();
+  const filteredItems = items.filter((item) => {
+    const matchesSearch = !normalizedSearch || item.title.toLowerCase().includes(normalizedSearch);
+    const matchesFilter =
+      filter === "all" ||
+      (filter === "todo" && !item.completed) ||
+      (filter === "done" && item.completed);
+    return matchesSearch && matchesFilter;
+  });
+
+  const completedCount = items.filter((item) => item.completed).length;
+  const remainingCount = Math.max(items.length - completedCount, 0);
+  const progress = items.length ? Math.round((completedCount / items.length) * 100) : 0;
+
   return (
     <ClientPageLayout
       kicker="Wedding planner"
-      title="Votre carnet d'organisation."
-      description="Ajoutez, suivez et finalisez les etapes de preparation dans une page simple et douce."
+      title="Votre planner mariage"
+      description="Suivez vos priorites, cochez les etapes importantes et gardez une vue claire sur l'avancement de votre organisation."
     >
       <section className="client-section client-planner-section">
         <div className="client-shell client-planner-layout">
           <div className="client-planner-copy">
             <span className="section-kicker">Checklist</span>
-            <h2>Vos taches, votre rythme.</h2>
-            <p>Un outil d'organisation mariage clair, sans logique de tableau de bord.</p>
+            <h2>Une preparation plus claire et plus elegante.</h2>
+            <p>Ajoutez vos taches, filtrez l'avancement et gardez toujours sous les yeux ce qu'il reste a boucler.</p>
+
+            <div className="client-planner-stats">
+              <article className="client-planner-stat-card">
+                <span>Progression</span>
+                <strong>{progress}%</strong>
+                <small>{completedCount} tache(s) terminee(s)</small>
+              </article>
+              <article className="client-planner-stat-card">
+                <span>En cours</span>
+                <strong>{remainingCount}</strong>
+                <small>reste(s) a finaliser</small>
+              </article>
+            </div>
+
+            <div className="client-planner-suggestions">
+              {defaultItems.map((suggestion) => (
+                <button key={suggestion} type="button" onClick={() => addSuggestedItem(suggestion)}>
+                  {suggestion}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="client-planner-card">
@@ -88,8 +136,27 @@ const PlannerPage = () => {
               </button>
             </div>
 
+            <div className="client-planner-toolbar">
+              <input
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Rechercher une tache"
+              />
+              <div className="client-planner-filter-group">
+                <button type="button" className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}>
+                  Tout
+                </button>
+                <button type="button" className={filter === "todo" ? "active" : ""} onClick={() => setFilter("todo")}>
+                  A faire
+                </button>
+                <button type="button" className={filter === "done" ? "active" : ""} onClick={() => setFilter("done")}>
+                  Termine
+                </button>
+              </div>
+            </div>
+
             <div className="client-planner-list">
-              {items.map((item) => (
+              {filteredItems.map((item) => (
                 <button
                   key={item.id}
                   type="button"
@@ -100,7 +167,7 @@ const PlannerPage = () => {
                   <small>{item.completed ? "Terminee" : "A faire"}</small>
                 </button>
               ))}
-              {items.length === 0 ? <p>Aucune tache pour le moment.</p> : null}
+              {filteredItems.length === 0 ? <p>Aucune tache pour ce filtre.</p> : null}
             </div>
           </div>
         </div>

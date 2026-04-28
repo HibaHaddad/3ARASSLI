@@ -1816,6 +1816,18 @@ def create_app():
         }
         return stripe_api_request("POST", "/v1/checkout/sessions", form_data=form_data)
 
+    def create_payment_intent(reservation, service):
+        payment_amount = reservation.amount if reservation.amount is not None else service.price
+        form_data = {
+            "amount": str(amount_to_minor_units(payment_amount)),
+            "currency": get_stripe_currency(),
+            "automatic_payment_methods[enabled]": "true",
+            "metadata[reservation_id]": str(reservation.id),
+            "metadata[client_id]": str(reservation.client_id),
+            "description": service.title,
+        }
+        return stripe_api_request("POST", "/v1/payment_intents", form_data=form_data)
+
     def confirm_checkout_session(session_id):
         encoded_session_id = urllib_parse.quote(session_id, safe="")
         session = stripe_api_request("GET", f"/v1/checkout/sessions/{encoded_session_id}")
@@ -1840,6 +1852,31 @@ def create_app():
 
         db.session.commit()
         return reservation
+
+    def confirm_payment_intent(payment_intent_id):
+        encoded_payment_intent_id = urllib_parse.quote(payment_intent_id, safe="")
+        payment_intent = stripe_api_request("GET", f"/v1/payment_intents/{encoded_payment_intent_id}")
+        reservation_id = int(payment_intent.get("metadata", {}).get("reservation_id") or 0)
+        if not reservation_id:
+            raise RuntimeError("Paiement Stripe invalide.")
+
+        reservation = Reservation.query.get(reservation_id)
+        if not reservation:
+            raise RuntimeError("Reservation introuvable.")
+
+        if payment_intent.get("status") == "succeeded":
+            mark_reservation_paid(
+                reservation,
+                payment_intent_id=payment_intent.get("id"),
+            )
+        else:
+            reservation.status = "UNPAID"
+            reservation.payment_status = "UNPAID"
+            reservation.stripe_payment_intent_id = payment_intent.get("id")
+            reservation.updated_at = datetime.utcnow()
+
+        db.session.commit()
+        return reservation, payment_intent
 
     def auth_required(allowed_roles=None):
         def decorator(view_func):
@@ -3388,6 +3425,39 @@ def create_app():
             }
         )
 
+    @app.post("/api/reservations/<int:reservation_id>/payment/intent")
+    @auth_required(allowed_roles={"client"})
+    def create_reservation_payment_intent(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+
+        service = Service.query.get(reservation.service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        if not is_stripe_configured():
+            return jsonify({"success": False, "message": "Stripe n'est pas configure. Ajoutez les cles Stripe dans backend/.env."}), 503
+
+        try:
+            payment_intent = create_payment_intent(reservation, service)
+        except RuntimeError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        reservation.stripe_payment_intent_id = payment_intent.get("id")
+        reservation.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "payment_intent_id": payment_intent.get("id"),
+                "client_secret": payment_intent.get("client_secret"),
+                "publishable_key": get_stripe_publishable_key(),
+                "reservation": serialize_reservation(reservation),
+            }
+        )
+
     @app.get("/api/payments/confirm")
     @auth_required(allowed_roles={"client"})
     def confirm_payment():
@@ -3408,6 +3478,35 @@ def create_app():
                 "success": True,
                 "reservation": serialize_reservation(reservation),
                 "message": "Paiement confirme avec succes." if reservation.payment_status == "PAID" else "Paiement non finalise.",
+            }
+        )
+
+    @app.post("/api/reservations/<int:reservation_id>/payment/confirm-intent")
+    @auth_required(allowed_roles={"client"})
+    def confirm_reservation_payment_intent(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        payment_intent_id = str(payload.get("payment_intent_id") or reservation.stripe_payment_intent_id or "").strip()
+        if not payment_intent_id:
+            return jsonify({"success": False, "message": "payment_intent_id est requis."}), 400
+
+        try:
+            confirmed_reservation, payment_intent = confirm_payment_intent(payment_intent_id)
+        except RuntimeError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        if confirmed_reservation.client_id != request.user_id or confirmed_reservation.id != reservation_id:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+
+        return jsonify(
+            {
+                "success": True,
+                "reservation": serialize_reservation(confirmed_reservation),
+                "payment_status": payment_intent.get("status"),
+                "message": "Paiement confirme avec succes." if confirmed_reservation.payment_status == "PAID" else "Paiement non finalise.",
             }
         )
 

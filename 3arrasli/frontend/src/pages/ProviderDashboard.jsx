@@ -95,7 +95,7 @@ const upsertProviderRealtimeMessage = (chat, message, providerId, isActiveChat) 
 
 const ProviderDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileSidebarViewport());
   const [reservations, setReservations] = useState([]);
   const [reservationFilter, setReservationFilter] = useState("Tous");
   const [searchTerm, setSearchTerm] = useState("");
@@ -309,6 +309,15 @@ const ProviderDashboard = () => {
   useEffect(() => {
     loadChats();
   }, [loadChats]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setSidebarOpen(!isMobileSidebarViewport());
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
 

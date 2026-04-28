@@ -75,7 +75,7 @@ const isMobileSidebarViewport = () => window.innerWidth <= 980;
 
 const AdminDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobileSidebarViewport());
   const [initialLoading, setInitialLoading] = useState(true);
   const [sectionLoading, setSectionLoading] = useState(false);
   const [adminNotifications, setAdminNotifications] = useState(() => {
@@ -236,6 +236,15 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     loadProviders();
+  }, []);
+
+  useEffect(() => {
+    const handleResize = () => {
+      setSidebarOpen(!isMobileSidebarViewport());
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
   const openConfirm = (title, message, confirmLabel, action) => {

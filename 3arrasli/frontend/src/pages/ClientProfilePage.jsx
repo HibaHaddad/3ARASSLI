@@ -10,7 +10,6 @@ const initialForm = {
   phone: "",
   city: "",
   instagram: "",
-  website: "",
   description: "",
   profilePhoto: "",
 };
@@ -36,7 +35,6 @@ const ClientProfilePage = () => {
         phone: user.phone || "",
         city: user.city || "",
         instagram: user.instagram || "",
-        website: user.website || "",
         description: user.description || "",
         profilePhoto: user.profilePhoto || "",
       });
@@ -85,7 +83,6 @@ const ClientProfilePage = () => {
       payload.append("phone", form.phone);
       payload.append("city", form.city);
       payload.append("instagram", form.instagram);
-      payload.append("website", form.website);
       payload.append("description", form.description);
       if (profileFile) {
         payload.append("profilePhoto", profileFile);
@@ -110,7 +107,6 @@ const ClientProfilePage = () => {
         phone: updatedUser.phone || "",
         city: updatedUser.city || "",
         instagram: updatedUser.instagram || "",
-        website: updatedUser.website || "",
         description: updatedUser.description || "",
         profilePhoto: updatedUser.profilePhoto || "",
       });
@@ -196,10 +192,6 @@ const ClientProfilePage = () => {
                     <input className="client-input" name="instagram" value={form.instagram} onChange={onChange} />
                   </label>
 
-                  <label className="client-field">
-                    <span>Site web</span>
-                    <input className="client-input" name="website" value={form.website} onChange={onChange} />
-                  </label>
                 </div>
 
                 <label className="client-field">

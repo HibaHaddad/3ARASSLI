@@ -1,7 +1,10 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { CardElement, Elements, useElements, useStripe } from "@stripe/react-stripe-js";
+import { loadStripe } from "@stripe/stripe-js";
 import { Link, useParams } from "react-router-dom";
 import api from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
+import { getStoredSession } from "../services/auth";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ClientModal from "./client/ClientModal";
 import StarRating from "./client/StarRating";
@@ -17,6 +20,8 @@ const initialReservationForm = {
   start_time: "",
   notes: "",
   payment_option: "full",
+  payment_mode: "card",
+  cardholder_name: "",
 };
 
 const buildAmount = (service, paymentOption) => {
@@ -24,8 +29,179 @@ const buildAmount = (service, paymentOption) => {
   return paymentOption === "partial" ? Number((price * 0.3).toFixed(2)) : price;
 };
 
+const cardElementOptions = {
+  style: {
+    base: {
+      fontSize: "16px",
+      color: "#4a2735",
+      fontFamily: "inherit",
+      "::placeholder": {
+        color: "rgba(82, 49, 61, 0.56)",
+      },
+    },
+    invalid: {
+      color: "#a33f58",
+    },
+  },
+};
+
+const ReservationFormBase = ({
+  providerName,
+  reservationAmount,
+  reservationForm,
+  setReservationForm,
+  availability,
+  reservationSlots,
+  stripeEnabled,
+  submitting,
+  onSubmit,
+  cardBlock,
+}) => (
+  <form className="client-modal-form client-reservation-modal-form" onSubmit={onSubmit}>
+    <div className="client-payment-summary">
+      <div>
+        <span className="client-section-label">Prestataire</span>
+        <strong>{providerName}</strong>
+      </div>
+      <div>
+        <span className="client-section-label">Montant</span>
+        <strong>{reservationAmount} TND</strong>
+      </div>
+    </div>
+
+    <label className="client-field">
+      <span>Date</span>
+      <select
+        className="client-select"
+        value={reservationForm.date}
+        onChange={(event) => setReservationForm((prev) => ({ ...prev, date: event.target.value, start_time: "" }))}
+      >
+        <option value="">Choisir une date</option>
+        {availability.days
+          .filter((day) => day.available)
+          .map((day) => (
+            <option key={day.date} value={day.date}>
+              {day.label}
+            </option>
+          ))}
+      </select>
+    </label>
+
+    <label className="client-field">
+      <span>Creneau</span>
+      <select
+        className="client-select"
+        value={reservationForm.start_time}
+        onChange={(event) => setReservationForm((prev) => ({ ...prev, start_time: event.target.value }))}
+      >
+        <option value="">Choisir un creneau</option>
+        {reservationSlots.map((slot) => (
+          <option key={slot.time} value={slot.time}>
+            {slot.time} - {slot.end_time}
+          </option>
+        ))}
+      </select>
+    </label>
+
+    <div className="client-payment-options">
+      <button
+        type="button"
+        className={`client-payment-option ${reservationForm.payment_option === "full" ? "active" : ""}`}
+        onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "full" }))}
+      >
+        Payer le montant total
+      </button>
+      <button
+        type="button"
+        className={`client-payment-option ${reservationForm.payment_option === "partial" ? "active" : ""}`}
+        onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "partial" }))}
+      >
+        Payer une avance
+      </button>
+    </div>
+
+    <div className="client-payment-mode-grid">
+      <button
+        type="button"
+        className={`client-payment-mode-card ${reservationForm.payment_mode === "card" ? "active" : ""}`}
+        onClick={() => setReservationForm((prev) => ({ ...prev, payment_mode: "card" }))}
+        disabled={!stripeEnabled}
+      >
+        <strong>Paiement par carte</strong>
+        <span>{stripeEnabled ? "Visa, Mastercard, 3D Secure" : "Stripe non configure"}</span>
+      </button>
+      <button
+        type="button"
+        className={`client-payment-mode-card ${reservationForm.payment_mode === "later" ? "active" : ""}`}
+        onClick={() => setReservationForm((prev) => ({ ...prev, payment_mode: "later" }))}
+      >
+        <strong>Payer plus tard</strong>
+        <span>Creation de reservation sans paiement immediat</span>
+      </button>
+    </div>
+
+    {cardBlock}
+
+    <label className="client-field">
+      <span>Details</span>
+      <textarea
+        className="client-textarea"
+        placeholder="Precisions pour la reservation"
+        value={reservationForm.notes}
+        onChange={(event) => setReservationForm((prev) => ({ ...prev, notes: event.target.value }))}
+      />
+    </label>
+
+    <button type="submit" className="client-btn client-btn-primary" disabled={submitting}>
+      {submitting
+        ? "Preparation..."
+        : reservationForm.payment_mode === "card"
+          ? "Payer et reserver"
+          : "Creer la reservation"}
+    </button>
+  </form>
+);
+
+const StripeReservationForm = (props) => {
+  const stripe = useStripe();
+  const elements = useElements();
+
+  const cardBlock =
+    props.reservationForm.payment_mode === "card" ? (
+      <div className="client-card-payment-box">
+        <label className="client-field">
+          <span>Nom sur la carte</span>
+          <input
+            className="client-input"
+            value={props.reservationForm.cardholder_name}
+            onChange={(event) =>
+              props.setReservationForm((prev) => ({ ...prev, cardholder_name: event.target.value }))
+            }
+            placeholder="Nom du titulaire"
+          />
+        </label>
+
+        <label className="client-field">
+          <span>Informations carte</span>
+          <div className="client-card-element-wrap">
+            <CardElement options={cardElementOptions} />
+          </div>
+        </label>
+      </div>
+    ) : null;
+
+  return (
+    <ReservationFormBase
+      {...props}
+      cardBlock={cardBlock}
+      onSubmit={(event) => props.onSubmit(event, stripe, elements)}
+    />
+  );
+};
+
 const ClientProviderPage = () => {
   const { id } = useParams();
+  const sessionUser = getStoredSession()?.user || {};
   const [service, setService] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [availability, setAvailability] = useState({ days: [], next_available: null, availability_label: "" });
@@ -73,11 +249,21 @@ const ClientProviderPage = () => {
   const reservationSlots = (selectedReservationDay?.slots || []).filter((slot) => slot.available);
   const reservationAmount = buildAmount(service, reservationForm.payment_option);
   const averageRating = Number(service?.rating || 0).toFixed(1);
+  const stripePromise = useMemo(
+    () => (stripeConfig.publishable_key ? loadStripe(stripeConfig.publishable_key) : null),
+    [stripeConfig.publishable_key]
+  );
 
   const resetMessages = () => {
     setError("");
     setMessage("");
   };
+
+  useEffect(() => {
+    if (!stripeConfig.enabled) {
+      setReservationForm((prev) => ({ ...prev, payment_mode: "later" }));
+    }
+  }, [stripeConfig.enabled]);
 
   const toggleFavorite = async () => {
     if (!service) {
@@ -137,7 +323,7 @@ const ClientProviderPage = () => {
     }
   };
 
-  const submitReservation = async (event) => {
+  const submitReservation = async (event, stripe = null, elements = null) => {
     event.preventDefault();
     resetMessages();
     setSubmitting(true);
@@ -153,25 +339,51 @@ const ClientProviderPage = () => {
       });
 
       const reservation = createResponse.data.reservation;
-      if (stripeConfig.enabled) {
-        const paymentResponse = await api.post(`/api/reservations/${reservation.id}/payment/session`);
-        const checkoutUrl = paymentResponse.data.checkout_url;
-        if (checkoutUrl) {
-          window.location.href = checkoutUrl;
-          return;
+
+      if (reservationForm.payment_mode === "card") {
+        if (!stripeConfig.enabled) {
+          throw new Error("Stripe n'est pas configure pour ce projet.");
         }
+        if (!stripe || !elements) {
+          throw new Error("Le formulaire de carte n'est pas encore pret.");
+        }
+
+        const cardElement = elements.getElement(CardElement);
+        if (!cardElement) {
+          throw new Error("Les informations carte ne sont pas disponibles.");
+        }
+
+        const paymentResponse = await api.post(`/api/reservations/${reservation.id}/payment/intent`);
+        const clientSecret = paymentResponse.data.client_secret;
+        const paymentIntentId = paymentResponse.data.payment_intent_id;
+
+        const { error: stripeError, paymentIntent } = await stripe.confirmCardPayment(clientSecret, {
+          payment_method: {
+            card: cardElement,
+            billing_details: {
+              name: reservationForm.cardholder_name || sessionUser.name || "",
+              email: sessionUser.email || "",
+            },
+          },
+        });
+
+        if (stripeError) {
+          throw new Error(`Reservation creee, mais le paiement carte a echoue: ${stripeError.message}`);
+        }
+
+        const confirmResponse = await api.post(`/api/reservations/${reservation.id}/payment/confirm-intent`, {
+          payment_intent_id: paymentIntent?.id || paymentIntentId,
+        });
+        setMessage(confirmResponse.data.message || "Reservation payee avec succes.");
+      } else {
+        setMessage("Reservation creee avec succes. Vous pourrez payer plus tard.");
       }
 
-      setMessage(
-        stripeConfig.enabled
-          ? "Reservation creee. Le paiement n'a pas pu etre initialise."
-          : "Reservation creee. Configurez Stripe pour activer le paiement carte."
-      );
       setReservationForm(initialReservationForm);
       setReservationOpen(false);
       await loadService();
     } catch (err) {
-      setError(err.response?.data?.message || "Impossible de creer la reservation.");
+      setError(err.response?.data?.message || err.message || "Impossible de creer la reservation.");
     } finally {
       setSubmitting(false);
     }
@@ -206,20 +418,6 @@ const ClientProviderPage = () => {
               <div className="client-detail-layout client-provider-layout">
                 <div className="client-detail-gallery client-provider-gallery">
                   <img src={resolveAssetUrl(service.image)} alt={service.title} />
-                  <div className="client-provider-aside-card">
-                    <span className="client-eyebrow">Disponibilite</span>
-                    <h3>{availability.availability_label || "Verification des creneaux..."}</h3>
-                    <div className="client-availability-list">
-                      {availability.days.slice(0, 5).map((day) => (
-                        <div key={day.date} className={`client-availability-item ${day.available ? "available" : "unavailable"}`}>
-                          <strong>{day.label}</strong>
-                          <span>
-                            {day.available ? `${day.available_count} creneau(x) libre(s)` : "Complet"}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                 </div>
 
                 <div className="client-detail-card client-provider-detail-card">
@@ -288,7 +486,11 @@ const ClientProviderPage = () => {
                   <div className="client-provider-notes">
                     <div className="client-provider-note-card">
                       <span className="client-section-label">Paiement</span>
-                      <p>{stripeConfig.enabled ? "Paiement carte via Stripe disponible." : "Stripe n'est pas encore configure pour ce projet."}</p>
+                      <p>
+                        {stripeConfig.enabled
+                          ? "Paiement carte via Stripe disponible avec redirection securisee."
+                          : "Stripe n'est pas encore configure pour ce projet."}
+                      </p>
                     </div>
                     <div className="client-provider-note-card">
                       <span className="client-section-label">Documents</span>
@@ -406,83 +608,34 @@ const ClientProviderPage = () => {
       </ClientModal>
 
       <ClientModal open={reservationOpen} title="Reserver ce prestataire" onClose={() => setReservationOpen(false)}>
-        <form className="client-modal-form" onSubmit={submitReservation}>
-          <div className="client-payment-summary">
-            <div>
-              <span className="client-section-label">Prestataire</span>
-              <strong>{service?.provider_name}</strong>
-            </div>
-            <div>
-              <span className="client-section-label">Montant</span>
-              <strong>{reservationAmount} TND</strong>
-            </div>
-          </div>
-
-          <label className="client-field">
-            <span>Date</span>
-            <select
-              className="client-select"
-              value={reservationForm.date}
-              onChange={(event) => setReservationForm((prev) => ({ ...prev, date: event.target.value, start_time: "" }))}
-            >
-              <option value="">Choisir une date</option>
-              {availability.days
-                .filter((day) => day.available)
-                .map((day) => (
-                  <option key={day.date} value={day.date}>
-                    {day.label}
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <label className="client-field">
-            <span>Creneau</span>
-            <select
-              className="client-select"
-              value={reservationForm.start_time}
-              onChange={(event) => setReservationForm((prev) => ({ ...prev, start_time: event.target.value }))}
-            >
-              <option value="">Choisir un creneau</option>
-              {reservationSlots.map((slot) => (
-                <option key={slot.time} value={slot.time}>
-                  {slot.time} - {slot.end_time}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <div className="client-payment-options">
-            <button
-              type="button"
-              className={`client-payment-option ${reservationForm.payment_option === "full" ? "active" : ""}`}
-              onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "full" }))}
-            >
-              Payer le montant total
-            </button>
-            <button
-              type="button"
-              className={`client-payment-option ${reservationForm.payment_option === "partial" ? "active" : ""}`}
-              onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "partial" }))}
-            >
-              Payer une avance
-            </button>
-          </div>
-
-          <label className="client-field">
-            <span>Details</span>
-            <textarea
-              className="client-textarea"
-              placeholder="Precisions pour la reservation"
-              value={reservationForm.notes}
-              onChange={(event) => setReservationForm((prev) => ({ ...prev, notes: event.target.value }))}
+        {stripeConfig.enabled && stripePromise ? (
+          <Elements stripe={stripePromise}>
+            <StripeReservationForm
+              providerName={service?.provider_name}
+              reservationAmount={reservationAmount}
+              reservationForm={reservationForm}
+              setReservationForm={setReservationForm}
+              availability={availability}
+              reservationSlots={reservationSlots}
+              stripeEnabled={stripeConfig.enabled}
+              submitting={submitting}
+              onSubmit={submitReservation}
             />
-          </label>
-
-          <button type="submit" className="client-btn client-btn-primary" disabled={submitting}>
-            {submitting ? "Preparation..." : stripeConfig.enabled ? "Continuer vers le paiement" : "Creer la reservation"}
-          </button>
-        </form>
+          </Elements>
+        ) : (
+          <ReservationFormBase
+            providerName={service?.provider_name}
+            reservationAmount={reservationAmount}
+            reservationForm={reservationForm}
+            setReservationForm={setReservationForm}
+            availability={availability}
+            reservationSlots={reservationSlots}
+            stripeEnabled={false}
+            submitting={submitting}
+            onSubmit={(event) => submitReservation(event)}
+            cardBlock={null}
+          />
+        )}
       </ClientModal>
 
     </ClientPageLayout>

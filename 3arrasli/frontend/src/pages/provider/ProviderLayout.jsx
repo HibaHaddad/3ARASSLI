@@ -17,7 +17,7 @@ const ProviderLayout = ({
       <Navbar />
 
       <main className="provider-main">
-        <section className="provider-shell">
+        <section className={`provider-shell ${isSidebarOpen ? "sidebar-open" : "sidebar-closed"}`}>
           <button
             type="button"
             className="provider-hamburger"
