@@ -8,7 +8,7 @@ import ProviderLayout from "./provider/ProviderLayout";
 import ProviderProfile from "./provider/ProviderProfile";
 import ProviderServices from "./provider/ProviderServices";
 import { resolveAssetUrl } from "../services/assets";
-import { getStoredSession, saveStoredUser } from "../services/auth";
+import { getStoredSession, getStoredToken, saveStoredUser } from "../services/auth";
 import {
   deleteProviderCalendarBlock,
   getProviderCalendarWeek,
@@ -20,6 +20,7 @@ import {
   markProviderChatRead,
   sendProviderChatMessage,
 } from "../services/providerChats";
+import { connectChatSocket, emitRealtimeMessage, emitTypingStatus, joinConversationRoom } from "../services/socket";
 import { getProviderBookings, updateProviderBookingStatus } from "../services/providerBookings";
 import { getProviderProfile, updateProviderProfile } from "../services/providerProfile";
 import { validateServiceForm } from "./provider/serviceForm";
@@ -50,6 +51,17 @@ const toIsoDate = (value) => {
   const month = String(value.getMonth() + 1).padStart(2, "0");
   const day = String(value.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
+};
+
+const mergeProviderChat = (items, nextChat) => {
+  if (!nextChat?.id) {
+    return items;
+  }
+
+  const withoutChat = items.filter((chat) => chat.id !== nextChat.id);
+  return [nextChat, ...withoutChat].sort((left, right) =>
+    String(right.lastTimestamp || "").localeCompare(String(left.lastTimestamp || ""))
+  );
 };
 
 const ProviderDashboard = () => {
@@ -103,6 +115,15 @@ const ProviderDashboard = () => {
   const [loadingChats, setLoadingChats] = useState(false);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [chatFeedback, setChatFeedback] = useState({ type: "", text: "" });
+  const [typingLabel, setTypingLabel] = useState("");
+  const [activeClientOnline, setActiveClientOnline] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const socketRef = useRef(null);
+  const joinedChatIdsRef = useRef(new Set());
+  const typingTimeoutRef = useRef(null);
+  const stopTypingTimeoutRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const activeChatIdRef = useRef(null);
 
   useEffect(() => {
     setSidebarOpen(false);
@@ -266,6 +287,15 @@ const ProviderDashboard = () => {
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
 
   useEffect(() => {
+    activeChatIdRef.current = activeChatId;
+    setActiveClientOnline(false);
+  }, [activeChatId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [activeChat?.messages, typingLabel]);
+
+  useEffect(() => {
     if (!activeChatId || !activeChat?.unread) {
       return;
     }
@@ -284,6 +314,88 @@ const ProviderDashboard = () => {
         );
       });
   }, [activeChatId, activeChat?.unread]);
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      return undefined;
+    }
+
+    const socket = connectChatSocket(token);
+    socketRef.current = socket;
+
+    socket.on("socket:ready", () => {
+      joinedChatIdsRef.current.clear();
+      setSocketConnected(true);
+    });
+
+    socket.on("disconnect", () => {
+      setSocketConnected(false);
+    });
+
+    socket.on("provider_chat_updated", ({ chat }) => {
+      if (!chat) {
+        return;
+      }
+
+      setChats((prev) => mergeProviderChat(prev, chat));
+      if (chat.id === activeChatIdRef.current) {
+        setTypingLabel("");
+      }
+    });
+
+    socket.on("typing_status", ({ user_id, is_typing }) => {
+      if (String(user_id) !== String(activeChatIdRef.current)) {
+        return;
+      }
+
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+
+      setTypingLabel(is_typing ? "Le client ecrit..." : "");
+      if (is_typing) {
+        typingTimeoutRef.current = window.setTimeout(() => setTypingLabel(""), 1600);
+      }
+    });
+
+    socket.on("presence:update", ({ client_id, client_online }) => {
+      if (String(client_id) === String(activeChatIdRef.current)) {
+        setActiveClientOnline(Boolean(client_online));
+      }
+    });
+
+    socket.on("socket:error", ({ message }) => {
+      if (message) {
+        setChatFeedback({ type: "error", text: message });
+      }
+    });
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+      if (stopTypingTimeoutRef.current) {
+        window.clearTimeout(stopTypingTimeoutRef.current);
+      }
+      socket.removeAllListeners();
+      socket.disconnect();
+      socketRef.current = null;
+      setSocketConnected(false);
+      joinedChatIdsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!socketRef.current || !socketConnected || !activeChatId) {
+      return;
+    }
+
+    if (!joinedChatIdsRef.current.has(activeChatId)) {
+      joinConversationRoom(socketRef.current, activeChatId);
+      joinedChatIdsRef.current.add(activeChatId);
+    }
+  }, [activeChatId, socketConnected]);
 
   const filteredReservations = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
@@ -879,32 +991,55 @@ const ProviderDashboard = () => {
     setSendingMessage(true);
     setChatFeedback({ type: "", text: "" });
     setMessageDraft("");
+    emitTypingStatus(socketRef.current, activeChatId, false);
 
     try {
-      const response = await sendProviderChatMessage(activeChatId, content);
-      const updatedChat = response.chat;
-
-      if (updatedChat) {
-        setChats((prev) => {
-          const withoutChat = prev.filter((chat) => chat.id !== updatedChat.id);
-          return [updatedChat, ...withoutChat];
-        });
-        setActiveChatId(updatedChat.id);
+      const socketResponse = await emitRealtimeMessage(socketRef.current, activeChatId, content);
+      if (!socketResponse?.success) {
+        throw new Error(socketResponse?.message || "Impossible d'envoyer ce message.");
       }
 
       setChatFeedback({
         type: "success",
-        text: response.message || "Message envoye avec succes.",
+        text: socketResponse.message || "Message envoye avec succes.",
       });
-    } catch (error) {
-      setMessageDraft(content);
-      setChatFeedback({
-        type: "error",
-        text: error.response?.data?.message || "Impossible d'envoyer ce message.",
-      });
+    } catch (socketError) {
+      try {
+        const response = await sendProviderChatMessage(activeChatId, content);
+        if (response.chat) {
+          setChats((prev) => mergeProviderChat(prev, response.chat));
+        }
+        setChatFeedback({
+          type: "success",
+          text: response.message || "Message envoye avec succes.",
+        });
+      } catch (error) {
+        setMessageDraft(content);
+        setChatFeedback({
+          type: "error",
+          text: error.response?.data?.message || socketError.message || "Impossible d'envoyer ce message.",
+        });
+      }
     } finally {
       setSendingMessage(false);
     }
+  };
+
+  const handleMessageDraftChange = (event) => {
+    const nextValue = event.target.value;
+    setMessageDraft(nextValue);
+
+    if (!activeChatId) {
+      return;
+    }
+
+    emitTypingStatus(socketRef.current, activeChatId, Boolean(nextValue.trim()));
+    if (stopTypingTimeoutRef.current) {
+      window.clearTimeout(stopTypingTimeoutRef.current);
+    }
+    stopTypingTimeoutRef.current = window.setTimeout(() => {
+      emitTypingStatus(socketRef.current, activeChatId, false);
+    }, 1100);
   };
 
   const openChat = async (chatId) => {
@@ -913,10 +1048,16 @@ const ProviderDashboard = () => {
     }
 
     setActiveChatId(chatId);
+    setTypingLabel("");
     setChatFeedback({ type: "", text: "" });
     setChats((prev) =>
       prev.map((chat) => (chat.id === chatId ? { ...chat, unread: 0 } : chat))
     );
+
+    if (socketRef.current && !joinedChatIdsRef.current.has(chatId)) {
+      joinConversationRoom(socketRef.current, chatId);
+      joinedChatIdsRef.current.add(chatId);
+    }
 
     try {
       const [chatResponse, readResponse] = await Promise.all([
@@ -925,13 +1066,7 @@ const ProviderDashboard = () => {
       ]);
       const updatedChat = readResponse.chat || chatResponse.chat;
       if (updatedChat) {
-        setChats((prev) => {
-          const exists = prev.some((chat) => chat.id === updatedChat.id);
-          if (!exists) {
-            return [updatedChat, ...prev];
-          }
-          return prev.map((chat) => (chat.id === updatedChat.id ? updatedChat : chat));
-        });
+        setChats((prev) => mergeProviderChat(prev, updatedChat));
       }
     } catch (error) {
       setChatFeedback({
@@ -1061,11 +1196,15 @@ const ProviderDashboard = () => {
             activeChatId={activeChatId}
             onOpenChat={openChat}
             messageDraft={messageDraft}
-            onMessageDraftChange={(event) => setMessageDraft(event.target.value)}
+            onMessageDraftChange={handleMessageDraftChange}
             onSendMessage={sendMessage}
             loadingChats={loadingChats}
             sendingMessage={sendingMessage}
             chatFeedback={chatFeedback}
+            typingLabel={typingLabel}
+            activePresenceLabel={activeClientOnline ? "En ligne" : "Hors ligne"}
+            messagesEndRef={messagesEndRef}
+            onMessageDraftBlur={() => emitTypingStatus(socketRef.current, activeChatId, false)}
           />
         );
       default:

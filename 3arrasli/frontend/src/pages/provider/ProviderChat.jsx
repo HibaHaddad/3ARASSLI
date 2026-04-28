@@ -11,6 +11,10 @@ const ProviderChat = ({
   loadingChats,
   sendingMessage,
   chatFeedback,
+  typingLabel,
+  activePresenceLabel,
+  messagesEndRef,
+  onMessageDraftBlur,
 }) => {
   const hasChats = chats.length > 0;
   const hasMessages = Boolean(activeChat?.messages?.length);
@@ -75,9 +79,9 @@ const ProviderChat = ({
               <div>
                 <small>Conversation client</small>
                 <h3>{activeChat.client}</h3>
-                <p>{activeChat.subject}</p>
+                <p>{typingLabel || activeChat.subject}</p>
               </div>
-              <span className="provider-status validated">En ligne</span>
+              <span className="provider-status validated">{activePresenceLabel || "Hors ligne"}</span>
             </div>
 
             {chatFeedback?.text ? (
@@ -106,6 +110,7 @@ const ProviderChat = ({
                   {message.time ? <span>{message.time}</span> : null}
                 </div>
               ))}
+              <div ref={messagesEndRef} />
             </div>
 
             <form className="provider-chat-form" onSubmit={onSendMessage}>
@@ -114,6 +119,7 @@ const ProviderChat = ({
                 placeholder="Ecrire un message..."
                 value={messageDraft}
                 onChange={onMessageDraftChange}
+                onBlur={onMessageDraftBlur}
                 disabled={sendingMessage}
               />
               <button type="submit" className="provider-primary-btn" disabled={!canSend}>

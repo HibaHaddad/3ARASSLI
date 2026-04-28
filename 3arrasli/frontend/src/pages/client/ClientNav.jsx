@@ -4,6 +4,7 @@ import { clearStoredUser } from "../../services/auth";
 
 const links = [
   { to: "/client", label: "Accueil" },
+  { to: "/client/profile", label: "Profil" },
   { to: "/client/search", label: "Recherche" },
   { to: "/client/reservations", label: "Reservations" },
   { to: "/client/favorites", label: "Favoris" },

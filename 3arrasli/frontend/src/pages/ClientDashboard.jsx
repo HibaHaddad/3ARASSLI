@@ -7,7 +7,6 @@ import "../Home.css";
 import "./client.css";
 import ClientNav from "./client/ClientNav";
 import ServiceCard from "./client/ServiceCard";
-import ServiceModal from "./client/ServiceModal";
 import { cities, emptyFilters, serviceTypes, toSearchQuery } from "./client/clientData";
 
 const ClientDashboard = () => {
@@ -17,7 +16,6 @@ const ClientDashboard = () => {
 
   const [filters, setFilters] = useState(emptyFilters);
   const [services, setServices] = useState([]);
-  const [selectedService, setSelectedService] = useState(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -57,9 +55,6 @@ const ClientDashboard = () => {
         setMessage("Prestataire ajoute a vos favoris.");
       }
       await loadServices();
-      setSelectedService((prev) =>
-        prev && prev.id === service.id ? { ...prev, is_favorite: !prev.is_favorite } : prev
-      );
     } catch (err) {
       setError(err.response?.data?.message || "Action favoris impossible.");
     }
@@ -179,7 +174,7 @@ const ClientDashboard = () => {
                 <ServiceCard
                   key={service.id}
                   service={service}
-                  onOpen={setSelectedService}
+                  onOpen={(selectedService) => navigate(`/client/provider/${selectedService.id}`)}
                   onFavorite={toggleFavorite}
                 />
               ))}
@@ -187,12 +182,6 @@ const ClientDashboard = () => {
           </div>
         </section>
       </main>
-
-      <ServiceModal
-        service={selectedService}
-        onClose={() => setSelectedService(null)}
-        onFavorite={toggleFavorite}
-      />
     </div>
   );
 };

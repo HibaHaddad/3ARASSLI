@@ -1,10 +1,32 @@
 .client-page {
+  --client-surface: rgba(255, 255, 255, 0.82);
+  --client-surface-strong: rgba(255, 252, 249, 0.94);
+  --client-border: rgba(117, 66, 84, 0.12);
+  --client-border-strong: rgba(132, 73, 92, 0.22);
+  --client-shadow-soft: 0 22px 56px rgba(87, 45, 59, 0.1);
+  --client-shadow-medium: 0 28px 72px rgba(87, 45, 59, 0.14);
+  --client-shadow-strong: 0 36px 100px rgba(73, 35, 50, 0.18);
+  --client-gold: #cfa35b;
+  --client-text: #492735;
+  --client-text-soft: rgba(82, 49, 61, 0.72);
+  position: relative;
   min-height: 100vh;
-  color: #492735;
+  color: var(--client-text);
   background:
     radial-gradient(circle at 12% 5%, rgba(248, 207, 217, 0.38), transparent 26%),
     radial-gradient(circle at 84% 12%, rgba(230, 194, 128, 0.28), transparent 24%),
     linear-gradient(180deg, #fff8f7 0%, #fff4ef 48%, #fffaf6 100%);
+}
+
+.client-page::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.45;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), transparent 36%),
+    radial-gradient(circle at top right, rgba(214, 176, 97, 0.08), transparent 22%);
 }
 
 .client-page * {
@@ -30,6 +52,7 @@
 
 .client-page-main {
   padding-top: 82px;
+  animation: clientPageEnter 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .client-site-nav {
@@ -39,26 +62,33 @@
   align-items: center;
   justify-content: center;
   flex-wrap: wrap;
-  gap: 10px;
-  margin-bottom: 58px;
+  gap: 12px;
+  margin-bottom: 62px;
 }
 
 .client-site-nav a,
 .client-site-nav button {
-  min-height: 42px;
+  min-height: 46px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border: 1px solid rgba(117, 66, 84, 0.13);
+  border: 1px solid rgba(117, 66, 84, 0.14);
   border-radius: 999px;
-  padding: 0 17px;
+  padding: 0 18px;
   color: #6f394c;
   text-decoration: none;
   font-weight: 780;
-  background: rgba(255, 255, 255, 0.74);
-  backdrop-filter: blur(14px);
+  letter-spacing: 0.01em;
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: 0 10px 30px rgba(92, 47, 63, 0.08);
+  backdrop-filter: blur(18px);
   cursor: pointer;
-  transition: transform 260ms ease, background 260ms ease, border-color 260ms ease, color 260ms ease;
+  transition:
+    transform 260ms ease,
+    background 260ms ease,
+    border-color 260ms ease,
+    color 260ms ease,
+    box-shadow 260ms ease;
 }
 
 .client-site-nav.light a,
@@ -71,10 +101,11 @@
 .client-site-nav a:hover,
 .client-site-nav button:hover,
 .client-site-nav a.active {
-  transform: translateY(-2px);
+  transform: translateY(-3px);
   color: #fff;
   border-color: rgba(119, 61, 81, 0.28);
   background: linear-gradient(135deg, #693448 0%, #b77063 68%, #d6b061 100%);
+  box-shadow: 0 18px 34px rgba(107, 53, 72, 0.22);
 }
 
 .client-site-nav.light a:hover,
@@ -87,15 +118,23 @@
 .client-page-hero {
   position: relative;
   overflow: hidden;
-  padding: 58px 0 46px;
+  padding: 64px 0 52px;
   background:
     radial-gradient(circle at 12% 10%, rgba(249, 211, 219, 0.44), transparent 26%),
     radial-gradient(circle at 86% 20%, rgba(226, 193, 128, 0.25), transparent 26%),
     linear-gradient(180deg, #fff9f7 0%, #fff2ee 100%);
 }
 
+.client-page-hero::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(132, 73, 92, 0.18), transparent);
+}
+
 .client-page-hero.compact {
-  padding-top: 52px;
+  padding-top: 58px;
 }
 
 .client-page-heading {
@@ -103,25 +142,26 @@
 }
 
 .client-page-heading h1 {
-  margin: 12px 0 14px;
+  margin: 14px 0 18px;
   color: #432431;
-  font-size: clamp(2.7rem, 7vw, 6rem);
-  line-height: 0.94;
-  letter-spacing: -0.055em;
+  font-size: clamp(2.9rem, 7vw, 6.2rem);
+  line-height: 0.9;
+  letter-spacing: -0.06em;
+  text-wrap: balance;
 }
 
 .client-page-heading p {
   max-width: 70ch;
   margin: 0;
-  color: rgba(82, 49, 61, 0.72);
-  font-size: 1.06rem;
-  line-height: 1.85;
+  color: rgba(82, 49, 61, 0.76);
+  font-size: 1.08rem;
+  line-height: 1.92;
 }
 
 .client-hero {
   position: relative;
   min-height: 92vh;
-  padding: 118px 0 70px;
+  padding: 128px 0 82px;
   overflow: hidden;
 }
 
@@ -183,6 +223,11 @@
   background: rgba(255, 251, 248, 0.98);
   box-shadow: 0 42px 120px rgba(34, 13, 23, 0.34);
   animation: clientModalIn 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.client-service-page-card {
+  max-height: none;
+  margin: 0 auto;
 }
 
 .client-modal-close {
@@ -268,7 +313,7 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
   align-items: end;
-  gap: 44px;
+  gap: 54px;
 }
 
 .client-hero-copy {
@@ -277,19 +322,21 @@
 }
 
 .client-hero-copy h1 {
-  margin: 18px 0 22px;
+  margin: 20px 0 24px;
   max-width: 860px;
-  font-size: clamp(3rem, 7vw, 6.8rem);
-  line-height: 0.92;
+  font-size: clamp(3.2rem, 7vw, 7rem);
+  line-height: 0.89;
   letter-spacing: -0.055em;
+  text-wrap: balance;
+  text-shadow: 0 12px 36px rgba(34, 14, 24, 0.22);
 }
 
 .client-hero-copy p {
   max-width: 62ch;
   margin: 0;
   color: rgba(255, 250, 246, 0.9);
-  font-size: 1.08rem;
-  line-height: 1.9;
+  font-size: 1.1rem;
+  line-height: 1.95;
 }
 
 .client-hero-actions {
@@ -301,15 +348,15 @@
 
 .client-hero-card {
   min-height: 340px;
-  padding: 28px;
+  padding: 30px;
   border: 1px solid rgba(255, 255, 255, 0.46);
-  border-radius: 8px;
+  border-radius: 22px;
   color: #fffaf8;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.22), rgba(255, 255, 255, 0.1)),
     rgba(82, 35, 51, 0.38);
-  box-shadow: 0 34px 80px rgba(42, 17, 27, 0.22);
-  backdrop-filter: blur(22px);
+  box-shadow: 0 34px 90px rgba(42, 17, 27, 0.26);
+  backdrop-filter: blur(24px);
   animation: clientFloat 7s ease-in-out infinite;
 }
 
@@ -333,22 +380,24 @@
 }
 
 .client-mini-stats span {
-  padding: 11px 13px;
+  padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.25);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.14);
 }
 
 .client-search-card {
   position: relative;
   z-index: 2;
   margin-top: 52px;
-  padding: 24px;
-  border: 1px solid rgba(128, 67, 86, 0.12);
-  border-radius: 8px;
-  background: rgba(255, 251, 248, 0.94);
-  box-shadow: 0 30px 90px rgba(86, 44, 59, 0.18);
-  backdrop-filter: blur(18px);
+  padding: 28px;
+  border: 1px solid rgba(128, 67, 86, 0.11);
+  border-radius: 26px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 248, 244, 0.92)),
+    rgba(255, 251, 248, 0.94);
+  box-shadow: 0 34px 100px rgba(86, 44, 59, 0.16);
+  backdrop-filter: blur(22px);
 }
 
 .client-search-heading {
@@ -361,11 +410,12 @@
 
 .client-search-heading h2 {
   max-width: 650px;
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   color: #482735;
-  font-size: clamp(1.6rem, 3vw, 2.6rem);
-  line-height: 1.05;
-  letter-spacing: -0.035em;
+  font-size: clamp(1.7rem, 3vw, 2.75rem);
+  line-height: 1;
+  letter-spacing: -0.04em;
+  text-wrap: balance;
 }
 
 .client-search-fields {
@@ -381,10 +431,10 @@
 
 .client-field span {
   color: rgba(84, 47, 60, 0.72);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.13em;
+  letter-spacing: 0.16em;
 }
 
 .client-field select,
@@ -396,12 +446,13 @@
 .client-textarea,
 .provider-chat-form input {
   width: 100%;
-  min-height: 52px;
-  border: 1px solid rgba(116, 65, 82, 0.15);
-  border-radius: 8px;
-  padding: 0 15px;
+  min-height: 54px;
+  border: 1px solid rgba(116, 65, 82, 0.13);
+  border-radius: 16px;
+  padding: 0 16px;
   color: #4a2735;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   outline: none;
   transition: border-color 220ms ease, box-shadow 220ms ease, transform 220ms ease;
 }
@@ -421,11 +472,11 @@
 .client-search-actions {
   display: flex;
   align-items: end;
-  gap: 9px;
+  gap: 10px;
 }
 
 .client-section {
-  padding: 76px 0;
+  padding: 88px 0;
 }
 
 .client-results-section {
@@ -437,16 +488,17 @@
   align-items: end;
   justify-content: space-between;
   gap: 28px;
-  margin-bottom: 28px;
+  margin-bottom: 34px;
 }
 
 .client-section-head h2 {
   max-width: 720px;
-  margin: 8px 0 0;
+  margin: 10px 0 0;
   color: #482735;
-  font-size: clamp(2rem, 4vw, 4rem);
-  line-height: 0.98;
+  font-size: clamp(2.1rem, 4vw, 4.1rem);
+  line-height: 0.94;
   letter-spacing: -0.048em;
+  text-wrap: balance;
 }
 
 .client-section-head p {
@@ -459,22 +511,42 @@
 .client-service-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
+  gap: 22px;
 }
 
 .client-service-card {
+  position: relative;
   overflow: hidden;
-  border: 1px solid rgba(119, 66, 84, 0.11);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 20px 48px rgba(87, 45, 59, 0.11);
-  transition: transform 280ms ease, box-shadow 280ms ease, border-color 280ms ease;
+  border: 1px solid rgba(119, 66, 84, 0.1);
+  border-radius: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 249, 245, 0.88));
+  box-shadow: 0 20px 52px rgba(87, 45, 59, 0.1);
+  transition:
+    transform 320ms ease,
+    box-shadow 320ms ease,
+    border-color 320ms ease,
+    background 320ms ease;
+}
+
+.client-service-card::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.18), transparent 36%);
+  transition: opacity 320ms ease;
 }
 
 .client-service-card:hover {
-  transform: translateY(-8px);
+  transform: translateY(-10px);
   border-color: rgba(137, 74, 94, 0.22);
-  box-shadow: 0 28px 68px rgba(87, 45, 59, 0.16);
+  box-shadow: 0 34px 86px rgba(87, 45, 59, 0.16);
+}
+
+.client-service-card:hover::after {
+  opacity: 1;
 }
 
 .client-service-image {
@@ -510,15 +582,16 @@
   position: absolute;
   left: 14px;
   bottom: 14px;
-  padding: 8px 12px;
+  padding: 9px 13px;
   border-radius: 999px;
   color: #fffaf7;
   background: rgba(69, 33, 47, 0.72);
   backdrop-filter: blur(12px);
+  box-shadow: 0 12px 24px rgba(27, 10, 18, 0.18);
 }
 
 .client-service-content {
-  padding: 19px;
+  padding: 22px;
 }
 
 .client-service-meta,
@@ -540,20 +613,22 @@
 
 .client-service-meta strong {
   color: #7c3f52;
+  font-size: 1rem;
 }
 
 .client-service-content h3 {
-  margin: 14px 0 9px;
+  margin: 16px 0 10px;
   color: #442431;
-  font-size: 1.32rem;
-  line-height: 1.18;
+  font-size: 1.42rem;
+  line-height: 1.12;
+  letter-spacing: -0.02em;
 }
 
 .client-service-content p {
   min-height: 72px;
-  margin: 0 0 16px;
+  margin: 0 0 18px;
   color: rgba(82, 49, 61, 0.72);
-  line-height: 1.65;
+  line-height: 1.72;
 }
 
 .client-service-footer {
@@ -568,21 +643,29 @@
   font-weight: 800;
   background: transparent;
   cursor: pointer;
+  transition: color 220ms ease, transform 220ms ease;
+}
+
+.client-service-footer button:hover {
+  color: #5c2839;
+  transform: translateY(-1px);
 }
 
 .client-card-action {
   width: 100%;
-  min-height: 46px;
-  margin-top: 16px;
-  border-radius: 8px;
+  min-height: 48px;
+  margin-top: 18px;
+  border-radius: 16px;
   color: #fff;
   background: linear-gradient(135deg, #6a3547, #b67064 68%, #d5ad62);
-  transition: transform 220ms ease, box-shadow 220ms ease;
+  box-shadow: 0 16px 32px rgba(100, 48, 65, 0.16);
+  transition: transform 220ms ease, box-shadow 220ms ease, filter 220ms ease;
 }
 
 .client-card-action:hover {
   transform: translateY(-2px);
-  box-shadow: 0 16px 34px rgba(100, 48, 65, 0.18);
+  box-shadow: 0 20px 40px rgba(100, 48, 65, 0.22);
+  filter: saturate(1.06);
 }
 
 .client-detail-section {
@@ -628,9 +711,9 @@
 .client-detail-card {
   padding: 30px;
   border: 1px solid rgba(117, 66, 84, 0.12);
-  border-radius: 8px;
+  border-radius: 24px;
   background: rgba(255, 255, 255, 0.88);
-  box-shadow: 0 26px 70px rgba(86, 44, 59, 0.13);
+  box-shadow: 0 30px 78px rgba(86, 44, 59, 0.14);
 }
 
 .client-detail-card h2 {
@@ -661,9 +744,10 @@
 }
 
 .client-detail-list div {
-  padding: 14px;
-  border-radius: 8px;
-  background: #fff7f4;
+  padding: 16px;
+  border: 1px solid rgba(117, 66, 84, 0.08);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fffaf7, #fff5f1);
 }
 
 .client-detail-list dt {
@@ -689,9 +773,11 @@
 
 .client-booking-box {
   margin-top: 24px;
-  padding: 18px;
-  border-radius: 8px;
-  background: linear-gradient(180deg, #fff9f6, #fff2ed);
+  padding: 22px;
+  border: 1px solid rgba(117, 66, 84, 0.08);
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fffaf7, #fff2ed);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .client-booking-box h3 {
@@ -729,9 +815,9 @@
 .client-tool-card,
 .client-panel {
   border: 1px solid rgba(117, 66, 84, 0.12);
-  border-radius: 8px;
+  border-radius: 24px;
   background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 20px 48px rgba(87, 45, 59, 0.1);
+  box-shadow: var(--client-shadow-soft);
 }
 
 .client-reservation-card {
@@ -758,7 +844,9 @@
 
 .client-empty-state {
   grid-column: 1 / -1;
-  padding: 26px;
+  padding: 30px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 247, 243, 0.9));
 }
 
 .client-empty-state h3 {
@@ -813,7 +901,7 @@
 }
 
 .client-planner-card {
-  padding: 22px;
+  padding: 24px;
 }
 
 .client-planner-form {
@@ -836,19 +924,20 @@
   gap: 12px;
   min-height: 58px;
   border: 1px solid rgba(117, 66, 84, 0.1);
-  border-radius: 8px;
-  padding: 12px 14px;
+  border-radius: 16px;
+  padding: 13px 15px;
   color: #452431;
   text-align: left;
-  background: #fff9f6;
+  background: linear-gradient(180deg, #fffaf7, #fff4ef);
   cursor: pointer;
-  transition: transform 220ms ease, border-color 220ms ease;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease;
 }
 
 .client-planner-list button:hover,
 .client-planner-item:hover {
   transform: translateY(-2px);
   border-color: rgba(137, 74, 94, 0.22);
+  box-shadow: 0 16px 30px rgba(92, 47, 63, 0.08);
 }
 
 .client-planner-list button.completed span {
@@ -902,17 +991,23 @@
 }
 
 .client-btn {
-  min-height: 46px;
+  min-height: 48px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
   border-radius: 999px;
-  padding: 0 19px;
+  padding: 0 22px;
   font-weight: 850;
+  letter-spacing: 0.01em;
   text-decoration: none;
   cursor: pointer;
-  transition: transform 220ms ease, box-shadow 220ms ease, background 220ms ease;
+  transition:
+    transform 220ms ease,
+    box-shadow 220ms ease,
+    background 220ms ease,
+    border-color 220ms ease,
+    filter 220ms ease;
 }
 
 .client-btn:hover {
@@ -922,19 +1017,29 @@
 .client-btn-primary {
   color: #fff;
   background: linear-gradient(135deg, #693448 0%, #b77063 58%, #d6b061 100%);
-  box-shadow: 0 16px 34px rgba(91, 42, 58, 0.2);
+  box-shadow: 0 18px 38px rgba(91, 42, 58, 0.22);
 }
 
 .client-btn-soft {
   color: #71384c;
-  background: rgba(255, 244, 247, 0.9);
+  background: rgba(255, 244, 247, 0.94);
   border: 1px solid rgba(117, 66, 84, 0.16);
+  box-shadow: 0 10px 24px rgba(92, 47, 63, 0.06);
 }
 
 .client-btn-ghost {
   color: #71384c;
-  background: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.74);
   border: 1px solid rgba(117, 66, 84, 0.14);
+  box-shadow: 0 10px 24px rgba(92, 47, 63, 0.06);
+}
+
+.client-btn-primary:hover,
+.client-btn-soft:hover,
+.client-btn-ghost:hover,
+.provider-primary-btn:hover {
+  box-shadow: 0 22px 42px rgba(91, 42, 58, 0.16);
+  filter: saturate(1.05);
 }
 
 .client-message,
@@ -942,23 +1047,27 @@
 .client-loading {
   width: min(1180px, 100%);
   margin: 0 0 18px;
-  border-radius: 8px;
-  padding: 13px 15px;
+  border-radius: 16px;
+  padding: 14px 16px;
+  border: 1px solid transparent;
 }
 
 .client-message {
   color: #326a3b;
   background: rgba(237, 255, 239, 0.9);
+  border-color: rgba(87, 149, 94, 0.16);
 }
 
 .client-error {
   color: #8a2e45;
   background: rgba(255, 235, 240, 0.92);
+  border-color: rgba(179, 69, 102, 0.14);
 }
 
 .client-loading {
   color: #704158;
   background: rgba(255, 255, 255, 0.66);
+  border-color: rgba(117, 66, 84, 0.1);
 }
 
 .client-section-label,
@@ -1085,7 +1194,7 @@
 }
 
 .client-panel {
-  padding: 24px;
+  padding: 26px;
 }
 
 .client-panel h2 {
@@ -1154,6 +1263,8 @@
   grid-template-columns: 330px minmax(0, 1fr);
   min-height: 620px;
   overflow: hidden;
+  border-radius: 28px;
+  box-shadow: var(--client-shadow-medium);
 }
 
 .provider-chat-sidebar,
@@ -1163,7 +1274,7 @@
 
 .provider-chat-sidebar {
   border-right: 1px solid rgba(117, 66, 84, 0.1);
-  background: #fff9f6;
+  background: linear-gradient(180deg, #fffaf8, #fff4ef);
 }
 
 .provider-panel-head h3,
@@ -1190,16 +1301,24 @@
   gap: 10px;
   align-items: center;
   border: 1px solid rgba(117, 66, 84, 0.1);
-  border-radius: 8px;
+  border-radius: 18px;
   padding: 12px;
   text-align: left;
-  background: #fff;
+  background: rgba(255, 255, 255, 0.8);
   cursor: pointer;
+  transition: transform 220ms ease, border-color 220ms ease, box-shadow 220ms ease, background 220ms ease;
+}
+
+.provider-chat-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(139, 72, 94, 0.22);
+  box-shadow: 0 16px 30px rgba(92, 47, 63, 0.08);
 }
 
 .provider-chat-item.active {
   border-color: rgba(139, 72, 94, 0.34);
-  background: #fff0f0;
+  background: linear-gradient(180deg, #fff4f4, #ffefef);
+  box-shadow: 0 18px 34px rgba(114, 53, 72, 0.1);
 }
 
 .provider-chat-avatar {
@@ -1234,7 +1353,7 @@
   display: grid;
   grid-template-rows: auto 1fr auto;
   gap: 16px;
-  background: #fff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(255, 250, 247, 0.94));
 }
 
 .provider-chat-window-head {
@@ -1257,15 +1376,16 @@
   gap: 10px;
   overflow: auto;
   padding: 14px;
-  border-radius: 8px;
-  background: #fff9f6;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #fffaf8, #fff4ef);
 }
 
 .provider-message-bubble {
   max-width: 74%;
-  padding: 12px 14px;
-  border-radius: 8px;
+  padding: 13px 15px;
+  border-radius: 18px;
   line-height: 1.55;
+  box-shadow: 0 10px 24px rgba(92, 47, 63, 0.08);
 }
 
 .provider-message-bubble.client {
@@ -1286,14 +1406,16 @@
 }
 
 .provider-primary-btn {
-  min-height: 52px;
+  min-height: 54px;
   border: 0;
   border-radius: 999px;
-  padding: 0 18px;
+  padding: 0 20px;
   color: #fff;
   font-weight: 850;
   background: linear-gradient(135deg, #693448, #b77063 65%, #d6b061);
   cursor: pointer;
+  box-shadow: 0 18px 34px rgba(91, 42, 58, 0.2);
+  transition: transform 220ms ease, box-shadow 220ms ease, filter 220ms ease;
 }
 
 @keyframes clientFloat {
@@ -1326,6 +1448,31 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes clientPageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .client-page-main,
+  .client-hero-card,
+  .client-service-modal,
+  .client-service-card,
+  .client-btn,
+  .provider-primary-btn,
+  .provider-chat-item {
+    animation: none !important;
+    transition: none !important;
   }
 }
 
@@ -1379,6 +1526,17 @@
   .client-site-nav button {
     min-height: 40px;
     padding: 0 13px;
+  }
+
+  .client-search-card,
+  .client-reservation-card,
+  .client-empty-state,
+  .client-planner-card,
+  .client-panel,
+  .client-service-card,
+  .client-detail-card,
+  .client-hero-card {
+    border-radius: 20px;
   }
 
   .client-hero-copy h1 {

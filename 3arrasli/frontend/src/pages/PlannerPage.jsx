@@ -1,8 +1,6 @@
 import React, { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
 import api from "../services/api";
-import "./client.css";
-import ClientNav from "./client/ClientNav";
+import ClientPageLayout from "./client/ClientPageLayout";
 
 const defaultItems = [
   "Robe de mariee",
@@ -66,58 +64,48 @@ const PlannerPage = () => {
   };
 
   return (
-    <div className="client-page">
-      <Navbar />
-      <main className="client-page-main">
-        <section className="client-page-hero compact">
-          <div className="client-shell">
-            <ClientNav />
-            <div className="client-page-heading">
-              <span className="section-kicker">Wedding planner</span>
-              <h1>Votre carnet d'organisation.</h1>
-              <p>Ajoutez, suivez et finalisez les etapes de preparation dans une page simple et douce.</p>
-            </div>
+    <ClientPageLayout
+      kicker="Wedding planner"
+      title="Votre carnet d'organisation."
+      description="Ajoutez, suivez et finalisez les etapes de preparation dans une page simple et douce."
+    >
+      <section className="client-section client-planner-section">
+        <div className="client-shell client-planner-layout">
+          <div className="client-planner-copy">
+            <span className="section-kicker">Checklist</span>
+            <h2>Vos taches, votre rythme.</h2>
+            <p>Un outil d'organisation mariage clair, sans logique de tableau de bord.</p>
           </div>
-        </section>
 
-        <section className="client-section client-planner-section">
-          <div className="client-shell client-planner-layout">
-            <div className="client-planner-copy">
-              <span className="section-kicker">Checklist</span>
-              <h2>Vos taches, votre rythme.</h2>
-              <p>Un outil d'organisation mariage clair, sans logique de tableau de bord.</p>
-            </div>
-
-            <div className="client-planner-card">
+          <div className="client-planner-card">
             {message ? <p className="client-message">{message}</p> : null}
             {error ? <p className="client-error">{error}</p> : null}
 
-              <div className="client-planner-form">
-                <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nouvelle tache mariage" />
-                <button type="button" className="client-btn client-btn-primary" onClick={addItem}>
-                  Ajouter
-                </button>
-              </div>
+            <div className="client-planner-form">
+              <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nouvelle tache mariage" />
+              <button type="button" className="client-btn client-btn-primary" onClick={addItem}>
+                Ajouter
+              </button>
+            </div>
 
-              <div className="client-planner-list">
-                  {items.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      className={item.completed ? "completed" : ""}
-                      onClick={() => toggleItem(item)}
-                    >
-                      <span>{item.title}</span>
-                      <small>{item.completed ? "Terminee" : "A faire"}</small>
-                    </button>
-                  ))}
-                  {items.length === 0 ? <p>Aucune tache pour le moment.</p> : null}
-              </div>
+            <div className="client-planner-list">
+              {items.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={item.completed ? "completed" : ""}
+                  onClick={() => toggleItem(item)}
+                >
+                  <span>{item.title}</span>
+                  <small>{item.completed ? "Terminee" : "A faire"}</small>
+                </button>
+              ))}
+              {items.length === 0 ? <p>Aucune tache pour le moment.</p> : null}
             </div>
           </div>
-        </section>
-      </main>
-    </div>
+        </div>
+      </section>
+    </ClientPageLayout>
   );
 };
 
