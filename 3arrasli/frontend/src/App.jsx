@@ -14,6 +14,7 @@ import FavoritesPage from "./pages/FavoritesPage";
 import LoginPage from "./pages/LoginPage";
 import PlannerPage from "./pages/PlannerPage";
 import ProviderDashboard from "./pages/ProviderDashboard";
+import PublicSignaturePage from "./pages/PublicSignaturePage";
 import SignupPage from "./pages/SignupPage";
 import { getStoredUser, hasRole } from "./services/auth";
 
@@ -167,6 +168,7 @@ const App = () => {
           }
         />
         <Route path="/provider" element={<Navigate to="/prestataire" replace />} />
+        <Route path="/public/sign-contract" element={<PublicSignaturePage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

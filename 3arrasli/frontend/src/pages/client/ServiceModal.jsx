@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import api from "../../services/api";
 import ServiceDetailContent from "./ServiceDetailContent";
 
@@ -8,8 +9,12 @@ const ServiceModal = ({ service, onClose, onFavorite, onReserved }) => {
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (!service) {
+    const clearBodyLock = () => {
       document.body.classList.remove("client-modal-open");
+    };
+
+    if (!service) {
+      clearBodyLock();
       return undefined;
     }
 
@@ -23,7 +28,7 @@ const ServiceModal = ({ service, onClose, onFavorite, onReserved }) => {
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.classList.remove("client-modal-open");
+      clearBodyLock();
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [onClose, service]);
@@ -54,14 +59,14 @@ const ServiceModal = ({ service, onClose, onFavorite, onReserved }) => {
     }
   };
 
-  return (
-    <div className="client-modal-overlay" role="presentation" onMouseDown={onClose}>
+  return createPortal(
+    <div className="client-modal-overlay" role="presentation" onClick={onClose}>
       <article
         className="client-service-modal"
         role="dialog"
         aria-modal="true"
         aria-labelledby="client-service-modal-title"
-        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
         <button type="button" className="client-modal-close" aria-label="Fermer" onClick={onClose}>
           x
@@ -77,7 +82,8 @@ const ServiceModal = ({ service, onClose, onFavorite, onReserved }) => {
           onFavorite={onFavorite}
         />
       </article>
-    </div>
+    </div>,
+    document.body
   );
 };
 

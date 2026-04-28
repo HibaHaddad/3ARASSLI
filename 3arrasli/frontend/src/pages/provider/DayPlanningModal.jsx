@@ -1,4 +1,5 @@
 import React, { useEffect } from "react";
+import { createPortal } from "react-dom";
 import CalendarDay from "./CalendarDay";
 
 const DayPlanningModal = ({
@@ -40,7 +41,7 @@ const DayPlanningModal = ({
     return null;
   }
 
-  return (
+  return createPortal(
     <div className="provider-modal-overlay" role="presentation" onClick={onClose}>
       <div
         className="provider-modal-shell"
@@ -72,7 +73,8 @@ const DayPlanningModal = ({
           onBackToMonth={onBackToMonth}
         />
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

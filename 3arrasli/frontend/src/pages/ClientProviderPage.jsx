@@ -45,6 +45,137 @@ const cardElementOptions = {
   },
 };
 
+const weekDays = ["Lu", "Ma", "Me", "Je", "Ve", "Sa", "Di"];
+
+const toDateOnly = (value) => {
+  if (!value) {
+    return null;
+  }
+  return new Date(`${value}T00:00:00`);
+};
+
+const formatMonthLabel = (date) =>
+  date.toLocaleDateString("fr-FR", {
+    month: "long",
+    year: "numeric",
+  });
+
+const ReservationDateCalendar = ({ days, selectedDate, onSelectDate }) => {
+  const normalizedDays = useMemo(
+    () =>
+      (Array.isArray(days) ? days : [])
+        .map((day) => ({ ...day, parsedDate: toDateOnly(day.date) }))
+        .filter((day) => day.parsedDate instanceof Date && !Number.isNaN(day.parsedDate.getTime())),
+    [days]
+  );
+
+  const monthKeys = useMemo(() => {
+    const keys = normalizedDays.map((day) => `${day.parsedDate.getFullYear()}-${day.parsedDate.getMonth()}`);
+    return [...new Set(keys)];
+  }, [normalizedDays]);
+
+  const selectedParsed = toDateOnly(selectedDate);
+  const selectedMonthKey = selectedParsed ? `${selectedParsed.getFullYear()}-${selectedParsed.getMonth()}` : null;
+  const defaultMonthKey = selectedMonthKey && monthKeys.includes(selectedMonthKey) ? selectedMonthKey : monthKeys[0];
+  const [activeMonthKey, setActiveMonthKey] = useState(defaultMonthKey || "");
+
+  useEffect(() => {
+    if (!monthKeys.length) {
+      setActiveMonthKey("");
+      return;
+    }
+    if (!activeMonthKey || !monthKeys.includes(activeMonthKey)) {
+      setActiveMonthKey(defaultMonthKey || monthKeys[0]);
+    }
+  }, [activeMonthKey, defaultMonthKey, monthKeys]);
+
+  if (!monthKeys.length || !activeMonthKey) {
+    return <p className="client-calendar-empty">Aucune date disponible pour le moment.</p>;
+  }
+
+  const [yearText, monthText] = activeMonthKey.split("-");
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const monthStart = new Date(year, month, 1);
+  const monthEndDay = new Date(year, month + 1, 0).getDate();
+  const firstDayIndex = (monthStart.getDay() + 6) % 7;
+
+  const dayLookup = new Map(normalizedDays.map((day) => [day.date, day]));
+  const gridCells = [];
+  for (let i = 0; i < firstDayIndex; i += 1) {
+    gridCells.push({ type: "empty", key: `empty-${i}` });
+  }
+  for (let dayNumber = 1; dayNumber <= monthEndDay; dayNumber += 1) {
+    const dateObj = new Date(year, month, dayNumber);
+    const dateKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
+    const dayData = dayLookup.get(dateKey);
+    const isAvailable = Boolean(dayData?.available);
+    const isSelected = selectedDate === dateKey;
+    gridCells.push({
+      type: "date",
+      key: dateKey,
+      dateKey,
+      dayNumber,
+      isAvailable,
+      isSelected,
+    });
+  }
+
+  const monthIndex = monthKeys.indexOf(activeMonthKey);
+  const canGoPrev = monthIndex > 0;
+  const canGoNext = monthIndex < monthKeys.length - 1;
+
+  return (
+    <div className="client-calendar-wrap">
+      <div className="client-calendar-head">
+        <button
+          type="button"
+          className="client-calendar-nav"
+          onClick={() => canGoPrev && setActiveMonthKey(monthKeys[monthIndex - 1])}
+          disabled={!canGoPrev}
+          aria-label="Mois precedent"
+        >
+          &#10094;
+        </button>
+        <strong>{formatMonthLabel(monthStart)}</strong>
+        <button
+          type="button"
+          className="client-calendar-nav"
+          onClick={() => canGoNext && setActiveMonthKey(monthKeys[monthIndex + 1])}
+          disabled={!canGoNext}
+          aria-label="Mois suivant"
+        >
+          &#10095;
+        </button>
+      </div>
+
+      <div className="client-calendar-weekdays">
+        {weekDays.map((dayName) => (
+          <span key={dayName}>{dayName}</span>
+        ))}
+      </div>
+
+      <div className="client-calendar-grid">
+        {gridCells.map((cell) =>
+          cell.type === "empty" ? (
+            <span key={cell.key} className="client-calendar-cell-empty" aria-hidden="true" />
+          ) : (
+            <button
+              key={cell.key}
+              type="button"
+              className={`client-calendar-day ${cell.isSelected ? "active" : ""} ${cell.isAvailable ? "available" : "unavailable"}`}
+              onClick={() => cell.isAvailable && onSelectDate(cell.dateKey)}
+              disabled={!cell.isAvailable}
+            >
+              {cell.dayNumber}
+            </button>
+          )
+        )}
+      </div>
+    </div>
+  );
+};
+
 const ReservationFormBase = ({
   providerName,
   reservationAmount,
@@ -71,20 +202,11 @@ const ReservationFormBase = ({
 
     <label className="client-field">
       <span>Date</span>
-      <select
-        className="client-select"
-        value={reservationForm.date}
-        onChange={(event) => setReservationForm((prev) => ({ ...prev, date: event.target.value, start_time: "" }))}
-      >
-        <option value="">Choisir une date</option>
-        {availability.days
-          .filter((day) => day.available)
-          .map((day) => (
-            <option key={day.date} value={day.date}>
-              {day.label}
-            </option>
-          ))}
-      </select>
+      <ReservationDateCalendar
+        days={availability.days}
+        selectedDate={reservationForm.date}
+        onSelectDate={(date) => setReservationForm((prev) => ({ ...prev, date, start_time: "" }))}
+      />
     </label>
 
     <label className="client-field">

@@ -3,7 +3,6 @@ import { useSearchParams } from "react-router-dom";
 import api, { API_BASE_URL } from "../services/api";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ClientModal from "./client/ClientModal";
-import SignaturePad from "./client/SignaturePad";
 
 const ClientReservationsPage = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -12,8 +11,8 @@ const ClientReservationsPage = () => {
   const [message, setMessage] = useState("");
   const [signatureOpen, setSignatureOpen] = useState(false);
   const [selectedReservation, setSelectedReservation] = useState(null);
-  const [signatureData, setSignatureData] = useState("");
-  const [submitting, setSubmitting] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const [signatureToken, setSignatureToken] = useState("");
 
   const loadReservations = async () => {
     try {
@@ -69,33 +68,31 @@ const ClientReservationsPage = () => {
 
   const openSignatureModal = (reservation) => {
     setSelectedReservation(reservation);
-    setSignatureData("");
+    setShowQr(false);
+    setSignatureToken("");
     setSignatureOpen(true);
   };
 
-  const signReservation = async (event) => {
-    event.preventDefault();
+  const prepareSignatureQr = async () => {
     if (!selectedReservation) {
       return;
     }
-
-    setSubmitting(true);
-    setError("");
     try {
-      const response = await api.post(`/api/reservations/${selectedReservation.id}/sign`, { signature_data: signatureData });
-      setMessage(response.data.message || "Signature enregistree.");
-      setSignatureOpen(false);
-      setSelectedReservation(null);
-      setSignatureData("");
-      await loadReservations();
+      const response = await api.post(`/api/reservations/${selectedReservation.id}/signature-link`);
+      setSignatureToken(response.data.token || "");
+      setShowQr(true);
     } catch (err) {
-      setError(err.response?.data?.message || "Signature impossible.");
-    } finally {
-      setSubmitting(false);
+      setError(err.response?.data?.message || "Impossible de generer le lien de signature.");
     }
   };
 
   const paidCount = reservations.filter((reservation) => reservation.payment_status === "PAID").length;
+  const mobileSignUrl = signatureToken
+    ? `${window.location.origin}/public/sign-contract?token=${encodeURIComponent(signatureToken)}`
+    : "";
+  const mobileQrUrl = mobileSignUrl
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(mobileSignUrl)}`
+    : "";
 
   return (
     <ClientPageLayout
@@ -167,13 +164,18 @@ const ClientReservationsPage = () => {
       </section>
 
       <ClientModal open={signatureOpen} title="Signer le contrat" onClose={() => setSignatureOpen(false)}>
-        <form className="client-modal-form" onSubmit={signReservation}>
-          <p>La signature sera attachee a votre contrat et le PDF sera regenere.</p>
-          <SignaturePad onChange={setSignatureData} />
-          <button type="submit" className="client-btn client-btn-primary" disabled={submitting || !signatureData}>
-            {submitting ? "Signature..." : "Valider la signature"}
+        <div className="client-modal-form">
+          <p>La signature sur ordinateur est desactivee. Utilisez le telephone via QR.</p>
+          <button type="button" className="client-btn client-btn-ghost" onClick={prepareSignatureQr}>
+            Generer QR de signature
           </button>
-        </form>
+          {showQr && mobileQrUrl ? (
+            <div className="client-signature-qr">
+              <img src={mobileQrUrl} alt="QR code signature mobile" width="180" height="180" />
+              <p>Scannez ce QR pour signer sans vous reconnecter.</p>
+            </div>
+          ) : null}
+        </div>
       </ClientModal>
     </ClientPageLayout>
   );

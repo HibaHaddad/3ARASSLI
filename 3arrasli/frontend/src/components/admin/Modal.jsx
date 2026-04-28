@@ -1,11 +1,12 @@
 import React from "react";
+import { createPortal } from "react-dom";
 
 const Modal = ({ open, title, children, actions, onClose }) => {
   if (!open) {
     return null;
   }
 
-  return (
+  return createPortal(
     <div className="provider-modal-overlay" role="dialog" aria-modal="true" aria-label={title}>
       <div className="provider-modal-shell admin-modal-shell">
         <button type="button" className="provider-modal-close" onClick={onClose} aria-label="Fermer la fenetre">
@@ -21,7 +22,8 @@ const Modal = ({ open, title, children, actions, onClose }) => {
 
         <div className="admin-modal-actions">{actions}</div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 

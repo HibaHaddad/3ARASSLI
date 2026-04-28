@@ -1539,10 +1539,14 @@
 
 .provider-modal-overlay {
   position: fixed;
-  inset: 0;
-  z-index: 140;
-  display: grid;
-  place-items: center;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 28px;
   background:
     radial-gradient(circle at top right, rgba(241, 223, 186, 0.14), transparent 28%),
@@ -1554,7 +1558,9 @@
 .provider-modal-shell {
   position: relative;
   width: min(1080px, 100%);
-  max-height: min(90vh, 960px);
+  max-height: 90vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   border-radius: 36px;
   padding: 14px;
   background:
@@ -1635,16 +1641,18 @@
 }
 
 .provider-profile-task-overlay {
-  z-index: 180;
+  z-index: 1210;
 }
 
 .provider-profile-task-modal {
   position: relative;
   width: min(860px, 100%);
+  max-height: 90vh;
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   gap: 26px;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
   padding: 28px;
   border-radius: 34px;
   background:
@@ -2950,9 +2958,8 @@
 
   .provider-modal-shell {
     width: 100%;
-    height: 100vh;
-    max-height: 100vh;
-    border-radius: 0;
+    max-height: 90vh;
+    border-radius: 24px;
     padding: 10px;
   }
 
@@ -6944,10 +6951,14 @@
 
 .provider-booking-modal-overlay {
   position: fixed;
-  inset: 0;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
   z-index: 1000;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   background: rgba(64, 36, 47, 0.36);
   backdrop-filter: blur(12px);
@@ -6956,8 +6967,9 @@
 .provider-booking-modal {
   position: relative;
   width: min(920px, 100%);
-  max-height: min(88vh, 820px);
-  overflow: auto;
+  max-height: 90vh;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: grid;
   gap: 18px;
   padding: 28px;

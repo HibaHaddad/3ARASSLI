@@ -102,7 +102,7 @@ FRENCH_MONTHS = [
     "Decembre",
 ]
 STANDARD_WORKING_HOURS = STANDARD_SLOT_TIMES
-DEFAULT_ADVANCE_RATIO = 0.3
+DEFAULT_ADVANCE_RATIO = 0.5
 
 
 def get_frontend_base_url():
@@ -159,6 +159,251 @@ def write_simple_pdf(file_path, title, lines):
         stream_parts.append(f"({escape_pdf_text(line)}) Tj")
         first_line = False
     stream_parts.append("ET")
+    stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
+
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
+    ]
+
+    content = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(content))
+        content.extend(obj)
+
+    xref_offset = len(content)
+    content.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    content.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    content.extend(
+        (
+            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF"
+        ).encode("ascii")
+    )
+
+    with open(file_path, "wb") as pdf_file:
+        pdf_file.write(content)
+
+
+def write_invoice_pdf(file_path, invoice_data):
+    reservation_id = invoice_data.get("reservation_id")
+    reservation_date = str(invoice_data.get("reservation_date") or "--")
+    created_at = str(invoice_data.get("created_at") or datetime.utcnow().strftime("%Y-%m-%d %H:%M"))
+    client_name = str(invoice_data.get("client_name") or "Client")
+    provider_name = str(invoice_data.get("provider_name") or "Prestataire")
+    service_name = str(invoice_data.get("service_name") or "Service mariage")
+    location = str(invoice_data.get("location") or "Tunisie")
+    payment_status = str(invoice_data.get("payment_status") or "UNPAID")
+    total_amount_value = float(invoice_data.get("total_amount") or 0)
+    paid_amount_value = float(invoice_data.get("paid_amount") or 0)
+    remaining_amount_value = max(total_amount_value - paid_amount_value, 0)
+    total_amount_label = format_currency(total_amount_value)
+    paid_amount_label = format_currency(paid_amount_value)
+    remaining_amount_label = format_currency(remaining_amount_value)
+
+    stream_parts = []
+
+    def add(command):
+        stream_parts.append(command)
+
+    def text(x, y, value, size=11):
+        add("BT")
+        add(f"/F1 {size} Tf")
+        add(f"1 0 0 1 {x} {y} Tm")
+        add(f"({escape_pdf_text(value)}) Tj")
+        add("ET")
+
+    # Background header strip
+    add("0.12 0.20 0.33 rg")
+    add("0.12 0.20 0.33 RG")
+    add("40 760 515 52 re f")
+
+    # Header title and metadata
+    add("1 1 1 rg")
+    text(52, 790, "3ARRASLI", 18)
+    text(52, 772, "FACTURE OFFICIELLE", 11)
+    text(420, 790, f"Facture N° {reservation_id}", 10)
+    text(420, 774, f"Date: {created_at}", 10)
+
+    # Section labels
+    add("0.12 0.20 0.33 rg")
+    text(52, 735, "Facture de", 10)
+    text(300, 735, "Emise par", 10)
+
+    # Information blocks
+    add("0.95 0.96 0.98 rg")
+    add("0.85 0.88 0.92 RG")
+    add("40 656 250 74 re B")
+    add("295 656 260 74 re B")
+    add("0 0 0 rg")
+    text(52, 710, f"Client: {client_name}", 11)
+    text(52, 692, f"Date reservation: {reservation_date}", 10)
+    text(52, 676, f"Lieu: {location}", 10)
+
+    text(307, 710, f"Prestataire: {provider_name}", 11)
+    text(307, 692, "Plateforme: 3arrasli", 10)
+    text(307, 676, "Email: contact@3arrasli.tn", 10)
+
+    # Services table
+    add("0.12 0.20 0.33 rg")
+    add("0.12 0.20 0.33 RG")
+    add("40 620 515 26 re f")
+    add("1 1 1 rg")
+    text(52, 628, "Description", 10)
+    text(392, 628, "Montant", 10)
+
+    add("1 1 1 rg")
+    add("0.78 0.80 0.84 RG")
+    add("40 566 515 54 re B")
+    add("0 0 0 rg")
+    text(52, 596, service_name, 11)
+    text(52, 578, f"Reservation #{reservation_id} - Paiement {payment_status}", 9)
+    text(392, 588, total_amount_label, 12)
+
+    # Totals block
+    add("0.93 0.95 0.98 rg")
+    add("0.80 0.83 0.88 RG")
+    add("300 484 255 76 re B")
+    add("0 0 0 rg")
+    text(314, 542, "Montant total:", 10)
+    text(470, 542, total_amount_label, 10)
+    text(314, 526, "Somme payee:", 10)
+    text(470, 526, paid_amount_label, 10)
+    add("0.12 0.20 0.33 rg")
+    text(314, 504, "Reste a payer:", 12)
+    text(450, 504, remaining_amount_label, 12)
+
+    # Footer note
+    add("0 0 0 rg")
+    text(40, 470, "Merci pour votre confiance. Cette facture est generee automatiquement par 3arrasli.", 9)
+    text(40, 454, "Statut de paiement:", 9)
+    add("0.08 0.45 0.20 rg" if payment_status == "PAID" else "0.65 0.12 0.12 rg")
+    text(138, 454, payment_status, 9)
+
+    stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
+
+    objects = [
+        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
+        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+        f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
+    ]
+
+    content = bytearray(b"%PDF-1.4\n")
+    offsets = [0]
+    for obj in objects:
+        offsets.append(len(content))
+        content.extend(obj)
+
+    xref_offset = len(content)
+    content.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    content.extend(b"0000000000 65535 f \n")
+    for offset in offsets[1:]:
+        content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    content.extend(
+        (
+            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"startxref\n{xref_offset}\n%%EOF"
+        ).encode("ascii")
+    )
+
+    with open(file_path, "wb") as pdf_file:
+        pdf_file.write(content)
+
+
+def write_contract_pdf(file_path, contract_data):
+    reservation_id = contract_data.get("reservation_id")
+    created_at = str(contract_data.get("created_at") or datetime.utcnow().strftime("%Y-%m-%d %H:%M"))
+    reservation_date = str(contract_data.get("reservation_date") or "--")
+    client_name = str(contract_data.get("client_name") or "Client")
+    provider_name = str(contract_data.get("provider_name") or "Prestataire")
+    service_name = str(contract_data.get("service_name") or "Service mariage")
+    location = str(contract_data.get("location") or "Tunisie")
+    total_amount = format_currency(contract_data.get("total_amount") or 0)
+    paid_amount = format_currency(contract_data.get("paid_amount") or 0)
+    remaining_amount = format_currency(contract_data.get("remaining_amount") or 0)
+    signed_at = str(contract_data.get("signed_at") or "")
+    has_client_signature = bool(contract_data.get("has_client_signature"))
+
+    stream_parts = []
+
+    def add(command):
+        stream_parts.append(command)
+
+    def text(x, y, value, size=10):
+        add("BT")
+        add(f"/F1 {size} Tf")
+        add(f"1 0 0 1 {x} {y} Tm")
+        add(f"({escape_pdf_text(value)}) Tj")
+        add("ET")
+
+    add("0.17 0.22 0.32 rg")
+    add("40 776 515 38 re f")
+    add("1 1 1 rg")
+    text(52, 792, "CONTRAT DE PRESTATION - 3ARRASLI", 12)
+    text(400, 792, f"N° {reservation_id}", 10)
+
+    add("0 0 0 rg")
+    text(52, 758, f"Date d'emission: {created_at}", 9)
+    text(300, 758, f"Date de reservation: {reservation_date}", 9)
+
+    add("0.95 0.96 0.98 rg")
+    add("0.84 0.86 0.90 RG")
+    add("40 700 250 48 re B")
+    add("295 700 260 48 re B")
+    add("0 0 0 rg")
+    text(52, 730, "Partie Cliente", 10)
+    text(52, 714, client_name, 10)
+    text(307, 730, "Prestataire", 10)
+    text(307, 714, provider_name, 10)
+
+    text(52, 680, "Objet du contrat:", 10)
+    text(150, 680, service_name, 10)
+    text(52, 662, "Lieu de prestation:", 10)
+    text(150, 662, location, 10)
+
+    add("0.92 0.94 0.98 rg")
+    add("0.80 0.82 0.88 RG")
+    add("40 610 515 40 re B")
+    add("0 0 0 rg")
+    text(52, 634, f"Montant total: {total_amount}", 10)
+    text(230, 634, f"Somme payee: {paid_amount}", 10)
+    text(405, 634, f"Reste: {remaining_amount}", 10)
+
+    text(52, 588, "Clause 1 - Le prestataire s'engage a executer la prestation convenue selon la reservation validee.", 9)
+    text(52, 572, "Clause 2 - Le client confirme l'exactitude des informations et accepte les conditions de la prestation.", 9)
+    text(52, 556, "Clause 3 - En cas d'annulation, les montants deja verses suivent les conditions definies par la plateforme.", 9)
+    text(52, 540, "Clause 4 - Le contrat prend effet a la date de signature electronique du client.", 9)
+
+    # Signature zones
+    add("0.98 0.98 0.99 rg")
+    add("0.80 0.82 0.88 RG")
+    add("40 410 240 110 re B")
+    add("315 410 240 110 re B")
+    add("0 0 0 rg")
+    text(52, 500, "Signature Client", 10)
+    text(327, 500, "Signature Prestataire", 10)
+
+    if has_client_signature:
+        text(52, 474, "Signe electroniquement via espace client", 9)
+        text(52, 458, f"Date de signature: {signed_at}", 9)
+        text(52, 438, "Statut: VALIDE", 10)
+    else:
+        text(52, 462, "En attente de signature client", 9)
+        text(52, 438, "Statut: NON SIGNE", 10)
+
+    text(327, 462, "Zone reservee au prestataire", 9)
+    text(327, 438, "Statut: EN ATTENTE", 10)
+
+    text(40, 388, "Ce document est genere automatiquement par 3arrasli et conserve une trace de signature numerique.", 8)
+
     stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
 
     objects = [
@@ -660,6 +905,38 @@ def make_token(user_id, role):
         "iat": datetime.utcnow(),
     }
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def make_signature_token(reservation_id, client_id, expires_minutes=30):
+    payload = {
+        "purpose": "reservation_signature",
+        "reservation_id": int(reservation_id),
+        "client_id": int(client_id),
+        "exp": datetime.utcnow() + timedelta(minutes=expires_minutes),
+        "iat": datetime.utcnow(),
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+
+
+def decode_signature_token(token):
+    cleaned = str(token or "").strip()
+    if not cleaned:
+        raise ValueError("Token de signature manquant.")
+    try:
+        payload = jwt.decode(cleaned, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError as exc:
+        raise ValueError("Le lien de signature a expire.") from exc
+    except jwt.InvalidTokenError as exc:
+        raise ValueError("Lien de signature invalide.") from exc
+
+    if payload.get("purpose") != "reservation_signature":
+        raise ValueError("Lien de signature invalide.")
+
+    reservation_id = int(payload.get("reservation_id") or 0)
+    client_id = int(payload.get("client_id") or 0)
+    if reservation_id <= 0 or client_id <= 0:
+        raise ValueError("Lien de signature invalide.")
+    return reservation_id, client_id
 
 
 def get_day_status_from_slots(slots):
@@ -1228,6 +1505,21 @@ def create_app():
 
     @app.get("/uploads/<path:filename>")
     def uploaded_file(filename):
+        normalized = str(filename or "").replace("\\", "/").lstrip("/")
+        if normalized.startswith("invoices/invoice-") and normalized.endswith(".pdf"):
+            invoice_id_part = normalized[len("invoices/invoice-") : -len(".pdf")]
+            if invoice_id_part.isdigit():
+                reservation = Reservation.query.get(int(invoice_id_part))
+                if reservation:
+                    generate_reservation_documents(reservation)
+                    db.session.commit()
+        if normalized.startswith("contracts/contract-") and normalized.endswith(".pdf"):
+            contract_id_part = normalized[len("contracts/contract-") : -len(".pdf")]
+            if contract_id_part.isdigit():
+                reservation = Reservation.query.get(int(contract_id_part))
+                if reservation:
+                    generate_reservation_documents(reservation)
+                    db.session.commit()
         return send_from_directory(app.config["UPLOAD_ROOT"], filename)
 
     def save_service_image(image_file):
@@ -2148,6 +2440,9 @@ def create_app():
         service = Service.query.get(reservation.service_id)
         client = User.query.get(reservation.client_id)
         provider = User.query.get(get_service_provider_id(service)) if service else None
+        total_amount = float(service.price) if service and service.price is not None else float(reservation.amount or 0)
+        advance_amount = float(reservation.amount or 0)
+        paid_amount = advance_amount if normalize_payment_status(reservation.payment_status) == "PAID" else 0.0
 
         invoice_name = f"invoice-{reservation.id}.pdf"
         contract_name = f"contract-{reservation.id}.pdf"
@@ -2156,35 +2451,42 @@ def create_app():
         invoice_absolute = os.path.join(app.root_path, invoice_relative.replace("/", os.sep))
         contract_absolute = os.path.join(app.root_path, contract_relative.replace("/", os.sep))
 
-        invoice_lines = [
-            f"Reservation #{reservation.id}",
-            f"Client: {client.username if client else 'Client'}",
-            f"Prestataire: {provider.username if provider else 'Prestataire'}",
-            f"Service: {service.title if service else 'Service'}",
-            f"Date: {reservation.date}",
-            f"Montant: {format_currency(reservation.amount if reservation.amount is not None else (service.price if service else 0))}",
-            f"Paiement: {normalize_payment_status(reservation.payment_status)}",
-        ]
-        contract_lines = [
-            f"Contrat reservation #{reservation.id}",
-            f"Client: {client.username if client else 'Client'}",
-            f"Prestataire: {provider.username if provider else 'Prestataire'}",
-            f"Service: {service.title if service else 'Service'}",
-            f"Lieu: {reservation.location or (service.city if service else 'Tunisie')}",
-            f"Date: {reservation.date}",
-            f"Montant: {format_currency(reservation.amount if reservation.amount is not None else (service.price if service else 0))}",
-        ]
-
-        if reservation.signature_data:
-            contract_lines.extend(
-                [
-                    "Signature electronique: enregistree",
-                    f"Signe le: {reservation.signed_at.isoformat() if reservation.signed_at else datetime.utcnow().isoformat()}",
-                ]
-            )
-
-        write_simple_pdf(invoice_absolute, "Facture 3arrasli", invoice_lines)
-        write_simple_pdf(contract_absolute, "Contrat 3arrasli", contract_lines)
+        write_invoice_pdf(
+            invoice_absolute,
+            {
+                "reservation_id": reservation.id,
+                "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                "reservation_date": reservation.date,
+                "client_name": client.username if client else "Client",
+                "provider_name": provider.username if provider else "Prestataire",
+                "service_name": service.title if service else "Service",
+                "location": reservation.location or (service.city if service else "Tunisie"),
+                "payment_status": normalize_payment_status(reservation.payment_status),
+                "total_amount": total_amount,
+                "paid_amount": paid_amount,
+            },
+        )
+        write_contract_pdf(
+            contract_absolute,
+            {
+                "reservation_id": reservation.id,
+                "created_at": datetime.utcnow().strftime("%Y-%m-%d %H:%M"),
+                "reservation_date": reservation.date,
+                "client_name": client.username if client else "Client",
+                "provider_name": provider.username if provider else "Prestataire",
+                "service_name": service.title if service else "Service",
+                "location": reservation.location or (service.city if service else "Tunisie"),
+                "total_amount": total_amount,
+                "paid_amount": paid_amount,
+                "remaining_amount": max(total_amount - paid_amount, 0),
+                "has_client_signature": bool(reservation.signature_data),
+                "signed_at": (
+                    reservation.signed_at.isoformat()
+                    if reservation.signed_at
+                    else datetime.utcnow().isoformat()
+                ),
+            },
+        )
 
         reservation.invoice_path = invoice_relative
         reservation.contract_path = contract_relative
@@ -4025,6 +4327,64 @@ def create_app():
                 "message": "Signature enregistree avec succes.",
             }
         )
+
+    @app.post("/api/reservations/<int:reservation_id>/signature-link")
+    @auth_required(allowed_roles={"client"})
+    def create_reservation_signature_link(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=request.user_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        if normalize_payment_status(reservation.payment_status) != "PAID":
+            return jsonify({"success": False, "message": "Le contrat peut etre signe apres le paiement."}), 409
+        if reservation.signature_data:
+            return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
+
+        token = make_signature_token(reservation.id, reservation.client_id, expires_minutes=30)
+        return jsonify({"success": True, "token": token})
+
+    @app.get("/api/public/signature-session")
+    def get_public_signature_session():
+        token = (request.args.get("token") or "").strip()
+        try:
+            reservation_id, client_id = decode_signature_token(token)
+        except ValueError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=client_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        if normalize_payment_status(reservation.payment_status) != "PAID":
+            return jsonify({"success": False, "message": "Le contrat ne peut pas etre signe pour le moment."}), 409
+
+        return jsonify({"success": True, "reservation": serialize_reservation(reservation)})
+
+    @app.post("/api/public/signature-session/sign")
+    def sign_public_signature_session():
+        payload = request.get_json(silent=True) or {}
+        token = str(payload.get("token") or "").strip()
+        signature_data = str(payload.get("signature_data") or "").strip()
+        if not signature_data:
+            return jsonify({"success": False, "message": "signature_data est requis."}), 400
+
+        try:
+            reservation_id, client_id = decode_signature_token(token)
+        except ValueError as exc:
+            return jsonify({"success": False, "message": str(exc)}), 400
+
+        reservation = Reservation.query.filter_by(id=reservation_id, client_id=client_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        if normalize_payment_status(reservation.payment_status) != "PAID":
+            return jsonify({"success": False, "message": "Le contrat ne peut pas etre signe pour le moment."}), 409
+        if reservation.signature_data:
+            return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
+
+        reservation.signature_data = signature_data
+        reservation.signed_at = datetime.utcnow()
+        reservation.updated_at = datetime.utcnow()
+        generate_reservation_documents(reservation)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Signature enregistree avec succes."})
 
     return app
 

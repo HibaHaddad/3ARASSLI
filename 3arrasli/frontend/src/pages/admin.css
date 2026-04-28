@@ -561,11 +561,13 @@
 }
 
 .admin-modal-shell {
+  position: relative;
   width: min(720px, calc(100% - 24px));
-  max-height: min(88vh, 920px);
+  max-height: 90vh;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  overflow: hidden;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .admin-modal-content {

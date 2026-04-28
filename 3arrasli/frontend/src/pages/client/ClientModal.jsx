@@ -1,9 +1,14 @@
 import React, { useEffect } from "react";
+import { createPortal } from "react-dom";
 
 const ClientModal = ({ open, title, children, onClose, className = "" }) => {
   useEffect(() => {
-    if (!open) {
+    const clearBodyLock = () => {
       document.body.classList.remove("client-modal-open");
+    };
+
+    if (!open) {
+      clearBodyLock();
       return undefined;
     }
 
@@ -17,7 +22,7 @@ const ClientModal = ({ open, title, children, onClose, className = "" }) => {
     window.addEventListener("keydown", onKeyDown);
 
     return () => {
-      document.body.classList.remove("client-modal-open");
+      clearBodyLock();
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [onClose, open]);
@@ -26,14 +31,14 @@ const ClientModal = ({ open, title, children, onClose, className = "" }) => {
     return null;
   }
 
-  return (
-    <div className="client-modal-overlay" role="presentation" onMouseDown={onClose}>
+  return createPortal(
+    <div className="client-modal-overlay" role="presentation" onClick={onClose}>
       <article
         className={`client-service-modal client-modal-shell ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        onMouseDown={(event) => event.stopPropagation()}
+        onClick={(event) => event.stopPropagation()}
       >
         <button type="button" className="client-modal-close" aria-label="Fermer" onClick={onClose}>
           x
@@ -46,7 +51,8 @@ const ClientModal = ({ open, title, children, onClose, className = "" }) => {
           <div className="client-modal-panel-body">{children}</div>
         </div>
       </article>
-    </div>
+    </div>,
+    document.body
   );
 };
 
