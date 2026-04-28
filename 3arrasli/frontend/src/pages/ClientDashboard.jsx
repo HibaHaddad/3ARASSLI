@@ -5,7 +5,6 @@ import api from "../services/api";
 import { getStoredUser } from "../services/auth";
 import "../Home.css";
 import "./client.css";
-import ClientNav from "./client/ClientNav";
 import ServiceCard from "./client/ServiceCard";
 import { cities, emptyFilters, serviceTypes, toSearchQuery } from "./client/clientData";
 
@@ -70,8 +69,6 @@ const ClientDashboard = () => {
           <div className="client-hero-layer" />
 
           <div className="client-shell">
-            <ClientNav light />
-
             <div className="client-hero-grid">
               <div className="client-hero-copy">
                 <span className="hero-pill">Votre mariage, version premium</span>

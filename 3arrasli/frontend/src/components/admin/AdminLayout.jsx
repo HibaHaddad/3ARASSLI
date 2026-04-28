@@ -53,7 +53,7 @@ const AdminLayout = ({
             isOpen={isSidebarOpen}
           />
 
-          <section className="provider-content admin-content-unified">
+          <section className={`provider-content admin-content-unified ${isSidebarOpen ? "with-sidebar" : "without-sidebar"}`}>
             <header className="provider-content-header">
               <div>
                 <p className="provider-section-label">{currentSection.label}</p>

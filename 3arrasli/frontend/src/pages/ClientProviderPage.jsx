@@ -1,16 +1,44 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import api from "../services/api";
+import { resolveAssetUrl } from "../services/assets";
 import ClientPageLayout from "./client/ClientPageLayout";
-import ServiceDetailContent from "./client/ServiceDetailContent";
+import ClientModal from "./client/ClientModal";
+import StarRating from "./client/StarRating";
+
+const initialAppointmentForm = {
+  date: "",
+  start_time: "",
+  message: "",
+};
+
+const initialReservationForm = {
+  date: "",
+  start_time: "",
+  notes: "",
+  payment_option: "full",
+};
+
+const buildAmount = (service, paymentOption) => {
+  const price = Number(service?.price || 0);
+  return paymentOption === "partial" ? Number((price * 0.3).toFixed(2)) : price;
+};
 
 const ClientProviderPage = () => {
   const { id } = useParams();
   const [service, setService] = useState(null);
-  const [booking, setBooking] = useState({ date: "", notes: "" });
+  const [reviews, setReviews] = useState([]);
+  const [availability, setAvailability] = useState({ days: [], next_available: null, availability_label: "" });
+  const [stripeConfig, setStripeConfig] = useState({ enabled: false, publishable_key: "" });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [reviewForm, setReviewForm] = useState({ rating: 5, comment: "" });
+  const [appointmentForm, setAppointmentForm] = useState(initialAppointmentForm);
+  const [reservationForm, setReservationForm] = useState(initialReservationForm);
+  const [appointmentOpen, setAppointmentOpen] = useState(false);
+  const [reservationOpen, setReservationOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
 
   const loadService = async () => {
     setLoading(true);
@@ -18,6 +46,9 @@ const ClientProviderPage = () => {
     try {
       const response = await api.get(`/api/services/${id}`);
       setService(response.data.service || null);
+      setReviews(response.data.reviews || []);
+      setAvailability(response.data.availability || { days: [] });
+      setStripeConfig(response.data.stripe || { enabled: false, publishable_key: "" });
     } catch (err) {
       setError(err.response?.data?.message || "Impossible de charger cette fiche.");
     } finally {
@@ -29,19 +60,37 @@ const ClientProviderPage = () => {
     loadService();
   }, [id]);
 
-  const onBookingChange = (field, value) => {
-    setBooking((prev) => ({ ...prev, [field]: value }));
-  };
+  const selectedAppointmentDay = useMemo(
+    () => availability.days.find((day) => day.date === appointmentForm.date),
+    [appointmentForm.date, availability.days]
+  );
+  const selectedReservationDay = useMemo(
+    () => availability.days.find((day) => day.date === reservationForm.date),
+    [reservationForm.date, availability.days]
+  );
 
-  const toggleFavorite = async (currentService) => {
+  const appointmentSlots = (selectedAppointmentDay?.slots || []).filter((slot) => slot.available);
+  const reservationSlots = (selectedReservationDay?.slots || []).filter((slot) => slot.available);
+  const reservationAmount = buildAmount(service, reservationForm.payment_option);
+  const averageRating = Number(service?.rating || 0).toFixed(1);
+
+  const resetMessages = () => {
     setError("");
     setMessage("");
+  };
+
+  const toggleFavorite = async () => {
+    if (!service) {
+      return;
+    }
+
+    resetMessages();
     try {
-      if (currentService.is_favorite && currentService.favorite_id) {
-        await api.delete(`/api/favorites/${currentService.favorite_id}`);
+      if (service.is_favorite && service.favorite_id) {
+        await api.delete(`/api/favorites/${service.favorite_id}`);
         setMessage("Prestataire retire de vos favoris.");
       } else {
-        await api.post("/api/favorites", { prestataire_id: currentService.prestataire_id });
+        await api.post("/api/favorites", { prestataire_id: service.prestataire_id });
         setMessage("Prestataire ajoute a vos favoris.");
       }
       await loadService();
@@ -50,33 +99,91 @@ const ClientProviderPage = () => {
     }
   };
 
-  const createReservation = async () => {
-    if (!booking.date) {
-      setError("Choisissez une date pour reserver ce service.");
-      return;
-    }
-
+  const submitReview = async (event) => {
+    event.preventDefault();
+    resetMessages();
+    setSubmitting(true);
     try {
-      await api.post("/api/reservations", {
-        service_id: Number(service.id),
-        date: booking.date,
-        notes: booking.notes,
-      });
-      setError("");
-      setMessage("Reservation enregistree. Vous pouvez la retrouver dans vos reservations.");
-      setBooking({ date: "", notes: "" });
+      await api.post(`/api/services/${id}/reviews`, reviewForm);
+      setMessage("Votre avis a ete enregistre.");
+      setReviewForm({ rating: 5, comment: "" });
+      await loadService();
     } catch (err) {
-      setError(err.response?.data?.message || "Reservation impossible.");
+      setError(err.response?.data?.message || "Impossible d'enregistrer l'avis.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitAppointment = async (event) => {
+    event.preventDefault();
+    resetMessages();
+    setSubmitting(true);
+    try {
+      await api.post("/api/appointments", {
+        service_id: Number(id),
+        date: appointmentForm.date,
+        start_time: appointmentForm.start_time,
+        message: appointmentForm.message,
+      });
+      setMessage("Rendez-vous cree avec succes.");
+      setAppointmentForm(initialAppointmentForm);
+      setAppointmentOpen(false);
+      await loadService();
+    } catch (err) {
+      setError(err.response?.data?.message || "Impossible de creer le rendez-vous.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const submitReservation = async (event) => {
+    event.preventDefault();
+    resetMessages();
+    setSubmitting(true);
+    try {
+      const createResponse = await api.post("/api/reservations", {
+        service_id: Number(id),
+        date: reservationForm.date,
+        start_time: reservationForm.start_time,
+        notes: reservationForm.notes,
+        details: reservationForm.notes,
+        payment_option: reservationForm.payment_option,
+        amount: reservationAmount,
+      });
+
+      const reservation = createResponse.data.reservation;
+      if (stripeConfig.enabled) {
+        const paymentResponse = await api.post(`/api/reservations/${reservation.id}/payment/session`);
+        const checkoutUrl = paymentResponse.data.checkout_url;
+        if (checkoutUrl) {
+          window.location.href = checkoutUrl;
+          return;
+        }
+      }
+
+      setMessage(
+        stripeConfig.enabled
+          ? "Reservation creee. Le paiement n'a pas pu etre initialise."
+          : "Reservation creee. Configurez Stripe pour activer le paiement carte."
+      );
+      setReservationForm(initialReservationForm);
+      setReservationOpen(false);
+      await loadService();
+    } catch (err) {
+      setError(err.response?.data?.message || "Impossible de creer la reservation.");
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <ClientPageLayout
       kicker="Fiche prestataire"
-      title={service?.title || "Decouvrez ce prestataire"}
-      description="La fiche detaillee reprend la meme experience visuelle, maintenant dans une vraie page dediee."
+      title={service?.provider_name || service?.title || "Decouvrez ce prestataire"}
+      description="Une fiche detaillee, elegante et orientee action pour reserver, prendre rendez-vous et suivre la confiance client."
     >
-      <section className="client-section">
+      <section className="client-section client-detail-section">
         <div className="client-shell">
           {loading ? <p className="client-loading">Chargement de la fiche...</p> : null}
           {!loading && error && !service ? <p className="client-error">{error}</p> : null}
@@ -92,25 +199,292 @@ const ClientProviderPage = () => {
           ) : null}
 
           {service ? (
-            <article
-              className="client-service-modal client-service-page-card"
-              role="dialog"
-              aria-modal="false"
-              aria-labelledby="client-service-modal-title"
-            >
-              <ServiceDetailContent
-                service={service}
-                booking={booking}
-                error={error}
-                message={message}
-                onBookingChange={onBookingChange}
-                onCreateReservation={createReservation}
-                onFavorite={toggleFavorite}
-              />
-            </article>
+            <>
+              {message ? <p className="client-message">{message}</p> : null}
+              {error ? <p className="client-error">{error}</p> : null}
+
+              <div className="client-detail-layout client-provider-layout">
+                <div className="client-detail-gallery client-provider-gallery">
+                  <img src={resolveAssetUrl(service.image)} alt={service.title} />
+                  <div className="client-provider-aside-card">
+                    <span className="client-eyebrow">Disponibilite</span>
+                    <h3>{availability.availability_label || "Verification des creneaux..."}</h3>
+                    <div className="client-availability-list">
+                      {availability.days.slice(0, 5).map((day) => (
+                        <div key={day.date} className={`client-availability-item ${day.available ? "available" : "unavailable"}`}>
+                          <strong>{day.label}</strong>
+                          <span>
+                            {day.available ? `${day.available_count} creneau(x) libre(s)` : "Complet"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="client-detail-card client-provider-detail-card">
+                  <div className="client-provider-topbar">
+                    <span className="section-kicker">{service.provider_category || service.type}</span>
+                    <button
+                      type="button"
+                      className={`client-favorite-toggle ${service.is_favorite ? "active" : ""}`}
+                      onClick={toggleFavorite}
+                      aria-label={service.is_favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+                    >
+                      ★
+                    </button>
+                  </div>
+
+                  <div className="client-provider-identity">
+                    {service.provider_image ? (
+                      <img src={resolveAssetUrl(service.provider_image)} alt={service.provider_name} />
+                    ) : null}
+                    <div>
+                      <h2 id="client-service-modal-title">{service.provider_name}</h2>
+                      <p className="client-provider-subtitle">{service.title}</p>
+                    </div>
+                  </div>
+
+                  <div className="client-detail-price">{service.price} TND</div>
+                  <p>{service.provider_description || service.description}</p>
+
+                  <div className="client-rating-summary">
+                    <StarRating value={Math.round(Number(service.rating || 0))} readOnly />
+                    <strong>{averageRating}/5</strong>
+                    <span>{service.review_count || 0} avis</span>
+                  </div>
+
+                  <dl className="client-detail-list">
+                    <div>
+                      <dt>Service</dt>
+                      <dd>{service.title}</dd>
+                    </div>
+                    <div>
+                      <dt>Lieu</dt>
+                      <dd>{service.provider_city || service.city || "Tunisie"}</dd>
+                    </div>
+                    <div>
+                      <dt>Prix</dt>
+                      <dd>{service.price} TND</dd>
+                    </div>
+                    <div>
+                      <dt>Note</dt>
+                      <dd>{averageRating}/5</dd>
+                    </div>
+                  </dl>
+
+                  <div className="client-detail-actions client-provider-actions">
+                    <button type="button" className="client-btn client-btn-primary" onClick={() => setReservationOpen(true)}>
+                      Reserver
+                    </button>
+                    <button type="button" className="client-btn client-btn-soft" onClick={() => setAppointmentOpen(true)}>
+                      Prendre un rendez-vous
+                    </button>
+                    <Link className="client-btn client-btn-ghost" to={`/client/chat?provider=${service.prestataire_id}`}>
+                      Contacter
+                    </Link>
+                  </div>
+
+                  <div className="client-provider-notes">
+                    <div className="client-provider-note-card">
+                      <span className="client-section-label">Paiement</span>
+                      <p>{stripeConfig.enabled ? "Paiement carte via Stripe disponible." : "Stripe n'est pas encore configure pour ce projet."}</p>
+                    </div>
+                    <div className="client-provider-note-card">
+                      <span className="client-section-label">Documents</span>
+                      <p>Facture PDF, contrat PDF et signature electronique apres paiement confirme.</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="client-provider-review-grid">
+                <section className="client-panel client-review-panel">
+                  <div className="client-section-head client-provider-inline-head">
+                    <div>
+                      <span className="section-kicker">Avis clients</span>
+                      <h2>{reviews.length} commentaire(s)</h2>
+                    </div>
+                    <p>Les retours renforcent la confiance avant la reservation.</p>
+                  </div>
+
+                  <div className="client-review-list">
+                    {reviews.map((review) => (
+                      <article key={review.id} className="client-review-card">
+                        <div className="client-review-head">
+                          <div>
+                            <strong>{review.client_name}</strong>
+                            <span>{new Date(review.created_at).toLocaleDateString()}</span>
+                          </div>
+                          <StarRating value={review.rating} readOnly size="sm" />
+                        </div>
+                        <p>{review.comment || "Aucun commentaire ajoute."}</p>
+                      </article>
+                    ))}
+
+                    {reviews.length === 0 ? (
+                      <div className="client-empty-state">
+                        <h3>Aucun avis pour le moment.</h3>
+                        <p>Soyez le premier a partager votre experience avec ce prestataire.</p>
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="client-panel client-review-form-panel">
+                  <span className="section-kicker">Laisser un avis</span>
+                  <h3>Notez votre experience</h3>
+                  <form className="client-review-form" onSubmit={submitReview}>
+                    <StarRating value={reviewForm.rating} onChange={(rating) => setReviewForm((prev) => ({ ...prev, rating }))} />
+                    <textarea
+                      className="client-textarea"
+                      placeholder="Votre commentaire"
+                      value={reviewForm.comment}
+                      onChange={(event) => setReviewForm((prev) => ({ ...prev, comment: event.target.value }))}
+                    />
+                    <button type="submit" className="client-btn client-btn-primary" disabled={submitting}>
+                      {submitting ? "Enregistrement..." : "Publier l'avis"}
+                    </button>
+                  </form>
+                </section>
+              </div>
+            </>
           ) : null}
         </div>
       </section>
+
+      <ClientModal open={appointmentOpen} title="Prendre un rendez-vous" onClose={() => setAppointmentOpen(false)}>
+        <form className="client-modal-form" onSubmit={submitAppointment}>
+          <label className="client-field">
+            <span>Date</span>
+            <select
+              className="client-select"
+              value={appointmentForm.date}
+              onChange={(event) => setAppointmentForm((prev) => ({ ...prev, date: event.target.value, start_time: "" }))}
+            >
+              <option value="">Choisir une date</option>
+              {availability.days
+                .filter((day) => day.available)
+                .map((day) => (
+                  <option key={day.date} value={day.date}>
+                    {day.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label className="client-field">
+            <span>Creneau</span>
+            <select
+              className="client-select"
+              value={appointmentForm.start_time}
+              onChange={(event) => setAppointmentForm((prev) => ({ ...prev, start_time: event.target.value }))}
+            >
+              <option value="">Choisir un creneau</option>
+              {appointmentSlots.map((slot) => (
+                <option key={slot.time} value={slot.time}>
+                  {slot.time} - {slot.end_time}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="client-field">
+            <span>Message</span>
+            <textarea
+              className="client-textarea"
+              placeholder="Message optionnel"
+              value={appointmentForm.message}
+              onChange={(event) => setAppointmentForm((prev) => ({ ...prev, message: event.target.value }))}
+            />
+          </label>
+
+          <button type="submit" className="client-btn client-btn-primary" disabled={submitting}>
+            {submitting ? "Envoi..." : "Confirmer le rendez-vous"}
+          </button>
+        </form>
+      </ClientModal>
+
+      <ClientModal open={reservationOpen} title="Reserver ce prestataire" onClose={() => setReservationOpen(false)}>
+        <form className="client-modal-form" onSubmit={submitReservation}>
+          <div className="client-payment-summary">
+            <div>
+              <span className="client-section-label">Prestataire</span>
+              <strong>{service?.provider_name}</strong>
+            </div>
+            <div>
+              <span className="client-section-label">Montant</span>
+              <strong>{reservationAmount} TND</strong>
+            </div>
+          </div>
+
+          <label className="client-field">
+            <span>Date</span>
+            <select
+              className="client-select"
+              value={reservationForm.date}
+              onChange={(event) => setReservationForm((prev) => ({ ...prev, date: event.target.value, start_time: "" }))}
+            >
+              <option value="">Choisir une date</option>
+              {availability.days
+                .filter((day) => day.available)
+                .map((day) => (
+                  <option key={day.date} value={day.date}>
+                    {day.label}
+                  </option>
+                ))}
+            </select>
+          </label>
+
+          <label className="client-field">
+            <span>Creneau</span>
+            <select
+              className="client-select"
+              value={reservationForm.start_time}
+              onChange={(event) => setReservationForm((prev) => ({ ...prev, start_time: event.target.value }))}
+            >
+              <option value="">Choisir un creneau</option>
+              {reservationSlots.map((slot) => (
+                <option key={slot.time} value={slot.time}>
+                  {slot.time} - {slot.end_time}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="client-payment-options">
+            <button
+              type="button"
+              className={`client-payment-option ${reservationForm.payment_option === "full" ? "active" : ""}`}
+              onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "full" }))}
+            >
+              Payer le montant total
+            </button>
+            <button
+              type="button"
+              className={`client-payment-option ${reservationForm.payment_option === "partial" ? "active" : ""}`}
+              onClick={() => setReservationForm((prev) => ({ ...prev, payment_option: "partial" }))}
+            >
+              Payer une avance
+            </button>
+          </div>
+
+          <label className="client-field">
+            <span>Details</span>
+            <textarea
+              className="client-textarea"
+              placeholder="Precisions pour la reservation"
+              value={reservationForm.notes}
+              onChange={(event) => setReservationForm((prev) => ({ ...prev, notes: event.target.value }))}
+            />
+          </label>
+
+          <button type="submit" className="client-btn client-btn-primary" disabled={submitting}>
+            {submitting ? "Preparation..." : stripeConfig.enabled ? "Continuer vers le paiement" : "Creer la reservation"}
+          </button>
+        </form>
+      </ClientModal>
+
     </ClientPageLayout>
   );
 };
