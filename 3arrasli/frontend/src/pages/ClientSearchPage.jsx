@@ -50,7 +50,7 @@ const ClientSearchPage = () => {
   };
 
   const resetSearch = () => {
-    setFilters({ q: "", city: "", budget: "", min_price: "", max_price: "", type: "" });
+    setFilters({ q: "", city: "", budget: "", min_price: "", max_price: "", type: "", provider_id: "" });
     setSearchParams("");
   };
 

@@ -130,14 +130,6 @@ const ReservationFormBase = ({
         <strong>Paiement par carte</strong>
         <span>{stripeEnabled ? "Visa, Mastercard, 3D Secure" : "Stripe non configure"}</span>
       </button>
-      <button
-        type="button"
-        className={`client-payment-mode-card ${reservationForm.payment_mode === "later" ? "active" : ""}`}
-        onClick={() => setReservationForm((prev) => ({ ...prev, payment_mode: "later" }))}
-      >
-        <strong>Payer plus tard</strong>
-        <span>Creation de reservation sans paiement immediat</span>
-      </button>
     </div>
 
     {cardBlock}
@@ -215,6 +207,7 @@ const ClientProviderPage = () => {
   const [appointmentOpen, setAppointmentOpen] = useState(false);
   const [reservationOpen, setReservationOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
 
   const loadService = async () => {
     setLoading(true);
@@ -249,6 +242,16 @@ const ClientProviderPage = () => {
   const reservationSlots = (selectedReservationDay?.slots || []).filter((slot) => slot.available);
   const reservationAmount = buildAmount(service, reservationForm.payment_option);
   const averageRating = Number(service?.rating || 0).toFixed(1);
+  const galleryImages = useMemo(() => {
+    const items = Array.isArray(service?.images) ? service.images : [];
+    const resolved = items
+      .map((item) => resolveAssetUrl(item?.image_path || item?.url || ""))
+      .filter((value) => Boolean(value));
+    if (resolved.length > 0) {
+      return resolved;
+    }
+    return service?.image ? [resolveAssetUrl(service.image)] : [];
+  }, [service]);
   const stripePromise = useMemo(
     () => (stripeConfig.publishable_key ? loadStripe(stripeConfig.publishable_key) : null),
     [stripeConfig.publishable_key]
@@ -264,6 +267,25 @@ const ClientProviderPage = () => {
       setReservationForm((prev) => ({ ...prev, payment_mode: "later" }));
     }
   }, [stripeConfig.enabled]);
+
+  useEffect(() => {
+    setActiveImageIndex(0);
+  }, [service?.id]);
+
+  const canSlideGallery = galleryImages.length > 1;
+  const goToPreviousImage = () => {
+    if (!canSlideGallery) {
+      return;
+    }
+    setActiveImageIndex((prev) => (prev - 1 + galleryImages.length) % galleryImages.length);
+  };
+
+  const goToNextImage = () => {
+    if (!canSlideGallery) {
+      return;
+    }
+    setActiveImageIndex((prev) => (prev + 1) % galleryImages.length);
+  };
 
   const toggleFavorite = async () => {
     if (!service) {
@@ -417,7 +439,44 @@ const ClientProviderPage = () => {
 
               <div className="client-detail-layout client-provider-layout">
                 <div className="client-detail-gallery client-provider-gallery">
-                  <img src={resolveAssetUrl(service.image)} alt={service.title} />
+                  <div className="client-provider-gallery-stage">
+                    <img src={galleryImages[activeImageIndex]} alt={`${service.title} - photo ${activeImageIndex + 1}`} />
+                    {canSlideGallery ? (
+                      <>
+                        <button
+                          type="button"
+                          className="client-gallery-nav prev"
+                          onClick={goToPreviousImage}
+                          aria-label="Photo precedente"
+                        >
+                          &#10094;
+                        </button>
+                        <button
+                          type="button"
+                          className="client-gallery-nav next"
+                          onClick={goToNextImage}
+                          aria-label="Photo suivante"
+                        >
+                          &#10095;
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                  {canSlideGallery ? (
+                    <div className="client-gallery-strip client-provider-gallery-strip">
+                      {galleryImages.map((imageSrc, index) => (
+                        <button
+                          key={`${imageSrc}-${index}`}
+                          type="button"
+                          className={index === activeImageIndex ? "active" : ""}
+                          onClick={() => setActiveImageIndex(index)}
+                          aria-label={`Afficher la photo ${index + 1}`}
+                        >
+                          <img src={imageSrc} alt={`${service.title} miniature ${index + 1}`} />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="client-detail-card client-provider-detail-card">
@@ -429,7 +488,7 @@ const ClientProviderPage = () => {
                       onClick={toggleFavorite}
                       aria-label={service.is_favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
                     >
-                      ★
+                      {service.is_favorite ? "\u2665" : "\u2661"}
                     </button>
                   </div>
 
@@ -438,7 +497,18 @@ const ClientProviderPage = () => {
                       <img src={resolveAssetUrl(service.provider_image)} alt={service.provider_name} />
                     ) : null}
                     <div>
-                      <h2 id="client-service-modal-title">{service.provider_name}</h2>
+                      <h2 id="client-service-modal-title">
+                        {service.prestataire_id || service.provider_id ? (
+                          <Link
+                            className="client-provider-profile-link"
+                            to={`/client/search?provider_id=${service.prestataire_id || service.provider_id}`}
+                          >
+                            {service.provider_name}
+                          </Link>
+                        ) : (
+                          service.provider_name
+                        )}
+                      </h2>
                       <p className="client-provider-subtitle">{service.title}</p>
                     </div>
                   </div>
@@ -607,7 +677,12 @@ const ClientProviderPage = () => {
         </form>
       </ClientModal>
 
-      <ClientModal open={reservationOpen} title="Reserver ce prestataire" onClose={() => setReservationOpen(false)}>
+      <ClientModal
+        open={reservationOpen}
+        title="Reserver ce prestataire"
+        onClose={() => setReservationOpen(false)}
+        className="client-modal-reservation"
+      >
         {stripeConfig.enabled && stripePromise ? (
           <Elements stripe={stripePromise}>
             <StripeReservationForm

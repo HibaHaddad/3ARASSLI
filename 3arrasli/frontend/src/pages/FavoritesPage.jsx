@@ -63,7 +63,7 @@ const FavoritesPage = () => {
 
           {services.length === 0 ? (
             <div className="client-empty-state">
-              <h3>Aucun favori pour le moment.</h3>
+              <h3>Aucun favoris pour le moment.</h3>
               <p>Ajoutez des prestataires depuis la page de recherche pour les retrouver ici.</p>
             </div>
           ) : null}

@@ -5,6 +5,7 @@ export const emptyFilters = {
   min_price: "",
   max_price: "",
   type: "",
+  provider_id: "",
 };
 
 export const budgetMap = {
@@ -43,12 +44,13 @@ export const getFiltersFromSearch = (searchParams) => ({
   min_price: "",
   max_price: "",
   type: searchParams.get("type") || "",
+  provider_id: searchParams.get("provider_id") || "",
 });
 
 export const toSearchQuery = (filters) => {
   const next = new URLSearchParams();
 
-  ["q", "city", "budget", "type"].forEach((key) => {
+  ["q", "city", "budget", "type", "provider_id"].forEach((key) => {
     if (filters[key]) {
       next.set(key, filters[key]);
     }

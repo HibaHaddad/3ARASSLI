@@ -1035,6 +1035,54 @@ body.client-modal-open .auth-navbar {
   top: 118px;
 }
 
+.client-provider-gallery-stage {
+  position: relative;
+}
+
+.client-provider-gallery-stage > img {
+  width: 100%;
+  aspect-ratio: 1.02 / 1;
+  object-fit: cover;
+  border-radius: 8px;
+  box-shadow: 0 32px 80px rgba(72, 36, 50, 0.18);
+}
+
+.client-gallery-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.56);
+  border-radius: 50%;
+  color: #fff;
+  font-size: 1.2rem;
+  font-weight: 800;
+  background: rgba(45, 20, 31, 0.58);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+  z-index: 2;
+}
+
+.client-gallery-nav.prev {
+  left: 12px;
+}
+
+.client-gallery-nav.next {
+  right: 12px;
+}
+
+.client-provider-gallery-strip button.active {
+  border-color: rgba(117, 66, 84, 0.36);
+  box-shadow: 0 10px 22px rgba(86, 44, 59, 0.14);
+}
+
+.client-provider-gallery-strip button img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 .client-provider-note-card,
 .client-review-card,
 .client-payment-summary,
@@ -1082,6 +1130,18 @@ body.client-modal-open .auth-navbar {
 .client-provider-subtitle {
   margin: 6px 0 0;
   color: rgba(82, 49, 61, 0.72);
+}
+
+.client-provider-profile-link {
+  color: inherit;
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  transition: color 180ms ease, border-color 180ms ease;
+}
+
+.client-provider-profile-link:hover {
+  color: #6f394c;
+  border-bottom-color: rgba(111, 57, 76, 0.35);
 }
 
 .client-favorite-toggle {

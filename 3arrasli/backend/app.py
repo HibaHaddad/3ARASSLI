@@ -2877,12 +2877,24 @@ def create_app():
     @auth_required(allowed_roles={"client"})
     def list_services():
         city = (request.args.get("city") or "").strip().lower()
+        provider_id = (request.args.get("provider_id") or "").strip()
         min_price = request.args.get("min_price")
         max_price = request.args.get("max_price")
         service_type = (request.args.get("type") or "").strip().lower()
         q = (request.args.get("q") or "").strip().lower()
 
         query = Service.query
+        if provider_id:
+            try:
+                provider_id_value = int(provider_id)
+            except ValueError:
+                return jsonify({"success": False, "message": "provider_id doit etre numerique."}), 400
+            query = query.filter(
+                db.or_(
+                    Service.provider_id == provider_id_value,
+                    Service.prestataire_id == provider_id_value,
+                )
+            )
         if city:
             query = query.filter(db.func.lower(Service.city) == city)
         if service_type:

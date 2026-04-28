@@ -17,8 +17,13 @@ const ServiceCard = ({ service, onOpen, onFavorite }) => (
       <p>{service.description}</p>
       <div className="client-service-footer">
         <span>Note {service.rating || "4.8"}</span>
-        <button type="button" onClick={() => onFavorite(service)}>
-          {service.is_favorite ? "Favori" : "Ajouter"}
+        <button
+          type="button"
+          onClick={() => onFavorite(service)}
+          aria-label={service.is_favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+          title={service.is_favorite ? "Retirer des favoris" : "Ajouter aux favoris"}
+        >
+          {service.is_favorite ? "\u2665" : "\u2661"}
         </button>
       </div>
       <button type="button" className="client-card-action" onClick={() => onOpen(service)}>

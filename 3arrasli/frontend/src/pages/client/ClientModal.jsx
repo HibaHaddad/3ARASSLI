@@ -1,6 +1,6 @@
 import React, { useEffect } from "react";
 
-const ClientModal = ({ open, title, children, onClose }) => {
+const ClientModal = ({ open, title, children, onClose, className = "" }) => {
   useEffect(() => {
     if (!open) {
       document.body.classList.remove("client-modal-open");
@@ -29,7 +29,7 @@ const ClientModal = ({ open, title, children, onClose }) => {
   return (
     <div className="client-modal-overlay" role="presentation" onMouseDown={onClose}>
       <article
-        className="client-service-modal client-modal-shell"
+        className={`client-service-modal client-modal-shell ${className}`.trim()}
         role="dialog"
         aria-modal="true"
         aria-label={title}
