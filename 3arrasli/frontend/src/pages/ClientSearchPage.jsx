@@ -50,7 +50,11 @@ const ClientSearchPage = () => {
   };
 
   const resetSearch = () => {
+<<<<<<< HEAD
+    setFilters({ city: "", budget: "", min_price: "", max_price: "", type: "" });
+=======
     setFilters({ q: "", city: "", budget: "", min_price: "", max_price: "", type: "" });
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
     setSearchParams("");
   };
 
@@ -77,11 +81,17 @@ const ClientSearchPage = () => {
       title="Recherchez les prestataires qui correspondent a votre journee."
       description="Filtrez par ville, budget et type de service, puis ouvrez chaque fiche dans sa page dediee."
     >
+<<<<<<< HEAD
+      <section className="client-section">
+=======
       <section className="client-section client-search-top-section">
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
         <div className="client-shell">
           <form className="client-search-card" onSubmit={submitSearch}>
             <div className="client-search-fields">
               <label className="client-field">
+<<<<<<< HEAD
+=======
                 <span>Nom / Service</span>
                 <input
                   type="text"
@@ -93,6 +103,7 @@ const ClientSearchPage = () => {
               </label>
 
               <label className="client-field">
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
                 <span>Ville</span>
                 <select name="city" value={filters.city} onChange={onFilterChange}>
                   <option value="">Toutes les villes</option>
@@ -140,7 +151,11 @@ const ClientSearchPage = () => {
         </div>
       </section>
 
+<<<<<<< HEAD
+      <section className="client-section">
+=======
       <section className="client-section client-search-results-section">
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
         <div className="client-shell">
           {message ? <p className="client-message">{message}</p> : null}
           {error ? <p className="client-error">{error}</p> : null}
@@ -150,12 +165,20 @@ const ClientSearchPage = () => {
               <span className="section-kicker">Resultats</span>
               <h2>{services.length} service(s) disponible(s)</h2>
             </div>
+<<<<<<< HEAD
+            <p>Des cartes claires, visuelles et pretes pour une decision rapide.</p>
+=======
            
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
           </div>
 
           {loading ? <p className="client-loading">Chargement des prestataires...</p> : null}
 
+<<<<<<< HEAD
+          <div className="client-service-grid">
+=======
           <div className="client-service-grid client-search-service-grid">
+>>>>>>> 3f58563a534e5d8e07cf665262a57ce5d850d991
             {services.map((service) => (
               <ServiceCard
                 key={service.id}
