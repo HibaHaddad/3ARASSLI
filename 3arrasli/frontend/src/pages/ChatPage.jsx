@@ -1,26 +1,59 @@
-import React, { useEffect, useMemo, useState } from "react";
-import Navbar from "../components/Navbar";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
-import { getStoredUser } from "../services/auth";
+import { getStoredToken, getStoredUser } from "../services/auth";
+import { connectChatSocket, emitRealtimeMessage, emitTypingStatus, joinConversationRoom } from "../services/socket";
 import "./provider.css";
-import "./client.css";
-import ClientNav from "./client/ClientNav";
+import ClientPageLayout from "./client/ClientPageLayout";
+
+const upsertMessage = (items, nextMessage) => {
+  if (!nextMessage?.id) {
+    return items;
+  }
+  if (items.some((message) => message.id === nextMessage.id)) {
+    return items;
+  }
+  return [...items, nextMessage].sort(
+    (left, right) => new Date(left.timestamp || 0).getTime() - new Date(right.timestamp || 0).getTime()
+  );
+};
+
+const getOtherUserId = (message, currentUserId) => {
+  const senderId = Number(message.sender_id);
+  const receiverId = Number(message.receiver_id);
+  return senderId === currentUserId ? receiverId : senderId;
+};
 
 const ChatPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [services, setServices] = useState([]);
   const [chatPreview, setChatPreview] = useState([]);
   const [messages, setMessages] = useState([]);
   const [receiverId, setReceiverId] = useState("");
   const [content, setContent] = useState("");
   const [error, setError] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [typingLabel, setTypingLabel] = useState("");
+  const [providerOnline, setProviderOnline] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
   const currentUserId = Number(getStoredUser()?.id || 0);
+  const socketRef = useRef(null);
+  const joinedConversationIdsRef = useRef(new Set());
+  const typingTimeoutRef = useRef(null);
+  const stopTypingTimeoutRef = useRef(null);
+  const messagesEndRef = useRef(null);
+  const activeReceiverIdRef = useRef("");
 
   const loadServices = async () => {
     try {
       const response = await api.get("/api/services");
-      setServices(response.data.services || []);
-      if (!receiverId && response.data.services?.length) {
-        setReceiverId(String(response.data.services[0].prestataire_id));
+      const nextServices = response.data.services || [];
+      setServices(nextServices);
+
+      const preferredProvider = searchParams.get("provider");
+      const fallbackProvider = nextServices[0]?.prestataire_id;
+      if (!receiverId && (preferredProvider || fallbackProvider)) {
+        setReceiverId(String(preferredProvider || fallbackProvider));
       }
     } catch (err) {
       setError(err.response?.data?.message || "Impossible de charger les prestataires.");
@@ -34,9 +67,7 @@ const ChatPage = () => {
       const latestBySender = new Map();
 
       allMessages.forEach((message) => {
-        const senderId = Number(message.sender_id);
-        const receiverIdFromMessage = Number(message.receiver_id);
-        const otherUserId = senderId === currentUserId ? receiverIdFromMessage : senderId;
+        const otherUserId = getOtherUserId(message, currentUserId);
         const previous = latestBySender.get(otherUserId);
         const currentDate = new Date(message.timestamp || 0);
         const previousDate = previous ? new Date(previous.timestamp || 0) : new Date(0);
@@ -70,22 +101,172 @@ const ChatPage = () => {
   }, []);
 
   useEffect(() => {
+    const preferredProvider = searchParams.get("provider");
+    if (preferredProvider && preferredProvider !== receiverId) {
+      setReceiverId(preferredProvider);
+    }
+  }, [receiverId, searchParams]);
+
+  useEffect(() => {
     loadMessages(receiverId);
+    setTypingLabel("");
+    setProviderOnline(false);
   }, [receiverId]);
+
+  useEffect(() => {
+    activeReceiverIdRef.current = receiverId;
+  }, [receiverId]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, typingLabel]);
+
+  useEffect(() => {
+    const token = getStoredToken();
+    if (!token) {
+      return undefined;
+    }
+
+    const socket = connectChatSocket(token);
+    socketRef.current = socket;
+
+    socket.on("socket:ready", () => {
+      joinedConversationIdsRef.current.clear();
+      setSocketConnected(true);
+    });
+
+    socket.on("disconnect", () => {
+      setSocketConnected(false);
+    });
+
+    socket.on("receive_message", ({ message }) => {
+      if (!message) {
+        return;
+      }
+
+      const otherUserId = getOtherUserId(message, currentUserId);
+
+      setChatPreview((prev) => {
+        const withoutConversation = prev.filter(
+          (item) => getOtherUserId(item, currentUserId) !== otherUserId
+        );
+        return [...withoutConversation, message].sort(
+          (left, right) => new Date(right.timestamp || 0).getTime() - new Date(left.timestamp || 0).getTime()
+        );
+      });
+
+      if (String(otherUserId) === String(activeReceiverIdRef.current)) {
+        setMessages((prev) => upsertMessage(prev, message));
+      }
+    });
+
+    socket.on("typing_status", ({ user_id, is_typing }) => {
+      if (String(user_id) !== String(activeReceiverIdRef.current)) {
+        return;
+      }
+
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+
+      setTypingLabel(is_typing ? "Le prestataire ecrit..." : "");
+      if (is_typing) {
+        typingTimeoutRef.current = window.setTimeout(() => setTypingLabel(""), 1600);
+      }
+    });
+
+    socket.on("presence:update", ({ provider_id, provider_online }) => {
+      if (String(provider_id) === String(activeReceiverIdRef.current)) {
+        setProviderOnline(Boolean(provider_online));
+      }
+    });
+
+    socket.on("socket:error", ({ message }) => {
+      if (message) {
+        setError(message);
+      }
+    });
+
+    return () => {
+      if (typingTimeoutRef.current) {
+        window.clearTimeout(typingTimeoutRef.current);
+      }
+      if (stopTypingTimeoutRef.current) {
+        window.clearTimeout(stopTypingTimeoutRef.current);
+      }
+      socket.removeAllListeners();
+      socket.disconnect();
+      socketRef.current = null;
+      setSocketConnected(false);
+      joinedConversationIdsRef.current.clear();
+    };
+  }, [currentUserId]);
+
+  useEffect(() => {
+    const socket = socketRef.current;
+    if (!socket || !socketConnected || services.length === 0) {
+      return;
+    }
+
+    const uniqueProviderIds = [...new Set(services.map((service) => service.prestataire_id).filter(Boolean))];
+    uniqueProviderIds.forEach((providerId) => {
+      if (joinedConversationIdsRef.current.has(providerId)) {
+        return;
+      }
+      joinConversationRoom(socket, providerId);
+      joinedConversationIdsRef.current.add(providerId);
+    });
+  }, [services, socketConnected]);
 
   const sendMessage = async (event) => {
     event.preventDefault();
-    if (!receiverId || !content.trim()) {
+    const trimmed = content.trim();
+    if (!receiverId || !trimmed || isSending) {
       return;
     }
+
+    setIsSending(true);
+    setError("");
+    setContent("");
+    emitTypingStatus(socketRef.current, receiverId, false);
+
     try {
-      await api.post("/api/chat/send", { receiver_id: Number(receiverId), content: content.trim() });
-      setContent("");
-      loadMessages(receiverId);
-      loadChatPreview();
-    } catch (err) {
-      setError(err.response?.data?.message || "Envoi impossible.");
+      const socketResponse = await emitRealtimeMessage(socketRef.current, receiverId, trimmed);
+      if (!socketResponse?.success) {
+        throw new Error(socketResponse?.message || "Envoi impossible.");
+      }
+    } catch (socketError) {
+      try {
+        const response = await api.post("/api/chat/send", {
+          receiver_id: Number(receiverId),
+          content: trimmed,
+        });
+        if (response.data?.message) {
+          setMessages((prev) => upsertMessage(prev, response.data.message));
+        }
+      } catch (err) {
+        setContent(trimmed);
+        setError(err.response?.data?.message || socketError.message || "Envoi impossible.");
+      }
+    } finally {
+      setIsSending(false);
     }
+  };
+
+  const handleInputChange = (event) => {
+    const nextValue = event.target.value;
+    setContent(nextValue);
+    if (!receiverId) {
+      return;
+    }
+
+    emitTypingStatus(socketRef.current, receiverId, Boolean(nextValue.trim()));
+    if (stopTypingTimeoutRef.current) {
+      window.clearTimeout(stopTypingTimeoutRef.current);
+    }
+    stopTypingTimeoutRef.current = window.setTimeout(() => {
+      emitTypingStatus(socketRef.current, receiverId, false);
+    }, 1100);
   };
 
   const conversations = useMemo(() => {
@@ -94,113 +275,109 @@ const ChatPage = () => {
     services.forEach((service) => {
       if (!unique.has(service.prestataire_id)) {
         const preview = chatPreview.find(
-          (item) =>
-            Number(item.sender_id) === Number(service.prestataire_id) ||
-            Number(item.receiver_id) === Number(service.prestataire_id)
+          (item) => getOtherUserId(item, currentUserId) === Number(service.prestataire_id)
         );
 
         unique.set(service.prestataire_id, {
           id: service.prestataire_id,
           name: service.prestataire_name,
           excerpt: preview?.content || "Commencez la conversation avec ce prestataire.",
-          time: preview?.timestamp ? new Date(preview.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "--:--",
+          time: preview?.timestamp
+            ? new Date(preview.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+            : "--:--",
         });
       }
     });
 
     return Array.from(unique.values());
-  }, [services, chatPreview]);
+  }, [chatPreview, currentUserId, services]);
 
   const activeConversation = conversations.find((item) => String(item.id) === String(receiverId));
 
   return (
-    <div className="client-page">
-      <Navbar />
-      <main className="client-page-main">
-        <section className="client-page-hero compact">
-          <div className="client-shell">
-            <ClientNav />
-            <div className="client-page-heading">
-              <span className="section-kicker">Chat client</span>
-              <h1>Conversations mariage.</h1>
-              <p>Un fil de discussion naturel pour confirmer les details, poser vos questions et avancer sereinement.</p>
-            </div>
-          </div>
-        </section>
+    <ClientPageLayout
+      kicker="Chat client"
+      title="Conversations mariage."
+      description="Un fil de discussion naturel pour confirmer les details, poser vos questions et avancer sereinement."
+    >
+      <section className="client-section">
+        <div className="client-shell">
+          {error ? <p className="client-error">{error}</p> : null}
 
-        <section className="client-section">
-          <div className="client-shell">
-            {error ? <p className="client-error">{error}</p> : null}
-
-            <article className="provider-panel provider-chat-shell">
-              <div className="provider-chat-sidebar">
-                <div className="provider-panel-head">
-                  <h3>Conversations</h3>
-                  <p>Selectionnez un prestataire pour afficher vos messages.</p>
-                </div>
-
-                <div className="provider-chat-list">
-                  {conversations.map((conversation) => (
-                    <button
-                      key={conversation.id}
-                      type="button"
-                      className={`provider-chat-item ${String(receiverId) === String(conversation.id) ? "active" : ""}`}
-                      onClick={() => setReceiverId(String(conversation.id))}
-                    >
-                      <span className="provider-chat-avatar">
-                        {conversation.name?.slice(0, 2).toUpperCase() || "PR"}
-                      </span>
-                      <div>
-                        <strong>{conversation.name}</strong>
-                        <p>{conversation.excerpt}</p>
-                      </div>
-                      <span className="provider-chat-meta">
-                        <em>{conversation.time}</em>
-                      </span>
-                    </button>
-                  ))}
-                </div>
+          <article className="provider-panel provider-chat-shell">
+            <div className="provider-chat-sidebar">
+              <div className="provider-panel-head">
+                <h3>Conversations</h3>
+                <p>Selectionnez un prestataire pour afficher vos messages.</p>
               </div>
 
-              <div className="provider-chat-window">
-                <div className="provider-chat-window-head">
-                  <div>
-                    <h3>{activeConversation?.name || "Choisir une conversation"}</h3>
-                    <p>{activeConversation ? "Conversation active" : "Aucun prestataire selectionne"}</p>
-                  </div>
-                  <span className="provider-status validated">En ligne</span>
-                </div>
-
-                <div className="provider-chat-messages">
-                  {messages.map((message) => (
-                    <div
-                      key={message.id}
-                      className={`provider-message-bubble ${
-                        Number(message.sender_id) === Number(receiverId) ? "client" : "provider"
-                      }`}
-                    >
-                      {message.content}
+              <div className="provider-chat-list">
+                {conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    className={`provider-chat-item ${String(receiverId) === String(conversation.id) ? "active" : ""}`}
+                    onClick={() => {
+                      setReceiverId(String(conversation.id));
+                      setSearchParams({ provider: String(conversation.id) });
+                    }}
+                  >
+                    <span className="provider-chat-avatar">
+                      {conversation.name?.slice(0, 2).toUpperCase() || "PR"}
+                    </span>
+                    <div>
+                      <strong>{conversation.name}</strong>
+                      <p>{conversation.excerpt}</p>
                     </div>
-                  ))}
-                </div>
-
-                <form className="provider-chat-form" onSubmit={sendMessage}>
-                  <input
-                    type="text"
-                    value={content}
-                    onChange={(event) => setContent(event.target.value)}
-                    placeholder="Ecrire un message..."
-                  />
-                  <button type="submit" className="provider-primary-btn">
-                    Envoyer
+                    <span className="provider-chat-meta">
+                      <em>{conversation.time}</em>
+                    </span>
                   </button>
-                </form>
+                ))}
               </div>
-            </article>
-          </div>
-        </section>
-      </main>
-    </div>
+            </div>
+
+            <div className="provider-chat-window">
+              <div className="provider-chat-window-head">
+                <div>
+                  <h3>{activeConversation?.name || "Choisir une conversation"}</h3>
+                  <p>{typingLabel || (activeConversation ? "Conversation active" : "Aucun prestataire selectionne")}</p>
+                </div>
+                <span className="provider-status validated">{providerOnline ? "En ligne" : "Hors ligne"}</span>
+              </div>
+
+              <div className="provider-chat-messages">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`provider-message-bubble ${
+                      Number(message.sender_id) === Number(receiverId) ? "client" : "provider"
+                    }`}
+                  >
+                    {message.content}
+                  </div>
+                ))}
+                <div ref={messagesEndRef} />
+              </div>
+
+              <form className="provider-chat-form" onSubmit={sendMessage}>
+                <input
+                  type="text"
+                  value={content}
+                  onChange={handleInputChange}
+                  onBlur={() => emitTypingStatus(socketRef.current, receiverId, false)}
+                  placeholder="Ecrire un message..."
+                  disabled={isSending}
+                />
+                <button type="submit" className="provider-primary-btn" disabled={!receiverId || !content.trim() || isSending}>
+                  {isSending ? "Envoi..." : "Envoyer"}
+                </button>
+              </form>
+            </div>
+          </article>
+        </div>
+      </section>
+    </ClientPageLayout>
   );
 };
 

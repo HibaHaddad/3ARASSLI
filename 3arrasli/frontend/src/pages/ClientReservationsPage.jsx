@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from "react";
-import Navbar from "../components/Navbar";
 import api from "../services/api";
-import "../Home.css";
-import "./client.css";
-import ClientNav from "./client/ClientNav";
+import ClientPageLayout from "./client/ClientPageLayout";
 
 const ClientReservationsPage = () => {
   const [reservations, setReservations] = useState([]);
@@ -36,55 +33,45 @@ const ClientReservationsPage = () => {
   const paidCount = reservations.filter((reservation) => reservation.status === "paid").length;
 
   return (
-    <div className="client-page">
-      <Navbar />
-      <main className="client-page-main">
-        <section className="client-page-hero compact">
-          <div className="client-shell">
-            <ClientNav />
-            <div className="client-page-heading">
-              <span className="section-kicker">Reservations & paiement</span>
-              <h1>Suivez vos confirmations dans un parcours clair et rassurant.</h1>
-              <p>{paidCount} reservation(s) payee(s), {reservations.length} reservation(s) au total.</p>
-            </div>
+    <ClientPageLayout
+      kicker="Reservations & paiement"
+      title="Suivez vos confirmations dans un parcours clair et rassurant."
+      description={`${paidCount} reservation(s) payee(s), ${reservations.length} reservation(s) au total.`}
+    >
+      <section className="client-section">
+        <div className="client-shell">
+          {message ? <p className="client-message">{message}</p> : null}
+          {error ? <p className="client-error">{error}</p> : null}
+
+          <div className="client-reservation-grid">
+            {reservations.map((reservation) => (
+              <article key={reservation.id} className="client-reservation-card">
+                <div>
+                  <span className="client-status">{reservation.status}</span>
+                  <h3>{reservation.service_title}</h3>
+                  <p>Date: {reservation.date}</p>
+                </div>
+                <button
+                  type="button"
+                  className="client-btn client-btn-primary"
+                  disabled={reservation.status === "paid"}
+                  onClick={() => payReservation(reservation.id)}
+                >
+                  {reservation.status === "paid" ? "Payee" : "Payer"}
+                </button>
+              </article>
+            ))}
           </div>
-        </section>
 
-        <section className="client-section">
-          <div className="client-shell">
-            {message ? <p className="client-message">{message}</p> : null}
-            {error ? <p className="client-error">{error}</p> : null}
-
-            <div className="client-reservation-grid">
-              {reservations.map((reservation) => (
-                <article key={reservation.id} className="client-reservation-card">
-                  <div>
-                    <span className="client-status">{reservation.status}</span>
-                    <h3>{reservation.service_title}</h3>
-                    <p>Date: {reservation.date}</p>
-                  </div>
-                  <button
-                    type="button"
-                    className="client-btn client-btn-primary"
-                    disabled={reservation.status === "paid"}
-                    onClick={() => payReservation(reservation.id)}
-                  >
-                    {reservation.status === "paid" ? "Payee" : "Payer"}
-                  </button>
-                </article>
-              ))}
+          {reservations.length === 0 ? (
+            <div className="client-empty-state">
+              <h3>Aucune reservation pour le moment.</h3>
+              <p>Ouvrez une fiche service depuis la recherche pour choisir une date.</p>
             </div>
-
-            {reservations.length === 0 ? (
-              <div className="client-empty-state">
-                <h3>Aucune reservation pour le moment.</h3>
-                <p>Ouvrez une fiche service depuis la recherche pour choisir une date.</p>
-              </div>
-            ) : null}
-          </div>
-        </section>
-      </main>
-    </div>
+          ) : null}
+        </div>
+      </section>
+    </ClientPageLayout>
   );
 };
 

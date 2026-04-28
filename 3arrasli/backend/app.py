@@ -11,13 +11,14 @@ import jwt
 import pymysql
 from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
+from flask_socketio import ConnectionRefusedError, disconnect, emit, join_room
 from dotenv import load_dotenv
 from sqlalchemy.engine import make_url
 from sqlalchemy import inspect, text
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
-from extensions import bcrypt, db
+from extensions import bcrypt, db, socketio
 from models import Favorite, Message, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Service, ServiceImage, User
 
 
@@ -399,6 +400,21 @@ def serialize_planner_item(item):
         "title": item.title,
         "completed": item.completed,
     }
+
+
+def normalize_socket_role(value):
+    role = str(value or "").strip().lower()
+    if role == "prestataire":
+        return "prestataire"
+    if role == "client":
+        return "client"
+    if role == "admin":
+        return "admin"
+    return ""
+
+
+def build_chat_room(client_id, provider_id):
+    return f"chat:client:{int(client_id)}:provider:{int(provider_id)}"
 
 
 def make_token(user_id, role):
@@ -787,6 +803,7 @@ def create_app():
 
     db.init_app(app)
     bcrypt.init_app(app)
+    socketio.init_app(app, cors_allowed_origins="*")
 
     with app.app_context():
         db.create_all()
@@ -796,6 +813,9 @@ def create_app():
         ensure_reservation_schema()
         ensure_message_schema()
         seed_data()
+
+    connected_socket_counts = {}
+    socket_session_state = {}
 
     @app.errorhandler(RequestEntityTooLarge)
     def handle_file_too_large(_error):
@@ -1439,6 +1459,242 @@ def create_app():
 
         return decorator
 
+    def decode_auth_token(token):
+        cleaned = str(token or "").replace("Bearer ", "").strip()
+        if not cleaned:
+            raise ValueError("Authentification requise.")
+
+        try:
+            payload = jwt.decode(cleaned, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        except jwt.ExpiredSignatureError as exc:
+            raise ValueError("Session expiree.") from exc
+        except jwt.InvalidTokenError as exc:
+            raise ValueError("Token invalide.") from exc
+
+        user_id = int(payload["sub"])
+        user_role = normalize_socket_role(payload.get("role"))
+        if not user_role:
+            raise ValueError("Role utilisateur invalide.")
+        return user_id, user_role
+
+    def get_socket_identity(auth_payload=None):
+        auth_payload = auth_payload or {}
+        token = auth_payload.get("token") or request.args.get("token") or request.headers.get("Authorization", "")
+        user_id, user_role = decode_auth_token(token)
+        user = User.query.get(user_id)
+        if not user:
+            raise ValueError("Utilisateur introuvable.")
+        return user, user_role
+
+    def get_or_create_client_provider_pair(current_user_id, current_user_role, other_user_id):
+        other_user = User.query.get(int(other_user_id)) if other_user_id else None
+        if not other_user:
+            return None, None, None, "Conversation introuvable."
+
+        other_role = normalize_socket_role(other_user.role)
+        if current_user_role == "client":
+            if other_role != "prestataire":
+                return None, None, None, "Prestataire introuvable."
+            return current_user_id, other_user.id, other_user, None
+
+        if current_user_role == "prestataire":
+            if other_role != "client":
+                return None, None, None, "Client introuvable."
+            provider_contexts = get_provider_client_contexts(current_user_id)
+            if int(other_user.id) not in provider_contexts:
+                return None, None, None, "Conversation non autorisee."
+            return other_user.id, current_user_id, other_user, None
+
+        return None, None, None, "Permission insuffisante."
+
+    def get_room_presence_payload(client_id, provider_id):
+        client_online = connected_socket_counts.get(int(client_id), 0) > 0
+        provider_online = connected_socket_counts.get(int(provider_id), 0) > 0
+        return {
+            "client_id": int(client_id),
+            "provider_id": int(provider_id),
+            "online_users": [user_id for user_id, online in ((int(client_id), client_online), (int(provider_id), provider_online)) if online],
+            "client_online": client_online,
+            "provider_online": provider_online,
+        }
+
+    def emit_presence_update(room, client_id, provider_id):
+        socketio.emit(
+            "presence:update",
+            {
+                "room": room,
+                **get_room_presence_payload(client_id, provider_id),
+            },
+            room=room,
+        )
+
+    def emit_provider_chat_update(provider_id, client_id):
+        provider = User.query.get(int(provider_id))
+        client = User.query.filter_by(id=int(client_id), role="client").first()
+        if not provider or not client:
+            return
+
+        contexts = get_provider_client_contexts(provider.id)
+        context = contexts.get(client.id)
+        if not context:
+            return
+
+        socketio.emit(
+            "provider_chat_updated",
+            {
+                "chat": serialize_provider_chat(client, context, provider.id),
+            },
+            room=f"user:{provider.id}",
+        )
+
+    @socketio.on("connect")
+    def on_socket_connect(auth):
+        try:
+            user, user_role = get_socket_identity(auth)
+        except ValueError as error:
+            raise ConnectionRefusedError(str(error)) from error
+
+        join_room(f"user:{user.id}")
+        connected_socket_counts[user.id] = connected_socket_counts.get(user.id, 0) + 1
+        socket_session_state[request.sid] = {
+            "user_id": user.id,
+            "user_role": user_role,
+            "rooms": set(),
+        }
+        emit(
+            "socket:ready",
+            {
+                "user_id": user.id,
+                "role": user_role,
+            },
+        )
+
+    @socketio.on("disconnect")
+    def on_socket_disconnect():
+        session_state = socket_session_state.pop(request.sid, None)
+        if not session_state:
+            return
+
+        user_id = int(session_state["user_id"])
+        next_count = max(connected_socket_counts.get(user_id, 0) - 1, 0)
+        if next_count == 0:
+            connected_socket_counts.pop(user_id, None)
+        else:
+            connected_socket_counts[user_id] = next_count
+
+        for room in session_state.get("rooms", set()):
+            parts = room.split(":")
+            if len(parts) != 5:
+                continue
+            emit_presence_update(room, parts[2], parts[4])
+
+    @socketio.on("join_conversation")
+    def on_join_conversation(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return
+
+        client_id, provider_id, _, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("other_user_id"),
+        )
+        if error_message:
+            emit("socket:error", {"message": error_message})
+            return
+
+        room = build_chat_room(client_id, provider_id)
+        join_room(room)
+        session_state["rooms"].add(room)
+        emit(
+            "conversation_joined",
+            {
+                "room": room,
+                "client_id": client_id,
+                "provider_id": provider_id,
+            },
+        )
+        emit_presence_update(room, client_id, provider_id)
+
+    @socketio.on("typing_status")
+    def on_typing_status(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return
+
+        client_id, provider_id, _, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("other_user_id"),
+        )
+        if error_message:
+            emit("socket:error", {"message": error_message})
+            return
+
+        room = build_chat_room(client_id, provider_id)
+        emit(
+            "typing_status",
+            {
+                "room": room,
+                "user_id": session_state["user_id"],
+                "user_role": session_state["user_role"],
+                "is_typing": bool(payload.get("is_typing")),
+            },
+            room=room,
+            include_self=False,
+        )
+
+    @socketio.on("send_message")
+    def on_send_message(payload):
+        payload = payload or {}
+        session_state = socket_session_state.get(request.sid)
+        if not session_state:
+            disconnect()
+            return {"success": False, "message": "Session socket invalide."}
+
+        content = str(payload.get("content") or "").strip()
+        if not content:
+            return {"success": False, "message": "Le message ne peut pas etre vide."}
+
+        client_id, provider_id, other_user, error_message = get_or_create_client_provider_pair(
+            session_state["user_id"],
+            session_state["user_role"],
+            payload.get("receiver_id"),
+        )
+        if error_message:
+            return {"success": False, "message": error_message}
+
+        message = Message(
+            sender_id=session_state["user_id"],
+            receiver_id=other_user.id,
+            content=content,
+            is_read=False,
+        )
+        db.session.add(message)
+        db.session.commit()
+
+        room = build_chat_room(client_id, provider_id)
+        message_payload = serialize_message(message)
+        socket_payload = {
+            "room": room,
+            "message": message_payload,
+            "client_id": client_id,
+            "provider_id": provider_id,
+        }
+
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(provider_id, client_id)
+
+        return {
+            "success": True,
+            "message": "Message envoye avec succes.",
+            "messagePayload": socket_payload,
+        }
+
     @app.get("/")
     def root():
         return jsonify({"message": "3arrasli backend is running"})
@@ -1943,6 +2199,16 @@ def create_app():
         db.session.add(message)
         db.session.commit()
 
+        room = build_chat_room(client.id, request.user_id)
+        socket_payload = {
+            "room": room,
+            "message": serialize_message(message),
+            "client_id": client.id,
+            "provider_id": request.user_id,
+        }
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(request.user_id, client.id)
+
         return (
             jsonify(
                 {
@@ -1950,6 +2216,7 @@ def create_app():
                     "message": "Message envoye avec succes.",
                     "sentMessage": serialize_provider_chat_message(message, request.user_id),
                     "chat": serialize_provider_chat(client, context, request.user_id),
+                    "messagePayload": socket_payload,
                 }
             ),
             201,
@@ -2368,7 +2635,16 @@ def create_app():
         message = Message(sender_id=request.user_id, receiver_id=receiver_id, content=content)
         db.session.add(message)
         db.session.commit()
-        return jsonify({"success": True, "message": serialize_message(message)}), 201
+        room = build_chat_room(request.user_id, receiver_id)
+        socket_payload = {
+            "room": room,
+            "message": serialize_message(message),
+            "client_id": request.user_id,
+            "provider_id": int(receiver_id),
+        }
+        socketio.emit("receive_message", socket_payload, room=room)
+        emit_provider_chat_update(receiver_id, request.user_id)
+        return jsonify({"success": True, "message": serialize_message(message), "messagePayload": socket_payload}), 201
 
     @app.get("/api/planner")
     @auth_required(allowed_roles={"client"})
@@ -2606,4 +2882,4 @@ def seed_data():
 app = create_app()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
