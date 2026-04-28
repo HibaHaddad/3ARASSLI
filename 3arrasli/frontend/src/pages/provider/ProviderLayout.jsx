@@ -47,7 +47,7 @@ const ProviderLayout = ({
             sidebarAddon={sidebarAddon}
           />
 
-          <section className="provider-content">
+          <section className={`provider-content ${isSidebarOpen ? "with-sidebar" : "without-sidebar"}`}>
             <header className="provider-content-header">
               <div>
                 <p className="provider-section-label">{currentSection.label}</p>

@@ -68,6 +68,13 @@
   z-index: 50;
   padding: 0 0 10px;
   background: transparent;
+  transition: transform 280ms ease, opacity 280ms ease;
+}
+
+.auth-navbar.auth-navbar-hidden {
+  transform: translateY(-140%);
+  opacity: 0.01;
+  pointer-events: none;
 }
 
 .auth-navbar-content {

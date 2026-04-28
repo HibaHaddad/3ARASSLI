@@ -131,20 +131,29 @@ const ChatPage = () => {
     socketRef.current = socket;
 
     socket.on("socket:ready", () => {
+      console.log("[client-chat] socket:ready");
       joinedConversationIdsRef.current.clear();
       setSocketConnected(true);
     });
 
     socket.on("disconnect", () => {
+      console.log("[client-chat] disconnect");
       setSocketConnected(false);
     });
 
-    socket.on("receive_message", ({ message }) => {
+    socket.on("receive_message", ({ message, room, client_id, provider_id }) => {
       if (!message) {
         return;
       }
 
       const otherUserId = getOtherUserId(message, currentUserId);
+      console.log("[client-chat] receive_message", {
+        room,
+        client_id,
+        provider_id,
+        messageId: message.id,
+        otherUserId,
+      });
 
       setChatPreview((prev) => {
         const withoutConversation = prev.filter(
@@ -213,6 +222,7 @@ const ChatPage = () => {
       if (joinedConversationIdsRef.current.has(providerId)) {
         return;
       }
+      console.log("[client-chat] join_conversation", { providerId });
       joinConversationRoom(socket, providerId);
       joinedConversationIdsRef.current.add(providerId);
     });
@@ -232,6 +242,10 @@ const ChatPage = () => {
 
     try {
       const socketResponse = await emitRealtimeMessage(socketRef.current, receiverId, trimmed);
+      console.log("[client-chat] send_message", {
+        receiverId,
+        success: socketResponse?.success,
+      });
       if (!socketResponse?.success) {
         throw new Error(socketResponse?.message || "Envoi impossible.");
       }

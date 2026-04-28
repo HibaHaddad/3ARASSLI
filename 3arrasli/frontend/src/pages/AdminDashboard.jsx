@@ -71,10 +71,11 @@ const defaultPackForm = {
 };
 
 const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
+const isMobileSidebarViewport = () => window.innerWidth <= 980;
 
 const AdminDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [initialLoading, setInitialLoading] = useState(true);
   const [sectionLoading, setSectionLoading] = useState(false);
   const [adminNotifications, setAdminNotifications] = useState(() => {
@@ -145,7 +146,6 @@ const AdminDashboard = () => {
       return;
     }
 
-    setSidebarOpen(false);
     setSectionLoading(true);
     const timer = setTimeout(() => setSectionLoading(false), 260);
 
@@ -211,7 +211,9 @@ const AdminDashboard = () => {
       prev.map((item) => (item.id === notification.id ? { ...item, seen: true } : item))
     );
     setActiveSection("providers");
-    setSidebarOpen(false);
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
   };
 
   const loadProviders = async () => {
@@ -976,7 +978,12 @@ const AdminDashboard = () => {
       <AdminLayout
         sections={adminSections}
         activeSection={activeSection}
-        onSectionChange={setActiveSection}
+        onSectionChange={(sectionId) => {
+          setActiveSection(sectionId);
+          if (isMobileSidebarViewport()) {
+            setSidebarOpen(false);
+          }
+        }}
         isSidebarOpen={sidebarOpen}
         onToggleSidebar={() => setSidebarOpen((prev) => !prev)}
         currentSection={currentSection}

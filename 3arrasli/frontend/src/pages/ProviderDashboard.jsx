@@ -53,6 +53,8 @@ const toIsoDate = (value) => {
   return `${year}-${month}-${day}`;
 };
 
+const isMobileSidebarViewport = () => window.innerWidth <= 980;
+
 const mergeProviderChat = (items, nextChat) => {
   if (!nextChat?.id) {
     return items;
@@ -64,9 +66,36 @@ const mergeProviderChat = (items, nextChat) => {
   );
 };
 
+const upsertProviderRealtimeMessage = (chat, message, providerId, isActiveChat) => {
+  const nextMessage = {
+    id: message.id,
+    author: Number(message.sender_id) === Number(providerId) ? "provider" : "client",
+    text: message.content,
+    time: message.timestamp
+      ? new Date(message.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+      : "--",
+    timestamp: message.timestamp,
+  };
+
+  const alreadyExists = Array.isArray(chat.messages) && chat.messages.some((item) => item.id === nextMessage.id);
+  const messages = alreadyExists ? chat.messages : [...(chat.messages || []), nextMessage];
+
+  return {
+    ...chat,
+    messages,
+    excerpt: message.content,
+    time: nextMessage.time,
+    lastTimestamp: message.timestamp || chat.lastTimestamp,
+    unread:
+      Number(message.sender_id) === Number(providerId) || isActiveChat
+        ? 0
+        : Number(chat.unread || 0) + 1,
+  };
+};
+
 const ProviderDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   const [reservations, setReservations] = useState([]);
   const [reservationFilter, setReservationFilter] = useState("Tous");
   const [searchTerm, setSearchTerm] = useState("");
@@ -118,16 +147,13 @@ const ProviderDashboard = () => {
   const [typingLabel, setTypingLabel] = useState("");
   const [activeClientOnline, setActiveClientOnline] = useState(false);
   const [socketConnected, setSocketConnected] = useState(false);
+  const currentProviderId = Number(getStoredSession()?.user?.id || 0);
   const socketRef = useRef(null);
   const joinedChatIdsRef = useRef(new Set());
   const typingTimeoutRef = useRef(null);
   const stopTypingTimeoutRef = useRef(null);
   const messagesEndRef = useRef(null);
   const activeChatIdRef = useRef(null);
-
-  useEffect(() => {
-    setSidebarOpen(false);
-  }, [activeSection]);
 
   const loadBookings = async () => {
     setLoadingBookings(true);
@@ -325,11 +351,13 @@ const ProviderDashboard = () => {
     socketRef.current = socket;
 
     socket.on("socket:ready", () => {
+      console.log("[provider-chat] socket:ready");
       joinedChatIdsRef.current.clear();
       setSocketConnected(true);
     });
 
     socket.on("disconnect", () => {
+      console.log("[provider-chat] disconnect");
       setSocketConnected(false);
     });
 
@@ -338,10 +366,47 @@ const ProviderDashboard = () => {
         return;
       }
 
+      console.log("[provider-chat] provider_chat_updated", { chatId: chat.id });
       setChats((prev) => mergeProviderChat(prev, chat));
       if (chat.id === activeChatIdRef.current) {
         setTypingLabel("");
       }
+    });
+
+    socket.on("receive_message", ({ message, room, client_id, provider_id }) => {
+      if (!message) {
+        return;
+      }
+
+      const chatId =
+        Number(message.sender_id) === Number(currentProviderId)
+          ? Number(message.receiver_id)
+          : Number(message.sender_id);
+
+      console.log("[provider-chat] receive_message", {
+        room,
+        client_id,
+        provider_id,
+        messageId: message.id,
+        chatId,
+      });
+
+      setChats((prev) => {
+        const existingChat = prev.find((chat) => chat.id === chatId);
+        if (!existingChat) {
+          return prev;
+        }
+
+        return mergeProviderChat(
+          prev,
+          upsertProviderRealtimeMessage(
+            existingChat,
+            message,
+            currentProviderId,
+            existingChat.id === activeChatIdRef.current
+          )
+        );
+      });
     });
 
     socket.on("typing_status", ({ user_id, is_typing }) => {
@@ -387,15 +452,19 @@ const ProviderDashboard = () => {
   }, []);
 
   useEffect(() => {
-    if (!socketRef.current || !socketConnected || !activeChatId) {
+    if (!socketRef.current || !socketConnected) {
       return;
     }
 
-    if (!joinedChatIdsRef.current.has(activeChatId)) {
-      joinConversationRoom(socketRef.current, activeChatId);
-      joinedChatIdsRef.current.add(activeChatId);
-    }
-  }, [activeChatId, socketConnected]);
+    chats.forEach((chat) => {
+      if (joinedChatIdsRef.current.has(chat.id)) {
+        return;
+      }
+      console.log("[provider-chat] join_conversation", { chatId: chat.id });
+      joinConversationRoom(socketRef.current, chat.id);
+      joinedChatIdsRef.current.add(chat.id);
+    });
+  }, [chats, socketConnected]);
 
   const filteredReservations = useMemo(() => {
     const normalized = searchTerm.trim().toLowerCase();
@@ -546,13 +615,17 @@ const ProviderDashboard = () => {
 
   const goToProfileCompletion = () => {
     setActiveSection("profile");
-    setSidebarOpen(false);
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
     setProfileCompletionDismissed(true);
   };
 
   const handleSectionChange = (sectionId) => {
     setActiveSection(sectionId);
-    setSidebarOpen(false);
+    if (isMobileSidebarViewport()) {
+      setSidebarOpen(false);
+    }
   };
 
   const updateReservationStatus = async (id, status) => {
@@ -995,6 +1068,10 @@ const ProviderDashboard = () => {
 
     try {
       const socketResponse = await emitRealtimeMessage(socketRef.current, activeChatId, content);
+      console.log("[provider-chat] send_message", {
+        receiverId: activeChatId,
+        success: socketResponse?.success,
+      });
       if (!socketResponse?.success) {
         throw new Error(socketResponse?.message || "Impossible d'envoyer ce message.");
       }
