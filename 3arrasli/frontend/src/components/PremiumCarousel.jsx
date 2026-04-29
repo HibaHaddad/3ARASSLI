@@ -7,10 +7,16 @@ const FREE_CARDS_COUNT = 3;
 
 const getVisibleCount = () => {
   if (typeof window === "undefined") {
-    return 2;
+    return 3;
   }
 
-  return window.innerWidth <= 900 ? 1 : 2;
+  if (window.innerWidth <= 900) {
+    return 1;
+  }
+  if (window.innerWidth <= 1240) {
+    return 2;
+  }
+  return 3;
 };
 
 const PremiumCarousel = ({ services }) => {
@@ -89,7 +95,14 @@ const PremiumCarousel = ({ services }) => {
           style={{ transform: `translate3d(-${trackOffset}%, 0, 0)` }}
         >
           {services.map((service) => (
-            <div key={service.id} className="premium-carousel-slide">
+            <div
+              key={service.id}
+              className="premium-carousel-slide"
+              style={{
+                flex: `0 0 ${100 / visibleCount}%`,
+                minWidth: `${100 / visibleCount}%`,
+              }}
+            >
               <ServiceCard service={service} />
             </div>
           ))}

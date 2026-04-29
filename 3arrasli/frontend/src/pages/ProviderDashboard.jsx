@@ -1313,6 +1313,14 @@ const ProviderDashboard = () => {
     }
 
     const target = notification.target || notification.reservation;
+    if (notification.type === "contract_provider_signature_required") {
+      if (notification.reservationId) {
+        setSelectedReservationId(notification.reservationId);
+      }
+      setActiveSection("reservations");
+      return;
+    }
+
     if (target?.kind === "pack" || notification.packId) {
       setActiveSection("packs");
       const packId = notification.packId || target?.packId || target?.id;
@@ -1423,6 +1431,7 @@ const ProviderDashboard = () => {
             onSelectReservation={setSelectedReservationId}
             onViewInCalendar={goToCalendarForReservation}
             onContactClient={contactReservationClient}
+            onRefreshBookings={loadBookings}
           />
         );
       case "profile":

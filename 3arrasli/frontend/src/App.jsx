@@ -4,6 +4,7 @@ import Home from "./Home";
 import SplashScreen from "./components/SplashScreen";
 import ToastContainer from "./components/Toast";
 import AdminDashboard from "./pages/AdminDashboard";
+import AboutPage from "./pages/AboutPage";
 import ChatPage from "./pages/ChatPage";
 import ClientDashboard from "./pages/ClientDashboard";
 import ClientProfilePage from "./pages/ClientProfilePage";
@@ -11,6 +12,9 @@ import ClientPacksPage from "./pages/ClientPacksPage";
 import ClientProviderPage from "./pages/ClientProviderPage";
 import ClientReservationsPage from "./pages/ClientReservationsPage";
 import ClientSearchPage from "./pages/ClientSearchPage";
+import ConditionsPage from "./pages/ConditionsPage";
+import ContactPage from "./pages/ContactPage";
+import FaqPage from "./pages/FaqPage";
 import FavoritesPage from "./pages/FavoritesPage";
 import LoginPage from "./pages/LoginPage";
 import PlannerPage from "./pages/PlannerPage";
@@ -71,6 +75,10 @@ const App = () => {
       <ToastContainer />
       <Routes>
         <Route path="/" element={<Home />} />
+        <Route path="/a-propos" element={<AboutPage />} />
+        <Route path="/contact" element={<ContactPage />} />
+        <Route path="/faq" element={<FaqPage />} />
+        <Route path="/conditions" element={<ConditionsPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignupPage />} />
         <Route path="/client-dashboard" element={<Navigate to="/client" replace />} />

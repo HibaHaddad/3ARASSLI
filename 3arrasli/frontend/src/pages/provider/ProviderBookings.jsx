@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
+import api, { API_BASE_URL } from "../../services/api";
+import { showToast } from "../../services/toast";
 
 const PAGE_SIZE = 8;
 
@@ -14,6 +16,28 @@ const formatBookingDate = (date) => {
 };
 
 const formatMoney = (value) => `${new Intl.NumberFormat("fr-FR").format(Number(value || 0))} TND`;
+const normalizeContractStatus = (reservation) => {
+  if (!reservation) return "pending_provider_signature";
+  if (reservation.clientSignedAt) return "fully_signed";
+  if (reservation.providerSignedAt) return "signed_by_provider";
+  const raw = String(reservation.contractStatus || "").trim();
+  if (raw) return raw;
+  return "pending_provider_signature";
+};
+
+const formatContractStatus = (status) => {
+  const value = String(status || "").trim();
+  if (value === "signed_by_provider") return "Signe par prestataire";
+  if (value === "fully_signed") return "Signe par client et prestataire";
+  if (value === "refused_by_provider") return "Refuse par prestataire";
+  return "En attente signature prestataire";
+};
+const buildDocumentUrl = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("http://") || raw.startsWith("https://")) return raw;
+  return `${API_BASE_URL}${raw.startsWith("/") ? raw : `/${raw}`}`;
+};
 
 const ProviderBookings = ({
   searchTerm,
@@ -25,12 +49,16 @@ const ProviderBookings = ({
   onSelectReservation,
   onViewInCalendar,
   onContactClient,
+  onRefreshBookings,
 }) => {
   const [dateFilter, setDateFilter] = useState("");
   const [clientFilter, setClientFilter] = useState("");
   const [serviceFilter, setServiceFilter] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [modalReservation, setModalReservation] = useState(null);
+  const [contractBusy, setContractBusy] = useState(false);
+  const [providerSignatureQr, setProviderSignatureQr] = useState("");
+  const [providerSignatureLink, setProviderSignatureLink] = useState("");
 
   const filteredBookings = useMemo(() => {
     const clientQuery = clientFilter.trim().toLowerCase();
@@ -64,15 +92,96 @@ const ProviderBookings = ({
 
   const openReservationModal = (reservation) => {
     onSelectReservation(reservation.id);
+    setProviderSignatureQr("");
+    setProviderSignatureLink("");
     setModalReservation(reservation);
   };
 
   const activeReservation =
     modalReservation ||
+    (modalReservation?.id ? reservations.find((item) => item.id === modalReservation.id) : null) ||
     (selectedReservationId ? reservations.find((item) => item.id === selectedReservationId) : null) ||
     selectedReservation;
   const canUseContract = Boolean(activeReservation?.contractUrl);
   const canUseInvoice = Boolean(activeReservation?.invoiceUrl);
+  const normalizedContractStatus = normalizeContractStatus(activeReservation);
+  const canSignProviderContract = Boolean(
+    activeReservation?.id &&
+    String(activeReservation?.paymentStatus || "").trim().toUpperCase() === "PAID" &&
+    normalizedContractStatus === "pending_provider_signature"
+  );
+  const contractHref = buildDocumentUrl(activeReservation?.contractUrl);
+  const invoiceHref = buildDocumentUrl(activeReservation?.invoiceUrl);
+
+  const refuseProviderContract = async () => {
+    if (!activeReservation?.id || contractBusy) {
+      return;
+    }
+    setContractBusy(true);
+    try {
+      await api.post(`/api/provider/contracts/${activeReservation.id}/refuse`, {});
+      setModalReservation(null);
+      if (onRefreshBookings) {
+        await onRefreshBookings();
+      }
+    } finally {
+      setContractBusy(false);
+    }
+  };
+
+  const createProviderSignatureQr = async () => {
+    if (!activeReservation?.id || contractBusy) {
+      return;
+    }
+    setContractBusy(true);
+    try {
+      const response = await api.post(`/api/provider/contracts/${activeReservation.id}/signature-link`);
+      const token = response.data?.token;
+      if (token) {
+        const url = `${window.location.origin}/public/sign-contract?token=${encodeURIComponent(token)}`;
+        setProviderSignatureLink(url);
+        setProviderSignatureQr(`https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(url)}`);
+      } else {
+        throw new Error("Token de signature introuvable.");
+      }
+    } catch (error) {
+      showToast("error", error.response?.data?.message || error.message || "Impossible de generer le QR de signature.");
+    } finally {
+      setContractBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!modalReservation?.id || !providerSignatureLink || !onRefreshBookings) {
+      return undefined;
+    }
+
+    const refreshTimer = window.setInterval(async () => {
+      try {
+        const response = await api.get(`/api/provider/bookings/${modalReservation.id}`);
+        const latestBooking = response.data?.booking;
+        if (latestBooking) {
+          setModalReservation(latestBooking);
+        }
+        await onRefreshBookings();
+      } catch (_error) {
+        // no-op: soft refresh loop
+      }
+    }, 3000);
+
+    return () => window.clearInterval(refreshTimer);
+  }, [modalReservation?.id, providerSignatureLink, onRefreshBookings]);
+
+  useEffect(() => {
+    if (!providerSignatureLink || !activeReservation) {
+      return;
+    }
+    if (!activeReservation.canProviderSignContract) {
+      setProviderSignatureQr("");
+      setProviderSignatureLink("");
+      showToast("success", "Signature prestataire validee. Le contrat est mis a jour.");
+    }
+  }, [providerSignatureLink, activeReservation]);
 
   return (
     <div className="provider-bookings-page provider-bookings-modern">
@@ -227,6 +336,10 @@ const ProviderBookings = ({
 
             <div className="provider-booking-modal-grid">
               <div>
+                <span>Statut signature prestataire</span>
+                <strong>{formatContractStatus(normalizedContractStatus)}</strong>
+              </div>
+              <div>
                 <span>Client</span>
                 <strong>{activeReservation.client}</strong>
               </div>
@@ -297,7 +410,7 @@ const ProviderBookings = ({
               </button>
               <a
                 className={`provider-ghost-btn ${canUseContract ? "" : "disabled"}`}
-                href={canUseContract ? activeReservation.contractUrl : undefined}
+                href={canUseContract ? contractHref : undefined}
                 target="_blank"
                 rel="noreferrer"
                 aria-disabled={!canUseContract}
@@ -306,14 +419,41 @@ const ProviderBookings = ({
               </a>
               <a
                 className={`provider-ghost-btn ${canUseInvoice ? "" : "disabled"}`}
-                href={canUseInvoice ? activeReservation.invoiceUrl : undefined}
+                href={canUseInvoice ? invoiceHref : undefined}
                 target="_blank"
                 rel="noreferrer"
                 aria-disabled={!canUseInvoice}
               >
                 Facture
               </a>
+              <button
+                type="button"
+                className="provider-primary-btn"
+                disabled={!canSignProviderContract || contractBusy}
+                onClick={createProviderSignatureQr}
+              >
+                Signer
+              </button>
+              <button
+                type="button"
+                className="provider-ghost-btn"
+                disabled={!canSignProviderContract || contractBusy}
+                onClick={refuseProviderContract}
+              >
+                Refuser
+              </button>
             </footer>
+            {providerSignatureQr ? (
+              <div className="client-signature-qr">
+                <img src={providerSignatureQr} alt="QR code signature prestataire" width="180" height="180" />
+                <p>Scannez ce QR avec votre telephone pour signer sans vous reconnecter.</p>
+                {providerSignatureLink ? (
+                  <a className="provider-ghost-btn" href={providerSignatureLink} target="_blank" rel="noreferrer">
+                    Ouvrir le lien de signature
+                  </a>
+                ) : null}
+              </div>
+            ) : null}
           </section>
         </div>
       ) : null}

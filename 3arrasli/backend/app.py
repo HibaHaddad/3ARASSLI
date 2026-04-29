@@ -23,7 +23,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db, socketio
-from models import Appointment, Favorite, Message, Notification, Pack, PackItem, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
+from models import Appointment, Contract, Favorite, Message, Notification, Pack, PackItem, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -331,6 +331,7 @@ def write_contract_pdf(file_path, contract_data):
     remaining_amount = format_currency(contract_data.get("remaining_amount") or 0)
     signed_at = str(contract_data.get("signed_at") or "")
     has_client_signature = bool(contract_data.get("has_client_signature"))
+    contract_status = str(contract_data.get("contract_status") or "pending_provider_signature").strip() or "pending_provider_signature"
 
     stream_parts = []
 
@@ -400,9 +401,17 @@ def write_contract_pdf(file_path, contract_data):
         text(52, 438, "Statut: NON SIGNE", 10)
 
     text(327, 462, "Zone reservee au prestataire", 9)
-    text(327, 438, "Statut: EN ATTENTE", 10)
+    provider_status_label = "EN ATTENTE"
+    if contract_status == "signed_by_provider":
+        provider_status_label = "SIGNE PRESTATAIRE"
+    elif contract_status == "fully_signed":
+        provider_status_label = "VALIDE"
+    elif contract_status == "refused_by_provider":
+        provider_status_label = "REFUSE PAR PRESTATAIRE"
+    text(327, 438, f"Statut: {provider_status_label}", 10)
 
-    text(40, 388, "Ce document est genere automatiquement par 3arrasli et conserve une trace de signature numerique.", 8)
+    text(40, 388, f"Statut technique (DB): {contract_status}", 8)
+    text(40, 374, "Ce document est genere automatiquement par 3arrasli et conserve une trace de signature numerique.", 8)
 
     stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
 
@@ -703,6 +712,10 @@ def serialize_service(service, client_id=None):
 def serialize_reservation(reservation):
     service = Service.query.get(reservation.service_id)
     provider = User.query.get(get_service_provider_id(service)) if service else None
+    contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+    contract_status = str(getattr(contract, "status", "") or "").strip() or "pending_provider_signature"
+    can_client_view_contract = contract_status in {"signed_by_provider", "fully_signed"}
+    can_client_sign_contract = contract_status == "signed_by_provider" and not bool(getattr(contract, "client_signature", None))
     return {
         "id": reservation.id,
         "client_id": reservation.client_id,
@@ -717,9 +730,14 @@ def serialize_reservation(reservation):
         "payment_status": normalize_payment_status(getattr(reservation, "payment_status", None)),
         "payment_option": getattr(reservation, "payment_option", None) or "full",
         "invoice_url": resolve_document_url(getattr(reservation, "invoice_path", None)),
-        "contract_url": resolve_document_url(getattr(reservation, "contract_path", None)),
+        "contract_url": resolve_document_url(getattr(reservation, "contract_path", None)) if can_client_view_contract else None,
         "signed_at": reservation.signed_at.isoformat() if getattr(reservation, "signed_at", None) else None,
-        "has_signature": bool(getattr(reservation, "signature_data", None)),
+        "has_signature": bool(getattr(contract, "client_signature", None) or getattr(reservation, "signature_data", None)),
+        "contract_status": contract_status,
+        "can_view_contract": can_client_view_contract,
+        "can_sign_contract": can_client_sign_contract,
+        "provider_signed_at": contract.provider_signed_at.isoformat() if getattr(contract, "provider_signed_at", None) else None,
+        "client_signed_at": contract.client_signed_at.isoformat() if getattr(contract, "client_signed_at", None) else None,
         "created_at": reservation.created_at.isoformat() if reservation.created_at else None,
         "updated_at": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
     }
@@ -763,6 +781,8 @@ def serialize_provider_booking(reservation):
         calendar_slot_locked = block is not None
         calendar_block_id = block.id if block else None
 
+    contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+    contract_status = str(getattr(contract, "status", "") or "").strip() or "pending_provider_signature"
     return {
         "id": reservation.id,
         "clientId": reservation.client_id,
@@ -781,6 +801,10 @@ def serialize_provider_booking(reservation):
         "details": details,
         "invoiceUrl": resolve_document_url(getattr(reservation, "invoice_path", None)),
         "contractUrl": resolve_document_url(getattr(reservation, "contract_path", None)),
+        "contractStatus": contract_status,
+        "providerSignedAt": contract.provider_signed_at.isoformat() if getattr(contract, "provider_signed_at", None) else None,
+        "clientSignedAt": contract.client_signed_at.isoformat() if getattr(contract, "client_signed_at", None) else None,
+        "canProviderSignContract": contract_status == "pending_provider_signature" and normalize_payment_status(getattr(reservation, "payment_status", None)) == "PAID",
         "calendarSlotLocked": calendar_slot_locked,
         "calendarBlockId": calendar_block_id,
         "calendarMessage": (
@@ -1028,11 +1052,11 @@ def make_token(user_id, role):
     return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
 
-def make_signature_token(reservation_id, client_id, expires_minutes=30):
+def make_signature_token(reservation_id, user_id, purpose="reservation_signature_client", expires_minutes=30):
     payload = {
-        "purpose": "reservation_signature",
+        "purpose": str(purpose or "reservation_signature_client"),
         "reservation_id": int(reservation_id),
-        "client_id": int(client_id),
+        "user_id": int(user_id),
         "exp": datetime.utcnow() + timedelta(minutes=expires_minutes),
         "iat": datetime.utcnow(),
     }
@@ -1050,14 +1074,15 @@ def decode_signature_token(token):
     except jwt.InvalidTokenError as exc:
         raise ValueError("Lien de signature invalide.") from exc
 
-    if payload.get("purpose") != "reservation_signature":
+    purpose = str(payload.get("purpose") or "").strip()
+    if purpose not in {"reservation_signature_client", "reservation_signature_provider"}:
         raise ValueError("Lien de signature invalide.")
 
     reservation_id = int(payload.get("reservation_id") or 0)
-    client_id = int(payload.get("client_id") or 0)
-    if reservation_id <= 0 or client_id <= 0:
+    user_id = int(payload.get("user_id") or 0)
+    if reservation_id <= 0 or user_id <= 0:
         raise ValueError("Lien de signature invalide.")
-    return reservation_id, client_id
+    return reservation_id, user_id, purpose
 
 
 def get_day_status_from_slots(slots):
@@ -1693,6 +1718,7 @@ def create_app():
         ensure_pack_schema()
         ensure_favorite_schema()
         ensure_review_schema()
+        ensure_contract_schema()
         seed_data()
 
     connected_socket_counts = {}
@@ -2665,6 +2691,24 @@ def create_app():
                 "paid_amount": paid_amount,
             },
         )
+        reservation.invoice_path = invoice_relative
+        reservation.contract_path = contract_relative
+
+    def render_contract_pdf_for_reservation(reservation, contract_record):
+        latest_contract = (
+            Contract.query.filter_by(reservation_id=reservation.id)
+            .order_by(Contract.id.desc())
+            .first()
+        )
+        contract_source = latest_contract or contract_record
+        service = Service.query.get(reservation.service_id)
+        client = User.query.get(reservation.client_id)
+        provider = User.query.get(get_service_provider_id(service)) if service else None
+        total_amount = float(service.price) if service and service.price is not None else float(reservation.amount or 0)
+        paid_amount = float(reservation.amount or 0) if normalize_payment_status(reservation.payment_status) == "PAID" else 0.0
+        contract_name = f"contract-{reservation.id}.pdf"
+        contract_relative = build_storage_relative_path("contracts", contract_name)
+        contract_absolute = os.path.join(app.root_path, contract_relative.replace("/", os.sep))
         write_contract_pdf(
             contract_absolute,
             {
@@ -2678,17 +2722,31 @@ def create_app():
                 "total_amount": total_amount,
                 "paid_amount": paid_amount,
                 "remaining_amount": max(total_amount - paid_amount, 0),
-                "has_client_signature": bool(reservation.signature_data),
+                "has_client_signature": bool(getattr(contract_source, "client_signature", None)),
+                "contract_status": str(getattr(contract_source, "status", "") or "pending_provider_signature"),
                 "signed_at": (
-                    reservation.signed_at.isoformat()
-                    if reservation.signed_at
+                    contract_source.client_signed_at.isoformat()
+                    if getattr(contract_source, "client_signed_at", None)
                     else datetime.utcnow().isoformat()
                 ),
             },
         )
-
-        reservation.invoice_path = invoice_relative
         reservation.contract_path = contract_relative
+        contract_record.final_contract_path = contract_relative
+
+    def get_or_create_contract_for_reservation(reservation):
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if contract:
+            return contract
+        contract = Contract(
+            reservation_id=reservation.id,
+            payment_id=reservation.stripe_payment_intent_id or reservation.stripe_session_id or "",
+            invoice_id=str(reservation.id),
+            status="pending_provider_signature",
+        )
+        db.session.add(contract)
+        db.session.flush()
+        return contract
 
     def mark_reservation_paid(reservation, payment_intent_id=None, stripe_session_id=None):
         reservation.payment_status = "PAID"
@@ -2696,6 +2754,25 @@ def create_app():
         reservation.stripe_session_id = stripe_session_id or reservation.stripe_session_id
         reservation.updated_at = datetime.utcnow()
         generate_reservation_documents(reservation)
+        contract = get_or_create_contract_for_reservation(reservation)
+        contract.status = "pending_provider_signature"
+        contract.payment_id = reservation.stripe_payment_intent_id or reservation.stripe_session_id or contract.payment_id
+        contract.invoice_id = str(reservation.id)
+        contract.updated_at = datetime.utcnow()
+        render_contract_pdf_for_reservation(reservation, contract)
+        service = Service.query.get(reservation.service_id)
+        provider_id = get_service_provider_id(service)
+        if provider_id:
+            db.session.add(
+                Notification(
+                    user_id=provider_id,
+                    type="contract_provider_signature_required",
+                    title="Signature contrat requise",
+                    message="Un paiement client a ete confirme. Veuillez consulter et signer le contrat.",
+                    reservation_id=reservation.id,
+                    is_read=False,
+                )
+            )
 
     def create_checkout_session(reservation, service):
         frontend_base_url = get_frontend_base_url()
@@ -2716,6 +2793,50 @@ def create_app():
             "line_items[0][price_data][product_data][description]": service.description or service.title,
         }
         return stripe_api_request("POST", "/v1/checkout/sessions", form_data=form_data)
+
+    def create_pack_checkout_session(pack, reservations):
+        if not reservations:
+            raise RuntimeError("Aucune reservation a payer.")
+        frontend_base_url = get_frontend_base_url()
+        total_amount = sum(float(item.amount or 0) for item in reservations)
+        first_reservation = reservations[0]
+        reservation_ids = ",".join(str(item.id) for item in reservations)
+        form_data = {
+            "mode": "payment",
+            "success_url": (
+                f"{frontend_base_url}/client/reservations"
+                f"?checkout=success&reservation_id={first_reservation.id}&session_id={{CHECKOUT_SESSION_ID}}"
+            ),
+            "cancel_url": f"{frontend_base_url}/client/reservations?checkout=cancel&reservation_id={first_reservation.id}",
+            "metadata[reservation_id]": str(first_reservation.id),
+            "metadata[client_id]": str(first_reservation.client_id),
+            "metadata[pack_id]": str(pack.id),
+            "metadata[pack_reservation_ids]": reservation_ids,
+            "line_items[0][quantity]": "1",
+            "line_items[0][price_data][currency]": get_stripe_currency(),
+            "line_items[0][price_data][unit_amount]": str(amount_to_minor_units(total_amount)),
+            "line_items[0][price_data][product_data][name]": f"Pack mariage - {pack.name}",
+            "line_items[0][price_data][product_data][description]": f"{len(reservations)} service(s) inclus",
+        }
+        return stripe_api_request("POST", "/v1/checkout/sessions", form_data=form_data)
+
+    def create_pack_payment_intent(pack, reservations):
+        if not reservations:
+            raise RuntimeError("Aucune reservation a payer.")
+        total_amount = sum(float(item.amount or 0) for item in reservations)
+        first_reservation = reservations[0]
+        reservation_ids = ",".join(str(item.id) for item in reservations)
+        form_data = {
+            "amount": str(amount_to_minor_units(total_amount)),
+            "currency": get_stripe_currency(),
+            "automatic_payment_methods[enabled]": "true",
+            "metadata[reservation_id]": str(first_reservation.id),
+            "metadata[client_id]": str(first_reservation.client_id),
+            "metadata[pack_id]": str(pack.id),
+            "metadata[pack_reservation_ids]": reservation_ids,
+            "description": f"Pack mariage - {pack.name}",
+        }
+        return stripe_api_request("POST", "/v1/payment_intents", form_data=form_data)
 
     def create_payment_intent(reservation, service):
         payment_amount = reservation.amount if reservation.amount is not None else service.price
@@ -2739,16 +2860,26 @@ def create_app():
         if not reservation:
             raise RuntimeError("Reservation introuvable.")
 
+        pack_ids_raw = str(session.get("metadata", {}).get("pack_reservation_ids") or "").strip()
+        pack_reservations = []
+        if pack_ids_raw:
+            parsed_ids = [int(value.strip()) for value in pack_ids_raw.split(",") if value.strip().isdigit()]
+            if parsed_ids:
+                pack_reservations = Reservation.query.filter(Reservation.id.in_(parsed_ids)).all()
+        targets = pack_reservations if pack_reservations else [reservation]
+
         if session.get("payment_status") == "paid":
-            mark_reservation_paid(
-                reservation,
-                payment_intent_id=session.get("payment_intent"),
-                stripe_session_id=session.get("id"),
-            )
+            for item in targets:
+                mark_reservation_paid(
+                    item,
+                    payment_intent_id=session.get("payment_intent"),
+                    stripe_session_id=session.get("id"),
+                )
         else:
-            reservation.payment_status = "UNPAID"
-            reservation.stripe_session_id = session.get("id")
-            reservation.updated_at = datetime.utcnow()
+            for item in targets:
+                item.payment_status = "UNPAID"
+                item.stripe_session_id = session.get("id")
+                item.updated_at = datetime.utcnow()
 
         db.session.commit()
         return reservation
@@ -2764,15 +2895,25 @@ def create_app():
         if not reservation:
             raise RuntimeError("Reservation introuvable.")
 
+        pack_ids_raw = str(payment_intent.get("metadata", {}).get("pack_reservation_ids") or "").strip()
+        pack_reservations = []
+        if pack_ids_raw:
+            parsed_ids = [int(value.strip()) for value in pack_ids_raw.split(",") if value.strip().isdigit()]
+            if parsed_ids:
+                pack_reservations = Reservation.query.filter(Reservation.id.in_(parsed_ids)).all()
+        targets = pack_reservations if pack_reservations else [reservation]
+
         if payment_intent.get("status") == "succeeded":
-            mark_reservation_paid(
-                reservation,
-                payment_intent_id=payment_intent.get("id"),
-            )
+            for item in targets:
+                mark_reservation_paid(
+                    item,
+                    payment_intent_id=payment_intent.get("id"),
+                )
         else:
-            reservation.payment_status = "UNPAID"
-            reservation.stripe_payment_intent_id = payment_intent.get("id")
-            reservation.updated_at = datetime.utcnow()
+            for item in targets:
+                item.payment_status = "UNPAID"
+                item.stripe_payment_intent_id = payment_intent.get("id")
+                item.updated_at = datetime.utcnow()
 
         db.session.commit()
         return reservation, payment_intent
@@ -3227,6 +3368,39 @@ def create_app():
                 "providers": [serialize_admin_provider(provider) for provider in providers],
             }
         )
+
+    @app.get("/api/admin/contracts")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_contracts():
+        contracts = Contract.query.order_by(Contract.updated_at.desc(), Contract.id.desc()).all()
+        items = []
+        for contract in contracts:
+            reservation = Reservation.query.get(contract.reservation_id) if contract.reservation_id else None
+            service = Service.query.get(reservation.service_id) if reservation else None
+            client = User.query.get(reservation.client_id) if reservation else None
+            provider = User.query.get(get_service_provider_id(service)) if service else None
+            file_path = getattr(contract, "final_contract_path", None) or (getattr(reservation, "contract_path", None) if reservation else None)
+            items.append(
+                {
+                    "id": f"CTR-{contract.id}",
+                    "contract_id": contract.id,
+                    "reservation_id": reservation.id if reservation else None,
+                    "title": service.title if service else "Contrat prestation",
+                    "client": client.username if client else "Client",
+                    "provider": provider.username if provider else "Prestataire",
+                    "status": str(getattr(contract, "status", "") or "pending_provider_signature"),
+                    "details": (
+                        f"Reservation #{reservation.id} - {service.title if service else 'Service'}"
+                        if reservation
+                        else "Contrat sans reservation associee"
+                    ),
+                    "provider_signed_at": contract.provider_signed_at.isoformat() if getattr(contract, "provider_signed_at", None) else None,
+                    "client_signed_at": contract.client_signed_at.isoformat() if getattr(contract, "client_signed_at", None) else None,
+                    "updated_at": contract.updated_at.isoformat() if getattr(contract, "updated_at", None) else None,
+                    "pdf_url": resolve_document_url(file_path),
+                }
+            )
+        return jsonify({"success": True, "contracts": items})
 
     @app.get("/api/client/profile")
     @auth_required(allowed_roles={"client"})
@@ -3763,6 +3937,153 @@ def create_app():
 
         return jsonify({"success": True, "packs": [serialize_pack(pack) for pack in visible_packs]})
 
+    @app.get("/api/client/stripe-config")
+    @auth_required(allowed_roles={"client"})
+    def get_client_stripe_config():
+        return jsonify(
+            {
+                "success": True,
+                "stripe": {
+                    "enabled": is_stripe_configured(),
+                    "publishable_key": get_stripe_publishable_key(),
+                },
+            }
+        )
+
+    @app.post("/api/client/packs/<int:pack_id>/reserve")
+    @auth_required(allowed_roles={"client"})
+    def reserve_client_pack(pack_id):
+        pack = Pack.query.get(pack_id)
+        if not pack:
+            return jsonify({"success": False, "message": "Pack introuvable."}), 404
+
+        refresh_pack_status(pack)
+        if pack.status != "validated":
+            return jsonify({"success": False, "message": "Ce pack n'est pas encore valide pour reservation."}), 409
+
+        payload = request.get_json(silent=True) or {}
+        date_value = str(payload.get("date") or "").strip()
+        start_time_label = str(payload.get("start_time") or "").strip()
+        notes = str(payload.get("notes") or "").strip() or None
+        payment_option = str(payload.get("payment_option") or "full").strip().lower()
+        pay_now = bool(payload.get("pay_now"))
+        payment_method = str(payload.get("payment_method") or "checkout").strip().lower()
+
+        if not date_value or not start_time_label:
+            return jsonify({"success": False, "message": "date et start_time sont requis."}), 400
+        parsed_date = parse_date_value(date_value)
+        if not parsed_date:
+            return jsonify({"success": False, "message": "date est invalide."}), 400
+        if not parse_time_value(start_time_label) or start_time_label not in STANDARD_WORKING_HOURS:
+            return jsonify({"success": False, "message": "start_time est invalide."}), 400
+        if payment_option not in {"full", "partial"}:
+            return jsonify({"success": False, "message": "payment_option est invalide."}), 400
+
+        pack_services = []
+        for item in pack.items or []:
+            if not item.service_id or not item.provider_id:
+                continue
+            service = Service.query.get(item.service_id)
+            if not service:
+                continue
+            pack_services.append((item, service))
+
+        if not pack_services:
+            return jsonify({"success": False, "message": "Aucun service reservable dans ce pack."}), 409
+
+        for item, service in pack_services:
+            if not assert_slot_available(item.provider_id, parsed_date, start_time_label):
+                provider = User.query.get(item.provider_id)
+                provider_name = provider.username if provider else "Prestataire"
+                return jsonify(
+                    {
+                        "success": False,
+                        "message": f"Le prestataire {provider_name} n'est pas disponible a {start_time_label} le {parsed_date.isoformat()}.",
+                    }
+                ), 409
+
+        total_reference_price = sum(max(float(service.price or 0), 0) for _, service in pack_services)
+        if total_reference_price <= 0:
+            total_reference_price = float(len(pack_services))
+
+        target_total = float(pack.price or 0)
+        if target_total <= 0:
+            target_total = total_reference_price
+        if payment_option == "partial":
+            target_total = round(target_total * DEFAULT_ADVANCE_RATIO, 2)
+
+        reservation_datetime = f"{parsed_date.isoformat()} {start_time_label}"
+        created_reservations = []
+        allocated_total = 0.0
+
+        for index, (item, service) in enumerate(pack_services):
+            if index == len(pack_services) - 1:
+                amount_value = round(max(target_total - allocated_total, 0), 2)
+            else:
+                ratio = max(float(service.price or 0), 0) / total_reference_price
+                amount_value = round(target_total * ratio, 2)
+                allocated_total += amount_value
+
+            reservation = Reservation(
+                client_id=request.user_id,
+                service_id=service.id,
+                date=reservation_datetime,
+                location=service.city,
+                amount=amount_value,
+                notes=notes,
+                details=f"Reservation pack #{pack.id} - {pack.name}",
+                payment_status="UNPAID",
+                payment_option=payment_option,
+            )
+            db.session.add(reservation)
+            db.session.flush()
+            reserve_calendar_slot(item.provider_id, reservation, parsed_date, start_time_label)
+            client = User.query.get(request.user_id)
+            create_reservation_notification(item.provider_id, reservation, service, client, parsed_date, start_time_label)
+            created_reservations.append(reservation)
+
+        checkout_url = None
+        session_id = None
+        client_secret = None
+        payment_intent_id = None
+        if pay_now:
+            if not is_stripe_configured():
+                return jsonify({"success": False, "message": "Stripe n'est pas configure. Ajoutez les cles Stripe dans backend/.env."}), 503
+            if payment_method == "intent":
+                try:
+                    payment_intent = create_pack_payment_intent(pack, created_reservations)
+                except RuntimeError as exc:
+                    return jsonify({"success": False, "message": str(exc)}), 400
+                payment_intent_id = payment_intent.get("id")
+                client_secret = payment_intent.get("client_secret")
+                for reservation in created_reservations:
+                    reservation.stripe_payment_intent_id = payment_intent_id
+                    reservation.updated_at = datetime.utcnow()
+            else:
+                try:
+                    session = create_pack_checkout_session(pack, created_reservations)
+                except RuntimeError as exc:
+                    return jsonify({"success": False, "message": str(exc)}), 400
+                session_id = session.get("id")
+                checkout_url = session.get("url")
+                for reservation in created_reservations:
+                    reservation.stripe_session_id = session_id
+                    reservation.updated_at = datetime.utcnow()
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Pack reserve. Poursuivez le paiement." if client_secret else "Pack reserve avec succes. Paiement en attente.",
+                "pack_id": pack.id,
+                "checkout_url": checkout_url,
+                "session_id": session_id,
+                "client_secret": client_secret,
+                "payment_intent_id": payment_intent_id,
+                "reservations": [serialize_reservation(item) for item in created_reservations],
+            }
+        ), 201
+
     @app.get("/api/provider/calendar/week")
     @auth_required(allowed_roles={"prestataire"})
     def get_provider_calendar_week():
@@ -4142,6 +4463,11 @@ def create_app():
         services = query.order_by(Service.rating.desc(), Service.title.asc()).all()
         return jsonify({"success": True, "services": [serialize_service(item, request.user_id) for item in services]})
 
+    @app.get("/api/public/services")
+    def list_public_services():
+        services = Service.query.order_by(Service.rating.desc(), Service.title.asc()).all()
+        return jsonify({"success": True, "services": [serialize_service(item) for item in services]})
+
     @app.get("/api/provider/services")
     @auth_required(allowed_roles={"prestataire"})
     def list_provider_services():
@@ -4504,7 +4830,9 @@ def create_app():
     @auth_required(allowed_roles={"client"})
     def list_reservations():
         reservations = (
-            Reservation.query.filter_by(client_id=request.user_id)
+            Reservation.query
+            .join(Service, Service.id == Reservation.service_id)
+            .filter(Reservation.client_id == request.user_id)
             .order_by(Reservation.created_at.desc())
             .all()
         )
@@ -4791,16 +5119,55 @@ def create_app():
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
         if normalize_payment_status(reservation.payment_status) != "PAID":
             return jsonify({"success": False, "message": "Le contrat peut etre signe apres le paiement."}), 409
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        if contract.status == "refused_by_provider":
+            return jsonify({"success": False, "message": "Le prestataire a refuse ce contrat."}), 409
+        if contract.status != "signed_by_provider":
+            return jsonify({"success": False, "message": "Le contrat doit d'abord etre signe par le prestataire."}), 409
 
         payload = request.get_json(silent=True) or {}
         signature_data = (payload.get("signature_data") or "").strip()
         if not signature_data:
             return jsonify({"success": False, "message": "signature_data est requis."}), 400
+        if contract.client_signature:
+            return jsonify({"success": False, "message": "Ce contrat est deja signe par le client."}), 409
 
+        now = datetime.utcnow()
+        contract.client_signature = signature_data
+        contract.client_signed_at = now
+        contract.client_signature_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")[:80]
+        contract.status = "fully_signed"
+        contract.updated_at = now
         reservation.signature_data = signature_data
-        reservation.signed_at = datetime.utcnow()
+        reservation.signed_at = now
         reservation.updated_at = datetime.utcnow()
-        generate_reservation_documents(reservation)
+        render_contract_pdf_for_reservation(reservation, contract)
+
+        service = Service.query.get(reservation.service_id)
+        provider_id = get_service_provider_id(service)
+        if provider_id:
+            db.session.add(
+                Notification(
+                    user_id=provider_id,
+                    type="contract_fully_signed",
+                    title="Contrat finalise",
+                    message="Le contrat est entierement signe et disponible.",
+                    reservation_id=reservation.id,
+                    is_read=False,
+                )
+            )
+        db.session.add(
+            Notification(
+                user_id=reservation.client_id,
+                type="contract_fully_signed",
+                title="Contrat finalise",
+                message="Le contrat est entierement signe et disponible.",
+                reservation_id=reservation.id,
+                is_read=False,
+            )
+        )
         db.session.commit()
         return jsonify(
             {
@@ -4818,25 +5185,163 @@ def create_app():
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
         if normalize_payment_status(reservation.payment_status) != "PAID":
             return jsonify({"success": False, "message": "Le contrat peut etre signe apres le paiement."}), 409
-        if reservation.signature_data:
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        if contract.status == "refused_by_provider":
+            return jsonify({"success": False, "message": "Le prestataire a refuse ce contrat."}), 409
+        if contract.status != "signed_by_provider":
+            return jsonify({"success": False, "message": "Le contrat doit d'abord etre signe par le prestataire."}), 409
+        if contract.client_signature:
             return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
 
-        token = make_signature_token(reservation.id, reservation.client_id, expires_minutes=30)
+        token = make_signature_token(reservation.id, reservation.client_id, purpose="reservation_signature_client", expires_minutes=30)
+        return jsonify({"success": True, "token": token})
+
+    @app.get("/api/provider/contracts/pending")
+    @auth_required(allowed_roles={"prestataire"})
+    def list_provider_pending_contracts():
+        reservations = Reservation.query.order_by(Reservation.created_at.desc()).all()
+        pending = []
+        for reservation in reservations:
+            service = Service.query.get(reservation.service_id)
+            if not service or get_service_provider_id(service) != request.user_id:
+                continue
+            contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+            if not contract:
+                continue
+            if contract.status not in {"pending_provider_signature", "signed_by_provider"}:
+                continue
+            payload = serialize_provider_booking(reservation)
+            payload["contractStatus"] = contract.status
+            pending.append(payload)
+        return jsonify({"success": True, "contracts": pending})
+
+    @app.post("/api/provider/contracts/<int:reservation_id>/sign")
+    @auth_required(allowed_roles={"prestataire"})
+    def sign_provider_contract(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        service = Service.query.get(reservation.service_id)
+        if not service or get_service_provider_id(service) != request.user_id:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        if contract.status == "refused_by_provider":
+            return jsonify({"success": False, "message": "Ce contrat a deja ete refuse."}), 409
+        if contract.provider_signature:
+            return jsonify({"success": False, "message": "Ce contrat est deja signe par le prestataire."}), 409
+
+        payload = request.get_json(silent=True) or {}
+        signature_data = str(payload.get("signature_data") or "").strip()
+        if not signature_data:
+            return jsonify({"success": False, "message": "signature_data est requis."}), 400
+
+        now = datetime.utcnow()
+        contract.provider_signature = signature_data
+        contract.provider_signed_at = now
+        contract.provider_signature_ip = request.headers.get("X-Forwarded-For", request.remote_addr or "")[:80]
+        contract.status = "signed_by_provider"
+        contract.updated_at = now
+        render_contract_pdf_for_reservation(reservation, contract)
+        db.session.add(
+            Notification(
+                user_id=reservation.client_id,
+                type="contract_ready_for_client_signature",
+                title="Contrat pret a signer",
+                message="Le prestataire a signe votre contrat. Vous pouvez maintenant signer.",
+                reservation_id=reservation.id,
+                is_read=False,
+            )
+        )
+        db.session.commit()
+        return jsonify({"success": True, "reservation": serialize_provider_booking(reservation), "message": "Contrat signe avec succes."})
+
+    @app.post("/api/provider/contracts/<int:reservation_id>/refuse")
+    @auth_required(allowed_roles={"prestataire"})
+    def refuse_provider_contract(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        service = Service.query.get(reservation.service_id)
+        if not service or get_service_provider_id(service) != request.user_id:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        if contract.status == "fully_signed":
+            return jsonify({"success": False, "message": "Contrat deja signe."}), 409
+
+        payload = request.get_json(silent=True) or {}
+        refusal_reason = str(payload.get("reason") or "").strip()
+        contract.status = "refused_by_provider"
+        contract.refusal_reason = refusal_reason or contract.refusal_reason
+        contract.updated_at = datetime.utcnow()
+        reservation.updated_at = datetime.utcnow()
+        render_contract_pdf_for_reservation(reservation, contract)
+        db.session.add(
+            Notification(
+                user_id=reservation.client_id,
+                type="contract_refused_by_provider",
+                title="Contrat refuse",
+                message="Le prestataire a refuse le contrat.",
+                reservation_id=reservation.id,
+                is_read=False,
+            )
+        )
+        db.session.commit()
+        return jsonify({"success": True, "message": "Contrat refuse."})
+
+    @app.post("/api/provider/contracts/<int:reservation_id>/signature-link")
+    @auth_required(allowed_roles={"prestataire"})
+    def create_provider_contract_signature_link(reservation_id):
+        reservation = Reservation.query.filter_by(id=reservation_id).first()
+        if not reservation:
+            return jsonify({"success": False, "message": "Reservation introuvable."}), 404
+        service = Service.query.get(reservation.service_id)
+        if not service or get_service_provider_id(service) != request.user_id:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        if contract.status != "pending_provider_signature":
+            return jsonify({"success": False, "message": "Ce contrat ne peut pas etre signe maintenant."}), 409
+        if contract.provider_signature:
+            return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
+
+        token = make_signature_token(reservation.id, request.user_id, purpose="reservation_signature_provider", expires_minutes=30)
         return jsonify({"success": True, "token": token})
 
     @app.get("/api/public/signature-session")
     def get_public_signature_session():
         token = (request.args.get("token") or "").strip()
         try:
-            reservation_id, client_id = decode_signature_token(token)
+            reservation_id, user_id, purpose = decode_signature_token(token)
         except ValueError as exc:
             return jsonify({"success": False, "message": str(exc)}), 400
 
-        reservation = Reservation.query.filter_by(id=reservation_id, client_id=client_id).first()
+        reservation = Reservation.query.filter_by(id=reservation_id).first()
         if not reservation:
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
         if normalize_payment_status(reservation.payment_status) != "PAID":
             return jsonify({"success": False, "message": "Le contrat ne peut pas etre signe pour le moment."}), 409
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
+        service = Service.query.get(reservation.service_id)
+        provider_id = get_service_provider_id(service) if service else None
+        if purpose == "reservation_signature_provider":
+            if provider_id != user_id:
+                return jsonify({"success": False, "message": "Lien de signature invalide."}), 403
+            if contract.status != "pending_provider_signature":
+                return jsonify({"success": False, "message": "Ce contrat ne peut pas etre signe maintenant."}), 409
+        else:
+            if reservation.client_id != user_id:
+                return jsonify({"success": False, "message": "Lien de signature invalide."}), 403
+            if contract.status != "signed_by_provider":
+                return jsonify({"success": False, "message": "Le contrat doit d'abord etre signe par le prestataire."}), 409
 
         return jsonify({"success": True, "reservation": serialize_reservation(reservation)})
 
@@ -4849,22 +5354,82 @@ def create_app():
             return jsonify({"success": False, "message": "signature_data est requis."}), 400
 
         try:
-            reservation_id, client_id = decode_signature_token(token)
+            reservation_id, user_id, purpose = decode_signature_token(token)
         except ValueError as exc:
             return jsonify({"success": False, "message": str(exc)}), 400
 
-        reservation = Reservation.query.filter_by(id=reservation_id, client_id=client_id).first()
+        reservation = Reservation.query.filter_by(id=reservation_id).first()
         if not reservation:
             return jsonify({"success": False, "message": "Reservation introuvable."}), 404
         if normalize_payment_status(reservation.payment_status) != "PAID":
             return jsonify({"success": False, "message": "Le contrat ne peut pas etre signe pour le moment."}), 409
-        if reservation.signature_data:
-            return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
+        contract = Contract.query.filter_by(reservation_id=reservation.id).order_by(Contract.id.desc()).first()
+        if not contract:
+            return jsonify({"success": False, "message": "Contrat introuvable."}), 404
 
-        reservation.signature_data = signature_data
-        reservation.signed_at = datetime.utcnow()
-        reservation.updated_at = datetime.utcnow()
-        generate_reservation_documents(reservation)
+        now = datetime.utcnow()
+        ip_address = request.headers.get("X-Forwarded-For", request.remote_addr or "")[:80]
+        if purpose == "reservation_signature_provider":
+            service = Service.query.get(reservation.service_id)
+            if get_service_provider_id(service) != user_id:
+                return jsonify({"success": False, "message": "Lien de signature invalide."}), 403
+            if contract.provider_signature:
+                return jsonify({"success": False, "message": "Ce contrat est deja signe par le prestataire."}), 409
+            if contract.status != "pending_provider_signature":
+                return jsonify({"success": False, "message": "Ce contrat ne peut pas etre signe maintenant."}), 409
+            contract.provider_signature = signature_data
+            contract.provider_signed_at = now
+            contract.provider_signature_ip = ip_address
+            contract.status = "signed_by_provider"
+            db.session.add(
+                Notification(
+                    user_id=reservation.client_id,
+                    type="contract_ready_for_client_signature",
+                    title="Contrat pret a signer",
+                    message="Le prestataire a signe votre contrat. Vous pouvez maintenant signer.",
+                    reservation_id=reservation.id,
+                    is_read=False,
+                )
+            )
+        else:
+            if reservation.client_id != user_id:
+                return jsonify({"success": False, "message": "Lien de signature invalide."}), 403
+            if contract.client_signature:
+                return jsonify({"success": False, "message": "Ce contrat est deja signe."}), 409
+            if contract.status != "signed_by_provider":
+                return jsonify({"success": False, "message": "Le contrat doit d'abord etre signe par le prestataire."}), 409
+            contract.client_signature = signature_data
+            contract.client_signed_at = now
+            contract.client_signature_ip = ip_address
+            contract.status = "fully_signed"
+            reservation.signature_data = signature_data
+            reservation.signed_at = now
+            service = Service.query.get(reservation.service_id)
+            provider_id = get_service_provider_id(service)
+            if provider_id:
+                db.session.add(
+                    Notification(
+                        user_id=provider_id,
+                        type="contract_fully_signed",
+                        title="Contrat finalise",
+                        message="Le contrat est entierement signe et disponible.",
+                        reservation_id=reservation.id,
+                        is_read=False,
+                    )
+                )
+            db.session.add(
+                Notification(
+                    user_id=reservation.client_id,
+                    type="contract_fully_signed",
+                    title="Contrat finalise",
+                    message="Le contrat est entierement signe et disponible.",
+                    reservation_id=reservation.id,
+                    is_read=False,
+                )
+            )
+        contract.updated_at = now
+        reservation.updated_at = now
+        render_contract_pdf_for_reservation(reservation, contract)
         db.session.commit()
         return jsonify({"success": True, "message": "Signature enregistree avec succes."})
 
@@ -4903,6 +5468,66 @@ def seed_data():
             )
         )
 
+    db.session.commit()
+
+
+def ensure_contract_schema():
+    inspector = inspect(db.engine)
+    table_names = set(inspector.get_table_names())
+
+    if "contracts" not in table_names:
+        Contract.__table__.create(db.engine, checkfirst=True)
+        inspector = inspect(db.engine)
+        table_names = set(inspector.get_table_names())
+
+    if "contracts" not in table_names:
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("contracts")}
+    statements = []
+    if "payment_id" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN payment_id VARCHAR(255) NULL")
+    if "invoice_id" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN invoice_id VARCHAR(255) NULL")
+    if "status" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN status VARCHAR(60) NOT NULL DEFAULT 'pending_provider_signature'")
+    if "provider_signature" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN provider_signature LONGTEXT NULL")
+    if "provider_signed_at" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN provider_signed_at DATETIME NULL")
+    if "provider_signature_ip" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN provider_signature_ip VARCHAR(80) NULL")
+    if "client_signature" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN client_signature LONGTEXT NULL")
+    if "client_signed_at" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN client_signed_at DATETIME NULL")
+    if "client_signature_ip" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN client_signature_ip VARCHAR(80) NULL")
+    if "refusal_reason" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN refusal_reason TEXT NULL")
+    if "final_contract_path" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN final_contract_path TEXT NULL")
+    if "updated_at" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN updated_at DATETIME NULL")
+    if "created_at" not in columns:
+        statements.append("ALTER TABLE contracts ADD COLUMN created_at DATETIME NULL")
+
+    for statement in statements:
+        db.session.execute(text(statement))
+    if statements:
+        db.session.commit()
+
+    if "status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE contracts SET status = COALESCE(NULLIF(status, ''), 'pending_provider_signature') "
+                "WHERE status IS NULL OR status = ''"
+            )
+        )
+    if "updated_at" in columns and "created_at" in columns:
+        db.session.execute(
+            text("UPDATE contracts SET updated_at = COALESCE(updated_at, created_at, NOW()) WHERE updated_at IS NULL")
+        )
     db.session.commit()
 
     studio = User.query.filter_by(email="studio@3arrasli.com").first()

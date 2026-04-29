@@ -342,7 +342,7 @@ const ChatPage = () => {
             <div className="provider-chat-sidebar">
               <div className="provider-panel-head">
                 <h3>Conversations</h3>
-                <p>Recherchez un prestataire, un service ou votre nom client pour filtrer instantanement.</p>
+                
               </div>
 
               <div className="client-chat-search">
@@ -369,14 +369,14 @@ const ChatPage = () => {
                     <span className="provider-chat-avatar">
                       {conversation.name?.slice(0, 2).toUpperCase() || "PR"}
                     </span>
-                    <div>
-                      <strong>{conversation.name}</strong>
+                    <div className="provider-chat-item-body">
+                      <div className="provider-chat-item-top">
+                        <strong>{conversation.name}</strong>
+                        <em>{conversation.time}</em>
+                      </div>
                       <p>{conversation.serviceType}</p>
                       <small>{conversation.excerpt}</small>
                     </div>
-                    <span className="provider-chat-meta">
-                      <em>{conversation.time}</em>
-                    </span>
                   </button>
                 ))}
               </div>

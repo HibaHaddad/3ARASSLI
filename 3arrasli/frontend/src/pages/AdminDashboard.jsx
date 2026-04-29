@@ -3,13 +3,12 @@ import React, { useEffect, useMemo, useState } from "react";
 import AdminLayout from "../components/admin/AdminLayout";
 import DataTable from "../components/admin/DataTable";
 import Modal from "../components/admin/Modal";
-import api from "../services/api";
+import api, { API_BASE_URL } from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
 import { createAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
 import {
   adminSections,
   mockAppointments,
-  mockContracts,
   mockConversations,
   mockInvoices,
   mockReviews,
@@ -125,6 +124,10 @@ const statusLabels = {
   cancelled: "Annule",
   "pending-signature": "Signature en attente",
   signed: "Signe",
+  pending_provider_signature: "Signature prestataire en attente",
+  signed_by_provider: "Signe par prestataire",
+  fully_signed: "Signe par les deux",
+  refused_by_provider: "Refuse par prestataire",
   paid: "Payee",
   unpaid: "Impayee",
   published: "Publie",
@@ -135,11 +138,11 @@ const statusLabels = {
 };
 
 const statusClass = (status) => {
-  if (["active", "confirmed", "signed", "paid", "published", "validated"].includes(status)) {
+  if (["active", "confirmed", "signed", "signed_by_provider", "fully_signed", "paid", "published", "validated"].includes(status)) {
     return "ok";
   }
 
-  if (["pending", "pending-approval", "pending-signature", "unpaid", "flagged", "needs-replacement"].includes(status)) {
+  if (["pending", "pending-approval", "pending-signature", "pending_provider_signature", "unpaid", "flagged", "needs-replacement"].includes(status)) {
     return "warn";
   }
 
@@ -189,6 +192,7 @@ const AdminDashboard = () => {
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [providerDetails, setProviderDetails] = useState(null);
   const [providersLoading, setProvidersLoading] = useState(true);
+  const [contractsLoading, setContractsLoading] = useState(false);
   const [appointmentsModalOpen, setAppointmentsModalOpen] = useState(false);
   const [selectedAppointmentGroup, setSelectedAppointmentGroup] = useState(null);
   const [reviewsModalOpen, setReviewsModalOpen] = useState(false);
@@ -213,7 +217,6 @@ const AdminDashboard = () => {
   useEffect(() => {
     const timer = setTimeout(() => {
       setAppointments(mockAppointments);
-      setContracts(mockContracts);
       setInvoices(mockInvoices);
       setReviews(mockReviews);
       setConversations(mockConversations);
@@ -320,6 +323,29 @@ const AdminDashboard = () => {
   useEffect(() => {
     loadProviders();
   }, []);
+
+  const loadContracts = async () => {
+    setContractsLoading(true);
+    try {
+      const response = await api.get("/api/admin/contracts");
+      setContracts(Array.isArray(response.data?.contracts) ? response.data.contracts : []);
+    } catch (error) {
+      showFeedback("error", error.response?.data?.message || "Impossible de charger les contrats.");
+      setContracts([]);
+    } finally {
+      setContractsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadContracts();
+  }, []);
+
+  useEffect(() => {
+    if (activeSection === "contracts") {
+      loadContracts();
+    }
+  }, [activeSection]);
 
   const loadPacks = async () => {
     try {
@@ -496,7 +522,7 @@ const AdminDashboard = () => {
       {
         id: "contracts-pending",
         label: "Contrats à signer",
-        value: contracts.filter((item) => item.status === "pending-signature").length,
+        value: contracts.filter((item) => ["pending-signature", "pending_provider_signature"].includes(item.status)).length,
       },
       {
         id: "invoices-unpaid",
@@ -577,20 +603,15 @@ const AdminDashboard = () => {
     if (!contract) {
       return;
     }
-
-    const pdfBlob = buildSimplePdf([
-      `Contrat: ${contract.title}`,
-      `Reference: ${contract.id}`,
-      `Client: ${contract.client}`,
-      `Prestataire: ${contract.provider}`,
-      `Statut: ${statusLabels[contract.status] || contract.status}`,
-      "",
-      "Details:",
-      contract.details || "Aucun detail supplementaire.",
-    ]);
-    const pdfUrl = window.URL.createObjectURL(pdfBlob);
-    window.open(pdfUrl, "_blank", "noopener,noreferrer");
-    window.setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60_000);
+    const raw = String(contract.pdf_url || "").trim();
+    if (!raw) {
+      showFeedback("error", "Aucun PDF disponible pour ce contrat.");
+      return;
+    }
+    const url = raw.startsWith("http://") || raw.startsWith("https://")
+      ? raw
+      : `${API_BASE_URL}${raw.startsWith("/") ? raw : `/${raw}`}`;
+    window.open(url, "_blank", "noopener,noreferrer");
   };
 
   const openInvoiceModal = (invoice) => {
@@ -795,11 +816,26 @@ const AdminDashboard = () => {
     { key: "client", header: "Client" },
     { key: "provider", header: "Prestataire" },
     {
+      key: "details",
+      header: "Details",
+      render: (value) => <span className="admin-cell-wrap">{value}</span>,
+    },
+    {
       key: "status",
       header: "Statut",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
+    },
+    {
+      key: "provider_signed_at",
+      header: "Signature prestataire",
+      render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
+    },
+    {
+      key: "client_signed_at",
+      header: "Signature client",
+      render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
     },
   ];
 
@@ -941,7 +977,7 @@ const AdminDashboard = () => {
             loading={providersLoading}
             emptyMessage="Aucun prestataire trouve pour ce filtre."
             tableClassName="admin-data-table-providers"
-            actionsColumnWidth="240px"
+            actionsColumnWidth="320px"
             renderActions={(row) => (
               <div className="admin-provider-actions-row admin-provider-actions-row-shifted">
                 <button type="button" className="provider-ghost-btn" onClick={() => openProviderDetailsModal(row)}>
@@ -1031,7 +1067,7 @@ const AdminDashboard = () => {
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
               <h3>Contracts</h3>
-              <p>Suivi complet des contrats et support de signature numerique (UI).</p>
+              <p>Suivi complet des contrats et support de signature numerique.</p>
             </div>
           </div>
 
@@ -1039,11 +1075,11 @@ const AdminDashboard = () => {
             columns={contractColumns}
             rows={contracts}
             keyField="id"
-            loading={false}
+            loading={contractsLoading}
             emptyMessage="Aucun contrat disponible."
             renderActions={(row) => (
               <button type="button" className="provider-ghost-btn" onClick={() => openContractPdf(row)}>
-                Voir
+                PDF signe
               </button>
             )}
           />

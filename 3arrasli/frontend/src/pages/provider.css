@@ -916,10 +916,14 @@
 .provider-primary-btn,
 .provider-secondary-btn,
 .provider-ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-height: 48px;
   padding: 0 18px;
   border-radius: 999px;
   font-weight: 700;
+  text-align: center;
   cursor: pointer;
   transition:
     transform var(--provider-transition),
@@ -5448,6 +5452,7 @@
 .provider-bookings-panel {
   position: relative;
   overflow: hidden;
+  padding: 18px;
   border-radius: 34px;
   background:
     radial-gradient(circle at top left, rgba(255, 238, 243, 0.58), transparent 28%),
@@ -6982,6 +6987,40 @@
   backdrop-filter: blur(16px);
 }
 
+/* Booking filters: label on top, clean input below (no icon-pill style) */
+.provider-bookings-sticky-filters .provider-bookings-search {
+  display: grid;
+  gap: 8px;
+  align-items: stretch;
+  margin-bottom: 0;
+  padding: 14px 16px;
+  border-radius: 22px;
+}
+
+.provider-bookings-sticky-filters .provider-bookings-search span {
+  width: auto;
+  height: auto;
+  display: block;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: rgba(67, 33, 45, 0.9);
+}
+
+.provider-bookings-sticky-filters .provider-bookings-search input {
+  min-height: 44px;
+  padding: 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.provider-bookings-sticky-filters .provider-bookings-search input::placeholder {
+  color: rgba(91, 58, 69, 0.44);
+  font-weight: 600;
+}
+
 .provider-bookings-search-wide {
   min-width: 0;
 }
@@ -7261,5 +7300,18 @@
 
   .provider-calendar-focus-actions {
     justify-items: start;
+  }
+}
+
+/* Desktop: no internal sidebar scroll, let the page grow to show all sections */
+@media (min-width: 981px) {
+  .provider-sidebar {
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  .provider-sidebar-requests .provider-bookings-request-strip {
+    max-height: none !important;
+    overflow: visible !important;
   }
 }

@@ -1,45 +1,17 @@
 import React, { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { useNavigate } from "react-router-dom";
 import Navbar from "./components/Navbar";
 import PremiumCarousel from "./components/PremiumCarousel";
+import api from "./services/api";
 import "./Home.css";
 
-const featuredServices = [
-  {
-    id: 1,
-    title: "Studio Lumiere - Photographe",
-    price: "A partir de 1200 TND",
-    rating: 4.9,
-    image:
-      "https://images.unsplash.com/photo-1511285560929-80b456fea0bc?auto=format&fit=crop&w=1400&q=90",
-  },
-  {
-    id: 2,
-    title: "Palais Jasmine - Salle de fete",
-    price: "A partir de 3500 TND",
-    rating: 4.8,
-    image:
-      "https://images.unsplash.com/photo-1519167758481-83f550bb49b3?auto=format&fit=crop&w=1400&q=90",
-  },
-  {
-    id: 3,
-    title: "Saveurs Royales - Traiteur",
-    price: "A partir de 1800 TND",
-    rating: 4.7,
-    image:
-      "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?auto=format&fit=crop&w=1400&q=90",
-  },
-  {
-    id: 4,
-    title: "Elegance Deco - Decoration",
-    price: "A partir de 900 TND",
-    rating: 4.6,
-    image:
-      "https://images.unsplash.com/photo-1522673607200-164d1b6ce486?auto=format&fit=crop&w=1400&q=90",
-  },
+const footerLinks = [
+  { label: "A propos", to: "/a-propos" },
+  { label: "Contact", to: "/contact" },
+  { label: "FAQ", to: "/faq" },
+  { label: "Conditions", to: "/conditions" },
 ];
-
-const footerLinks = ["A propos", "Contact", "FAQ", "Conditions"];
 
 const steps = [
   {
@@ -103,6 +75,7 @@ const useReveal = () => {
 
 const Home = ({ onLogoClick }) => {
   const [heroOffset, setHeroOffset] = useState(0);
+  const [featuredServices, setFeaturedServices] = useState([]);
   const visibleIds = useReveal();
   const navigate = useNavigate();
 
@@ -114,6 +87,34 @@ const Home = ({ onLogoClick }) => {
     handleScroll();
     window.addEventListener("scroll", handleScroll, { passive: true });
     return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  useEffect(() => {
+    const loadTopRatedServices = async () => {
+      try {
+        const response = await api.get("/api/public/services");
+        const services = Array.isArray(response.data?.services) ? response.data.services : [];
+        const topRated = services
+          .slice()
+          .sort((a, b) => Number(b?.rating || 0) - Number(a?.rating || 0))
+          .slice(0, 8)
+          .map((service) => ({
+            id: service.id,
+            title: `${service.prestataire_name || service.provider_name || "Prestataire"} - ${service.title || "Service"}`,
+            price: `A partir de ${Number(service.price || 0).toFixed(0)} TND`,
+            rating: Number(service.rating || 0).toFixed(1),
+            image: service.image,
+          }));
+
+        if (topRated.length > 0) {
+          setFeaturedServices(topRated);
+        }
+      } catch {
+        setFeaturedServices([]);
+      }
+    };
+
+    loadTopRatedServices();
   }, []);
 
   const isVisible = (id) => (visibleIds[id] ? "is-visible" : "");
@@ -177,13 +178,15 @@ const Home = ({ onLogoClick }) => {
           >
             <span className="section-kicker">Prestataires a la une</span>
             <h2>Une marketplace pensee comme une selection couture</h2>
-            <p>
-              Des cartes plus editoriales, plus riches et plus luxueuses pour valoriser chaque
-              prestation avec une vraie presence visuelle.
-            </p>
           </div>
 
-          <PremiumCarousel services={featuredServices} />
+          {featuredServices.length > 0 ? (
+            <PremiumCarousel services={featuredServices} />
+          ) : (
+            <p style={{ textAlign: "center", color: "rgba(77, 46, 57, 0.72)" }}>
+              Aucun service disponible pour le moment.
+            </p>
+          )}
         </div>
       </section>
 
@@ -251,7 +254,7 @@ const Home = ({ onLogoClick }) => {
           <div className="footer-brand">
             <span className="footer-mark">3A</span>
             <div>
-              <h3>3arrasli.tn</h3>
+              <h3>3arrasli</h3>
               <p>
                 Votre marketplace mariage en Tunisie, imaginee pour les couples a la recherche
                 d'une experience plus chic, plus contemporaine et plus rassurante.
@@ -261,9 +264,9 @@ const Home = ({ onLogoClick }) => {
 
           <div className="footer-links">
             {footerLinks.map((link) => (
-              <a key={link} href="#!">
-                {link}
-              </a>
+              <Link key={link.to} to={link.to}>
+                {link.label}
+              </Link>
             ))}
           </div>
 
@@ -279,7 +282,7 @@ const Home = ({ onLogoClick }) => {
             </a>
           </div>
         </div>
-        <p className="footer-copy">(c) {new Date().getFullYear()} 3arrasli.tn - Tous droits reserves</p>
+        <p className="footer-copy">(c) {new Date().getFullYear()} 3arrasli - Tous droits reserves</p>
       </footer>
     </div>
   );

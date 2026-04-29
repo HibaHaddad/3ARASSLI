@@ -2,6 +2,10 @@ import React from "react";
 import { resolveAssetUrl } from "../services/assets";
 
 const ServiceCard = ({ service }) => {
+  const serviceCategory = service.category || service.type || "Service mariage";
+  const serviceDescription =
+    service.description || "Prestataire recommande selon les meilleures notes clients.";
+
   return (
     <article className="service-card carousel-service-card">
       <div className="service-media">
@@ -15,14 +19,11 @@ const ServiceCard = ({ service }) => {
 
       <div className="service-body">
         <div className="service-topline">
-          <span className="service-category">Luxe wedding</span>
+          <span className="service-category">{serviceCategory}</span>
           <span className="service-price">{service.price}</span>
         </div>
         <h3>{service.title}</h3>
-        <p>
-          Une presentation plus haut de gamme avec plus de profondeur, de douceur et un hover
-          pense comme une experience premium.
-        </p>
+        <p>{serviceDescription}</p>
         <div className="service-footer">
           <span className="service-detail">Disponibilite rapide</span>
           <button type="button">Decouvrir</button>

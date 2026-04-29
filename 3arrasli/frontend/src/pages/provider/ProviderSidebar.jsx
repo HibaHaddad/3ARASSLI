@@ -78,7 +78,6 @@ const ProviderSidebar = ({ sections, activeSection, onSectionChange, isOpen, sid
                 <SidebarIcon name={section.icon || section.id} />
               </span>
               <strong>{section.label}</strong>
-              <small>{section.title}</small>
             </button>
           ))}
         </nav>

@@ -100,6 +100,31 @@ class Reservation(db.Model):
     )
 
 
+class Contract(db.Model):
+    __tablename__ = "contracts"
+
+    id = db.Column(db.Integer, primary_key=True)
+    reservation_id = db.Column(db.Integer, db.ForeignKey("reservations.id"), nullable=False, index=True)
+    payment_id = db.Column(db.String(255), nullable=True)
+    invoice_id = db.Column(db.String(255), nullable=True)
+    status = db.Column(db.String(60), nullable=False, default="pending_provider_signature")
+    provider_signature = db.Column(db.Text, nullable=True)
+    provider_signed_at = db.Column(db.DateTime, nullable=True)
+    provider_signature_ip = db.Column(db.String(80), nullable=True)
+    client_signature = db.Column(db.Text, nullable=True)
+    client_signed_at = db.Column(db.DateTime, nullable=True)
+    client_signature_ip = db.Column(db.String(80), nullable=True)
+    refusal_reason = db.Column(db.Text, nullable=True)
+    final_contract_path = db.Column(db.Text, nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
 class Favorite(db.Model):
     __tablename__ = "favorites"
 
