@@ -2375,6 +2375,102 @@
   transform: none;
 }
 
+.provider-pack-shell .provider-chat-window {
+  min-height: 680px;
+}
+
+.provider-pack-details {
+  display: grid;
+  gap: 18px;
+}
+
+.provider-pack-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.provider-pack-summary-card,
+.provider-pack-role-card {
+  border: 1px solid rgba(184, 124, 145, 0.12);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top right, rgba(241, 223, 186, 0.24), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 245, 241, 0.82));
+}
+
+.provider-pack-summary-card {
+  padding: 18px;
+}
+
+.provider-pack-summary-card span {
+  display: block;
+  color: var(--provider-gold);
+  font-size: 0.74rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.provider-pack-summary-card strong {
+  display: block;
+  margin-top: 12px;
+  font-size: 1.35rem;
+}
+
+.provider-pack-role-list {
+  display: grid;
+  gap: 12px;
+}
+
+.provider-pack-role-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 18px;
+}
+
+.provider-pack-role-card p,
+.provider-pack-role-card span {
+  margin: 0;
+}
+
+.provider-pack-role-card p {
+  margin-top: 4px;
+  color: rgba(83, 39, 55, 0.68);
+}
+
+.provider-pack-role-card span {
+  min-height: 38px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 0.84rem;
+  font-weight: 800;
+  color: #6d3549;
+  background: rgba(255, 247, 240, 0.92);
+}
+
+.provider-pack-role-card.accepted span {
+  color: #2c6d43;
+  background: rgba(224, 247, 228, 0.94);
+}
+
+.provider-pack-role-card.declined span {
+  color: #8f3153;
+  background: rgba(255, 231, 238, 0.94);
+}
+
+.provider-pack-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 0 22px 22px;
+}
+
 .provider-chat-state,
 .provider-chat-empty,
 .provider-chat-window-empty,
@@ -2943,6 +3039,15 @@
 
   .provider-chat-form {
     flex-direction: column;
+  }
+
+  .provider-pack-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .provider-pack-role-card,
+  .provider-pack-actions {
+    display: grid;
   }
 
   .provider-primary-btn,

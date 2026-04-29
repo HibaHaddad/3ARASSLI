@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import api from "../services/api";
+import { showToast } from "../services/toast";
 import ClientPageLayout from "./client/ClientPageLayout";
 
 const defaultItems = [
@@ -40,6 +41,18 @@ const PlannerPage = () => {
   useEffect(() => {
     loadItems();
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   const addItem = async () => {
     if (!title.trim()) {
@@ -126,9 +139,6 @@ const PlannerPage = () => {
           </div>
 
           <div className="client-planner-card">
-            {message ? <p className="client-message">{message}</p> : null}
-            {error ? <p className="client-error">{error}</p> : null}
-
             <div className="client-planner-form">
               <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Nouvelle tache mariage" />
               <button type="button" className="client-btn client-btn-primary" onClick={addItem}>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { showToast } from "../services/toast";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ServiceCard from "./client/ServiceCard";
 
@@ -25,6 +26,18 @@ const FavoritesPage = () => {
     load();
   }, []);
 
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
+
   const removeFavorite = async (service) => {
     const fav = favorites.find((item) => item.service_id === service.id);
     if (!fav) {
@@ -48,9 +61,6 @@ const FavoritesPage = () => {
     >
       <section className="client-section">
         <div className="client-shell">
-          {message ? <p className="client-message">{message}</p> : null}
-          {error ? <p className="client-error">{error}</p> : null}
-
           <div className="client-service-grid">
             {services.map((service) => (
               <ServiceCard

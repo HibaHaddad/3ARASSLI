@@ -65,7 +65,6 @@ const AdminSidebar = ({ sections, activeSection, onSectionChange, isOpen }) => {
       <div className="provider-sidebar-brand">
         <p className="provider-eyebrow">Admin</p>
         <h1>Control Center</h1>
-        <span>Gestion complete de la plateforme mariage</span>
       </div>
 
       <nav className="provider-sidebar-nav">
@@ -82,7 +81,6 @@ const AdminSidebar = ({ sections, activeSection, onSectionChange, isOpen }) => {
               <SidebarIcon name={section.icon || section.id} />
             </span>
             <strong>{section.label}</strong>
-            <small>{section.title}</small>
           </button>
         ))}
       </nav>

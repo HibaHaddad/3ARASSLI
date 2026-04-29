@@ -2,6 +2,7 @@ import React from "react";
 import Navbar from "../../components/Navbar";
 import "../../Home.css";
 import "../client.css";
+import ClientNav from "./ClientNav";
 
 const ClientPageLayout = ({ kicker, title, description, children }) => (
   <div className="client-page">
@@ -14,6 +15,7 @@ const ClientPageLayout = ({ kicker, title, description, children }) => (
             <h1>{title}</h1>
             <p>{description}</p>
           </div>
+          <ClientNav />
         </div>
       </section>
 

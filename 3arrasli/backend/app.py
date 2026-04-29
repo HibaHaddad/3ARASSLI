@@ -23,7 +23,7 @@ from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
 from extensions import bcrypt, db, socketio
-from models import Appointment, Favorite, Message, Notification, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
+from models import Appointment, Favorite, Message, Notification, Pack, PackItem, PlannerItem, ProviderAvailabilitySlot, ProviderCalendarBlock, Reservation, Review, Service, ServiceImage, User
 
 
 BACKEND_DIR = Path(__file__).resolve().parent
@@ -796,6 +796,8 @@ def serialize_provider_booking(reservation):
 def serialize_notification(notification):
     reservation = Reservation.query.get(notification.reservation_id) if notification.reservation_id else None
     appointment = Appointment.query.get(notification.appointment_id) if getattr(notification, "appointment_id", None) else None
+    pack = Pack.query.get(getattr(notification, "pack_id", None)) if getattr(notification, "pack_id", None) else None
+    pack_item = PackItem.query.get(getattr(notification, "pack_item_id", None)) if getattr(notification, "pack_item_id", None) else None
     booking_date, booking_time = split_booking_datetime(reservation.date) if reservation else (None, None)
     appointment_date = appointment.date.isoformat() if appointment else None
     return {
@@ -806,9 +808,16 @@ def serialize_notification(notification):
         "message": notification.message,
         "reservationId": notification.reservation_id,
         "appointmentId": getattr(notification, "appointment_id", None),
+        "packId": getattr(notification, "pack_id", None),
+        "packItemId": getattr(notification, "pack_item_id", None),
         "isRead": bool(notification.is_read),
         "createdAt": notification.created_at.isoformat() if notification.created_at else None,
         "target": {
+            "kind": "pack",
+            "id": pack.id,
+            "packId": pack.id,
+            "packItemId": pack_item.id if pack_item else None,
+        } if pack else {
             "kind": "appointment",
             "id": appointment.id,
             "date": appointment_date,
@@ -824,7 +833,119 @@ def serialize_notification(notification):
             "date": booking_date,
             "time": booking_time,
         } if reservation else None,
+        "pack": serialize_pack(pack, include_items=False) if pack else None,
     }
+
+
+def get_pack_status_from_items(items):
+    normalized = list(items or [])
+    if not normalized:
+        return "pending"
+    if any(str(item.response_status or "").strip().lower() == "declined" for item in normalized):
+        return "needs-replacement"
+    if all(str(item.response_status or "").strip().lower() == "accepted" for item in normalized):
+        return "validated"
+    return "pending"
+
+
+def refresh_pack_status(pack):
+    if not pack:
+        return None
+    next_status = get_pack_status_from_items(getattr(pack, "items", []))
+    if pack.status != next_status:
+        pack.status = next_status
+        pack.updated_at = datetime.utcnow()
+    return next_status
+
+
+def serialize_pack_item(item):
+    service = Service.query.get(item.service_id) if item.service_id else None
+    provider = User.query.get(item.provider_id) if item.provider_id else None
+    return {
+        "id": item.id,
+        "packId": item.pack_id,
+        "serviceId": item.service_id,
+        "providerId": item.provider_id,
+        "serviceCategory": item.service_category,
+        "serviceTitle": service.title if service else item.service_category,
+        "providerName": provider.username if provider else "Prestataire a choisir",
+        "providerEmail": provider.email if provider else "",
+        "providerCity": provider.city if provider else "",
+        "providerRole": provider.category if provider else item.service_category,
+        "providerStatus": item.response_status,
+        "invitedAt": item.invited_at.isoformat() if item.invited_at else None,
+        "respondedAt": item.responded_at.isoformat() if item.responded_at else None,
+    }
+
+
+def serialize_pack(pack, include_items=True):
+    items = [serialize_pack_item(item) for item in getattr(pack, "items", [])] if include_items else []
+    validation_status = get_pack_status_from_items(getattr(pack, "items", []))
+    provider_names = [item["providerName"] for item in items] if include_items else []
+    service_names = [item["serviceCategory"] for item in items] if include_items else []
+    return {
+        "id": pack.id,
+        "name": pack.name,
+        "description": pack.description or "",
+        "price": pack.price,
+        "duration": pack.duration or "",
+        "status": validation_status,
+        "isVisibleToClient": validation_status == "validated",
+        "services": ", ".join(service_names),
+        "providers": ", ".join(provider_names),
+        "items": items,
+        "createdAt": pack.created_at.isoformat() if pack.created_at else None,
+        "updatedAt": pack.updated_at.isoformat() if getattr(pack, "updated_at", None) else None,
+    }
+
+
+def build_pack_provider_options():
+    services = (
+        Service.query.filter(Service.status != "Inactif")
+        .order_by(Service.category.asc(), Service.title.asc())
+        .all()
+    )
+    grouped = {}
+    for service in services:
+        provider_id = get_service_provider_id(service)
+        provider = User.query.get(provider_id) if provider_id else None
+        if not provider or str(provider.role or "").lower() != "prestataire":
+            continue
+        category = service.category or service.type or provider.category or "Service"
+        grouped.setdefault(category, [])
+        grouped[category].append(
+            {
+                "serviceId": service.id,
+                "providerId": provider.id,
+                "providerName": provider.username,
+                "providerEmail": provider.email,
+                "providerCity": provider.city or "",
+                "serviceTitle": service.title,
+                "serviceCategory": category,
+            }
+        )
+
+    return [
+        {
+            "serviceCategory": category,
+            "providers": sorted(options, key=lambda item: item["providerName"].lower()),
+        }
+        for category, options in sorted(grouped.items(), key=lambda entry: entry[0].lower())
+    ]
+
+
+def create_pack_notification(provider_id, pack, pack_item):
+    notification = Notification(
+        user_id=provider_id,
+        type="pack_invitation",
+        title="Invitation pack",
+        message="You are invited to join a pack",
+        pack_id=pack.id,
+        pack_item_id=pack_item.id,
+        is_read=False,
+    )
+    db.session.add(notification)
+    return notification
 
 
 def serialize_message(message):
@@ -1354,6 +1475,83 @@ def ensure_notification_schema():
     columns = {column["name"] for column in inspector.get_columns("notifications")}
     if "appointment_id" not in columns:
         db.session.execute(text("ALTER TABLE notifications ADD COLUMN appointment_id INTEGER NULL"))
+    if "pack_id" not in columns:
+        db.session.execute(text("ALTER TABLE notifications ADD COLUMN pack_id INTEGER NULL"))
+    if "pack_item_id" not in columns:
+        db.session.execute(text("ALTER TABLE notifications ADD COLUMN pack_item_id INTEGER NULL"))
+    db.session.commit()
+
+
+def ensure_pack_schema():
+    inspector = inspect(db.engine)
+    table_names = set(inspector.get_table_names())
+
+    if "packs" not in table_names:
+        Pack.__table__.create(db.engine, checkfirst=True)
+        inspector = inspect(db.engine)
+        table_names = set(inspector.get_table_names())
+
+    if "pack_items" not in table_names:
+        PackItem.__table__.create(db.engine, checkfirst=True)
+        inspector = inspect(db.engine)
+        table_names = set(inspector.get_table_names())
+
+    if "packs" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("packs")}
+        statements = []
+        if "description" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN description TEXT NULL")
+        if "duration" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN duration VARCHAR(120) NULL")
+        if "status" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN status VARCHAR(40) NOT NULL DEFAULT 'pending'")
+        if "created_by" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN created_by INTEGER NULL")
+        if "updated_at" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN updated_at DATETIME NULL")
+        for statement in statements:
+            db.session.execute(text(statement))
+        if statements:
+            db.session.commit()
+        db.session.execute(
+            text(
+                "UPDATE packs "
+                "SET status = COALESCE(NULLIF(status, ''), 'pending'), "
+                "updated_at = COALESCE(updated_at, created_at, NOW())"
+            )
+        )
+        db.session.commit()
+
+    if "pack_items" in table_names:
+        columns = {column["name"] for column in inspector.get_columns("pack_items")}
+        statements = []
+        if "service_id" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN service_id INTEGER NULL")
+        if "provider_id" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN provider_id INTEGER NULL")
+        if "service_category" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN service_category VARCHAR(120) NULL")
+        if "response_status" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN response_status VARCHAR(40) NOT NULL DEFAULT 'pending'")
+        if "invited_at" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN invited_at DATETIME NULL")
+        if "responded_at" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN responded_at DATETIME NULL")
+        if "updated_at" not in columns:
+            statements.append("ALTER TABLE pack_items ADD COLUMN updated_at DATETIME NULL")
+        for statement in statements:
+            db.session.execute(text(statement))
+        if statements:
+            db.session.commit()
+        db.session.execute(
+            text(
+                "UPDATE pack_items "
+                "SET response_status = COALESCE(NULLIF(response_status, ''), 'pending'), "
+                "service_category = COALESCE(NULLIF(service_category, ''), 'Service'), "
+                "invited_at = COALESCE(invited_at, updated_at, NOW()), "
+                "updated_at = COALESCE(updated_at, invited_at, NOW())"
+            )
+        )
         db.session.commit()
 
 
@@ -1492,6 +1690,7 @@ def create_app():
         ensure_reservation_schema()
         ensure_message_schema()
         ensure_notification_schema()
+        ensure_pack_schema()
         ensure_favorite_schema()
         ensure_review_schema()
         seed_data()
@@ -3197,6 +3396,188 @@ def create_app():
             }
         )
 
+    @app.get("/api/admin/packs")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_packs():
+        packs = Pack.query.order_by(Pack.created_at.desc(), Pack.id.desc()).all()
+        changed = False
+        for pack in packs:
+            previous = pack.status
+            refresh_pack_status(pack)
+            changed = changed or previous != pack.status
+        if changed:
+            db.session.commit()
+
+        return jsonify(
+            {
+                "success": True,
+                "packs": [serialize_pack(pack) for pack in packs],
+                "providerOptions": build_pack_provider_options(),
+            }
+        )
+
+    @app.post("/api/admin/packs")
+    @auth_required(allowed_roles={"admin"})
+    def create_admin_pack():
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        duration = str(payload.get("duration") or "").strip()
+        items_payload = payload.get("items") or []
+
+        try:
+            price = float(payload.get("price") or 0)
+        except (TypeError, ValueError):
+            price = -1
+
+        if not name or price < 0 or not duration:
+            return jsonify({"success": False, "message": "Nom, prix et duree sont obligatoires."}), 400
+        if not isinstance(items_payload, list) or not items_payload:
+            return jsonify({"success": False, "message": "Ajoutez au moins un service au pack."}), 400
+
+        pack = Pack(
+            name=name,
+            description=description or None,
+            price=price,
+            duration=duration,
+            status="pending",
+            created_by=request.user_id,
+        )
+        db.session.add(pack)
+        db.session.flush()
+
+        for item_payload in items_payload:
+            service_category = str(item_payload.get("serviceCategory") or "").strip()
+            service_id = item_payload.get("serviceId")
+            provider_id = item_payload.get("providerId")
+            service = Service.query.get(service_id) if service_id else None
+            provider = User.query.filter_by(id=provider_id, role="prestataire").first() if provider_id else None
+
+            if not service_category or not service or not provider:
+                db.session.rollback()
+                return jsonify({"success": False, "message": "Chaque ligne du pack doit contenir un service et un prestataire valides."}), 400
+
+            if get_service_provider_id(service) != provider.id:
+                db.session.rollback()
+                return jsonify({"success": False, "message": "Le prestataire choisi ne correspond pas au service selectionne."}), 400
+
+            pack_item = PackItem(
+                pack_id=pack.id,
+                service_id=service.id,
+                provider_id=provider.id,
+                service_category=service_category,
+                response_status="pending",
+                invited_at=datetime.utcnow(),
+            )
+            db.session.add(pack_item)
+            db.session.flush()
+            create_pack_notification(provider.id, pack, pack_item)
+
+        refresh_pack_status(pack)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Pack cree avec succes.", "pack": serialize_pack(pack)}), 201
+
+    @app.put("/api/admin/packs/<int:pack_id>")
+    @app.patch("/api/admin/packs/<int:pack_id>")
+    @auth_required(allowed_roles={"admin"})
+    def update_admin_pack(pack_id):
+        pack = Pack.query.get(pack_id)
+        if not pack:
+            return jsonify({"success": False, "message": "Pack introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name") or "").strip()
+        description = str(payload.get("description") or "").strip()
+        duration = str(payload.get("duration") or "").strip()
+        items_payload = payload.get("items") or []
+
+        try:
+            price = float(payload.get("price") or 0)
+        except (TypeError, ValueError):
+            price = -1
+
+        if not name or price < 0 or not duration:
+            return jsonify({"success": False, "message": "Nom, prix et duree sont obligatoires."}), 400
+        if not isinstance(items_payload, list) or not items_payload:
+            return jsonify({"success": False, "message": "Ajoutez au moins un service au pack."}), 400
+
+        pack.name = name
+        pack.description = description or None
+        pack.price = price
+        pack.duration = duration
+        pack.updated_at = datetime.utcnow()
+
+        Notification.query.filter_by(pack_id=pack.id).delete(synchronize_session=False)
+        PackItem.query.filter_by(pack_id=pack.id).delete(synchronize_session=False)
+        db.session.flush()
+
+        for item_payload in items_payload:
+            service_category = str(item_payload.get("serviceCategory") or "").strip()
+            service_id = item_payload.get("serviceId")
+            provider_id = item_payload.get("providerId")
+            service = Service.query.get(service_id) if service_id else None
+            provider = User.query.filter_by(id=provider_id, role="prestataire").first() if provider_id else None
+
+            if not service_category or not service or not provider:
+                db.session.rollback()
+                return jsonify({"success": False, "message": "Chaque ligne du pack doit contenir un service et un prestataire valides."}), 400
+
+            if get_service_provider_id(service) != provider.id:
+                db.session.rollback()
+                return jsonify({"success": False, "message": "Le prestataire choisi ne correspond pas au service selectionne."}), 400
+
+            pack_item = PackItem(
+                pack_id=pack.id,
+                service_id=service.id,
+                provider_id=provider.id,
+                service_category=service_category,
+                response_status="pending",
+                invited_at=datetime.utcnow(),
+            )
+            db.session.add(pack_item)
+            db.session.flush()
+            create_pack_notification(provider.id, pack, pack_item)
+
+        refresh_pack_status(pack)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Pack mis a jour avec succes.", "pack": serialize_pack(pack)})
+
+    @app.patch("/api/admin/packs/<int:pack_id>/items/<int:item_id>/replace")
+    @auth_required(allowed_roles={"admin"})
+    def replace_admin_pack_item(pack_id, item_id):
+        pack_item = PackItem.query.filter_by(id=item_id, pack_id=pack_id).first()
+        if not pack_item:
+            return jsonify({"success": False, "message": "Ligne du pack introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        service_id = payload.get("serviceId")
+        provider_id = payload.get("providerId")
+
+        service = Service.query.get(service_id) if service_id else None
+        provider = User.query.filter_by(id=provider_id, role="prestataire").first() if provider_id else None
+        if not service or not provider:
+            return jsonify({"success": False, "message": "Service ou prestataire invalide."}), 400
+        if get_service_provider_id(service) != provider.id:
+            return jsonify({"success": False, "message": "Le prestataire choisi ne correspond pas au service selectionne."}), 400
+
+        replacement_category = str(service.category or service.type or provider.category or "").strip()
+        if replacement_category.lower() != str(pack_item.service_category or "").strip().lower():
+            return jsonify({"success": False, "message": "Le remplacement doit garder le meme type de service."}), 400
+
+        Notification.query.filter_by(pack_item_id=pack_item.id, type="pack_invitation").delete(synchronize_session=False)
+        pack_item.service_id = service.id
+        pack_item.provider_id = provider.id
+        pack_item.service_category = replacement_category
+        pack_item.response_status = "pending"
+        pack_item.responded_at = None
+        pack_item.invited_at = datetime.utcnow()
+        pack_item.updated_at = datetime.utcnow()
+        create_pack_notification(provider.id, pack_item.pack, pack_item)
+        refresh_pack_status(pack_item.pack)
+        db.session.commit()
+
+        return jsonify({"success": True, "message": "Prestataire remplace avec succes.", "pack": serialize_pack(pack_item.pack)})
+
     @app.get("/api/provider/profile")
     @auth_required(allowed_roles={"prestataire"})
     def get_provider_profile():
@@ -3280,6 +3661,107 @@ def create_app():
                 "user": serialize_user(user),
             }
         )
+
+    @app.get("/api/provider/packs")
+    @auth_required(allowed_roles={"prestataire"})
+    def list_provider_packs():
+        items = (
+            PackItem.query.filter_by(provider_id=request.user_id)
+            .order_by(PackItem.invited_at.desc(), PackItem.id.desc())
+            .all()
+        )
+        packs = []
+        seen = set()
+        changed = False
+        for item in items:
+            pack = item.pack
+            if not pack or pack.id in seen:
+                continue
+            previous = pack.status
+            refresh_pack_status(pack)
+            changed = changed or previous != pack.status
+            seen.add(pack.id)
+            packs.append(serialize_pack(pack))
+        if changed:
+            db.session.commit()
+        return jsonify({"success": True, "packs": packs})
+
+    @app.get("/api/provider/packs/<int:pack_id>")
+    @auth_required(allowed_roles={"prestataire"})
+    def get_provider_pack(pack_id):
+        pack_item = PackItem.query.filter_by(pack_id=pack_id, provider_id=request.user_id).first()
+        if not pack_item:
+            return jsonify({"success": False, "message": "Pack introuvable."}), 404
+        refresh_pack_status(pack_item.pack)
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "pack": serialize_pack(pack_item.pack),
+                "providerItemId": pack_item.id,
+            }
+        )
+
+    @app.patch("/api/provider/packs/<int:pack_id>/respond")
+    @auth_required(allowed_roles={"prestataire"})
+    def respond_provider_pack(pack_id):
+        pack_item = PackItem.query.filter_by(pack_id=pack_id, provider_id=request.user_id).first()
+        if not pack_item:
+            return jsonify({"success": False, "message": "Pack introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        decision = str(payload.get("decision") or "").strip().lower()
+        if decision not in {"accepted", "declined"}:
+            return jsonify({"success": False, "message": "Decision invalide."}), 400
+
+        pack_item.response_status = decision
+        pack_item.responded_at = datetime.utcnow()
+        pack_item.updated_at = datetime.utcnow()
+        refresh_pack_status(pack_item.pack)
+
+        admin = User.query.filter_by(role="admin").order_by(User.id.asc()).first()
+        provider = User.query.get(pack_item.provider_id) if pack_item.provider_id else None
+        if admin:
+            db.session.add(
+                Notification(
+                    user_id=admin.id,
+                    type="pack_response",
+                    title="Reponse a un pack",
+                    message=(
+                        f"{provider.username if provider else 'Un prestataire'} a "
+                        f"{'accepte' if decision == 'accepted' else 'refuse'} le pack {pack_item.pack.name}."
+                    ),
+                    pack_id=pack_item.pack_id,
+                    pack_item_id=pack_item.id,
+                    is_read=False,
+                )
+            )
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Votre reponse a ete enregistree.",
+                "pack": serialize_pack(pack_item.pack),
+            }
+        )
+
+    @app.get("/api/client/packs")
+    @auth_required(allowed_roles={"client"})
+    def list_client_packs():
+        packs = Pack.query.order_by(Pack.created_at.desc(), Pack.id.desc()).all()
+        changed = False
+        visible_packs = []
+        for pack in packs:
+            previous = pack.status
+            refresh_pack_status(pack)
+            changed = changed or previous != pack.status
+            if pack.status == "validated":
+                visible_packs.append(pack)
+        if changed:
+            db.session.commit()
+
+        return jsonify({"success": True, "packs": [serialize_pack(pack) for pack in visible_packs]})
 
     @app.get("/api/provider/calendar/week")
     @auth_required(allowed_roles={"prestataire"})
@@ -4565,6 +5047,50 @@ def seed_data():
             )
         )
         db.session.commit()
+
+    if Pack.query.count() == 0:
+        services = Service.query.order_by(Service.id.asc()).all()
+        service_options = {}
+        for service in services:
+            provider_id = get_service_provider_id(service)
+            if not provider_id:
+                continue
+            category = service.category or service.type or "Service"
+            service_options.setdefault(category.lower(), []).append((service, provider_id))
+
+        candidate_categories = ["photographe", "traiteur", "salle"]
+        selected_items = []
+        for category in candidate_categories:
+            option = service_options.get(category)
+            if option:
+                selected_items.append(option[0])
+
+        if selected_items:
+            demo_pack = Pack(
+                name="Pack Harmonie",
+                description="Selection coordonnee de prestataires pour une experience mariage fluide.",
+                price=sum(float(service.price or 0) for service, _provider_id in selected_items),
+                duration="Jusqu'au jour J",
+                status="validated",
+            )
+            db.session.add(demo_pack)
+            db.session.flush()
+
+            for service, provider_id in selected_items:
+                db.session.add(
+                    PackItem(
+                        pack_id=demo_pack.id,
+                        service_id=service.id,
+                        provider_id=provider_id,
+                        service_category=service.category or service.type or "Service",
+                        response_status="accepted",
+                        invited_at=datetime.utcnow(),
+                        responded_at=datetime.utcnow(),
+                    )
+                )
+
+            refresh_pack_status(demo_pack)
+            db.session.commit()
 
 
 app = create_app()

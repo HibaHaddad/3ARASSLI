@@ -5,19 +5,100 @@ import DataTable from "../components/admin/DataTable";
 import Modal from "../components/admin/Modal";
 import api from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
+import { createAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
 import {
   adminSections,
   mockAppointments,
   mockContracts,
   mockConversations,
   mockInvoices,
-  mockPacks,
   mockReviews,
 } from "./admin/adminData";
 import "./provider.css";
 import "./admin.css";
 
 const formatCurrency = (value) => `${value} TND`;
+const formatAppointmentDate = (value) => {
+  if (!value) {
+    return "--";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(parsed);
+};
+
+const getInitials = (value) =>
+  String(value || "")
+    .split(" ")
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((chunk) => chunk[0]?.toUpperCase() || "")
+    .join("") || "PR";
+
+const getReviewStatusLabel = (status) => {
+  if (status === "flagged") {
+    return "A verifier";
+  }
+  return statusLabels[status] || status;
+};
+
+const toAscii = (value) =>
+  String(value || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\x20-\x7E]/g, " ");
+
+const escapePdfText = (value) =>
+  toAscii(value)
+    .replace(/\\/g, "\\\\")
+    .replace(/\(/g, "\\(")
+    .replace(/\)/g, "\\)");
+
+const buildSimplePdf = (lines) => {
+  const safeLines = lines.map((line) => escapePdfText(line));
+  const contentStream = [
+    "BT",
+    "/F1 12 Tf",
+    "50 780 Td",
+    ...safeLines.flatMap((line, index) => (index === 0 ? [`(${line}) Tj`] : ["0 -20 Td", `(${line}) Tj`])),
+    "ET",
+  ].join("\n");
+
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n",
+    "4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+    `5 0 obj\n<< /Length ${contentStream.length} >>\nstream\n${contentStream}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+
+  objects.forEach((object) => {
+    offsets.push(pdf.length);
+    pdf += object;
+  });
+
+  const xrefStart = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += "0000000000 65535 f \n";
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  });
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`;
+
+  return new Blob([pdf], { type: "application/pdf" });
+};
+
 const formatNotificationDate = (value) => {
   if (!value) {
     return "A l'instant";
@@ -38,7 +119,7 @@ const formatNotificationDate = (value) => {
 const statusLabels = {
   active: "Actif",
   inactive: "Inactif",
-  "pending-approval": "En attente d'approbation",
+  "pending-approval": "En attente",
   pending: "En attente",
   confirmed: "Confirme",
   cancelled: "Annule",
@@ -49,14 +130,16 @@ const statusLabels = {
   published: "Publie",
   flagged: "Signale",
   hidden: "Masque",
+  validated: "Valide",
+  "needs-replacement": "A remplacer",
 };
 
 const statusClass = (status) => {
-  if (["active", "confirmed", "signed", "paid", "published"].includes(status)) {
+  if (["active", "confirmed", "signed", "paid", "published", "validated"].includes(status)) {
     return "ok";
   }
 
-  if (["pending", "pending-approval", "pending-signature", "unpaid", "flagged"].includes(status)) {
+  if (["pending", "pending-approval", "pending-signature", "unpaid", "flagged", "needs-replacement"].includes(status)) {
     return "warn";
   }
 
@@ -65,9 +148,10 @@ const statusClass = (status) => {
 
 const defaultPackForm = {
   name: "",
+  description: "",
   price: "",
   duration: "",
-  services: "",
+  items: [{ serviceCategory: "", serviceId: "", providerId: "" }],
 };
 
 const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
@@ -94,6 +178,7 @@ const AdminDashboard = () => {
   const [invoices, setInvoices] = useState([]);
   const [reviews, setReviews] = useState([]);
   const [packs, setPacks] = useState([]);
+  const [packProviderOptions, setPackProviderOptions] = useState([]);
   const [conversations, setConversations] = useState([]);
   const [activeConversationId, setActiveConversationId] = useState(null);
 
@@ -104,12 +189,10 @@ const AdminDashboard = () => {
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [providerDetails, setProviderDetails] = useState(null);
   const [providersLoading, setProvidersLoading] = useState(true);
-
-  const [appointmentModalOpen, setAppointmentModalOpen] = useState(false);
-  const [appointmentDraft, setAppointmentDraft] = useState(null);
-
-  const [contractModalOpen, setContractModalOpen] = useState(false);
-  const [selectedContract, setSelectedContract] = useState(null);
+  const [appointmentsModalOpen, setAppointmentsModalOpen] = useState(false);
+  const [selectedAppointmentGroup, setSelectedAppointmentGroup] = useState(null);
+  const [reviewsModalOpen, setReviewsModalOpen] = useState(false);
+  const [selectedReviewGroup, setSelectedReviewGroup] = useState(null);
 
   const [invoiceModalOpen, setInvoiceModalOpen] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
@@ -117,6 +200,7 @@ const AdminDashboard = () => {
   const [packModalOpen, setPackModalOpen] = useState(false);
   const [editingPackId, setEditingPackId] = useState(null);
   const [packForm, setPackForm] = useState(defaultPackForm);
+  const [packSubmitting, setPackSubmitting] = useState(false);
 
   const [confirmState, setConfirmState] = useState({
     open: false,
@@ -132,7 +216,6 @@ const AdminDashboard = () => {
       setContracts(mockContracts);
       setInvoices(mockInvoices);
       setReviews(mockReviews);
-      setPacks(mockPacks);
       setConversations(mockConversations);
       setActiveConversationId(mockConversations[0]?.id || null);
       setInitialLoading(false);
@@ -238,6 +321,22 @@ const AdminDashboard = () => {
     loadProviders();
   }, []);
 
+  const loadPacks = async () => {
+    try {
+      const response = await getAdminPacks();
+      setPacks(response.packs || []);
+      setPackProviderOptions(response.providerOptions || []);
+    } catch (error) {
+      showFeedback("error", error.response?.data?.message || "Impossible de charger les packs.");
+      setPacks([]);
+      setPackProviderOptions([]);
+    }
+  };
+
+  useEffect(() => {
+    loadPacks();
+  }, []);
+
   useEffect(() => {
     const handleResize = () => {
       setSidebarOpen(!isMobileSidebarViewport());
@@ -289,6 +388,83 @@ const AdminDashboard = () => {
 
     return appointments.filter((appointment) => appointment.status === appointmentStatusFilter);
   }, [appointments, appointmentStatusFilter]);
+
+  const appointmentsByProvider = useMemo(() => {
+    const grouped = filteredAppointments.reduce((accumulator, appointment) => {
+      const providerKey = appointment.provider || "Prestataire inconnu";
+
+      if (!accumulator.has(providerKey)) {
+        accumulator.set(providerKey, {
+          provider: providerKey,
+          appointments: [],
+          totalAmount: 0,
+          statusCount: {
+            pending: 0,
+            confirmed: 0,
+            cancelled: 0,
+          },
+        });
+      }
+
+      const bucket = accumulator.get(providerKey);
+      bucket.appointments.push(appointment);
+      bucket.totalAmount += Number(appointment.amount || 0);
+      if (bucket.statusCount[appointment.status] !== undefined) {
+        bucket.statusCount[appointment.status] += 1;
+      }
+
+      return accumulator;
+    }, new Map());
+
+    return Array.from(grouped.values())
+      .map((group) => ({
+        ...group,
+        appointments: [...group.appointments].sort(
+          (left, right) => new Date(left.date).getTime() - new Date(right.date).getTime()
+        ),
+      }))
+      .sort((left, right) => left.provider.localeCompare(right.provider));
+  }, [filteredAppointments]);
+
+  const reviewsByProvider = useMemo(() => {
+    const grouped = reviews.reduce((accumulator, review) => {
+      const providerKey = review.target || "Prestataire inconnu";
+
+      if (!accumulator.has(providerKey)) {
+        accumulator.set(providerKey, {
+          provider: providerKey,
+          reviews: [],
+          averageRating: 0,
+          statusCount: {
+            published: 0,
+            hidden: 0,
+            flagged: 0,
+          },
+        });
+      }
+
+      const bucket = accumulator.get(providerKey);
+      bucket.reviews.push(review);
+      if (bucket.statusCount[review.status] !== undefined) {
+        bucket.statusCount[review.status] += 1;
+      }
+
+      return accumulator;
+    }, new Map());
+
+    return Array.from(grouped.values())
+      .map((group) => {
+        const totalRating = group.reviews.reduce((sum, review) => sum + Number(review.rating || 0), 0);
+        return {
+          ...group,
+          averageRating: group.reviews.length ? (totalRating / group.reviews.length).toFixed(1) : "0.0",
+          reviews: [...group.reviews].sort(
+            (left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
+          ),
+        };
+      })
+      .sort((left, right) => left.provider.localeCompare(right.provider));
+  }, [reviews]);
 
   const activeConversation =
     conversations.find((conversation) => conversation.id === activeConversationId) ||
@@ -342,7 +518,7 @@ const AdminDashboard = () => {
       {
         id: "packs-active",
         label: "Packs actifs",
-        value: packs.filter((item) => item.status === "active").length,
+        value: packs.filter((item) => item.status === "validated").length,
       },
     ],
     [appointments, contracts, invoices, providers, reviews, packs]
@@ -387,49 +563,34 @@ const AdminDashboard = () => {
     );
   };
 
-  const openAppointmentEditModal = (appointment) => {
-    setAppointmentDraft({ ...appointment });
-    setAppointmentModalOpen(true);
+  const openAppointmentsModal = (group) => {
+    setSelectedAppointmentGroup(group);
+    setAppointmentsModalOpen(true);
   };
 
-  const saveAppointment = (event) => {
-    event.preventDefault();
+  const openReviewsModal = (group) => {
+    setSelectedReviewGroup(group);
+    setReviewsModalOpen(true);
+  };
 
-    if (!appointmentDraft.client || !appointmentDraft.provider || !appointmentDraft.date) {
-      showFeedback("error", "Veuillez completer les champs du rendez-vous.");
+  const openContractPdf = (contract) => {
+    if (!contract) {
       return;
     }
 
-    setAppointments((prev) =>
-      prev.map((item) => (item.id === appointmentDraft.id ? appointmentDraft : item))
-    );
-    setAppointmentModalOpen(false);
-    showFeedback("success", "Rendez-vous modifie avec succes.");
-  };
-
-  const deleteAppointment = (appointment) => {
-    openConfirm(
-      "Supprimer le rendez-vous",
-      `Supprimer le rendez-vous de ${appointment.client} avec ${appointment.provider} ?`,
-      "Supprimer",
-      () => {
-        setAppointments((prev) => prev.filter((item) => item.id !== appointment.id));
-        showFeedback("success", "Rendez-vous supprime.");
-      }
-    );
-  };
-
-  const openContractModal = (contract) => {
-    setSelectedContract(contract);
-    setContractModalOpen(true);
-  };
-
-  const signContractUi = (contract) => {
-    setContracts((prev) =>
-      prev.map((item) => (item.id === contract.id ? { ...item, status: "signed" } : item))
-    );
-    setSelectedContract((prev) => (prev ? { ...prev, status: "signed" } : prev));
-    showFeedback("success", "Signature numerique (UI) enregistree.");
+    const pdfBlob = buildSimplePdf([
+      `Contrat: ${contract.title}`,
+      `Reference: ${contract.id}`,
+      `Client: ${contract.client}`,
+      `Prestataire: ${contract.provider}`,
+      `Statut: ${statusLabels[contract.status] || contract.status}`,
+      "",
+      "Details:",
+      contract.details || "Aucun detail supplementaire.",
+    ]);
+    const pdfUrl = window.URL.createObjectURL(pdfBlob);
+    window.open(pdfUrl, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60_000);
   };
 
   const openInvoiceModal = (invoice) => {
@@ -437,27 +598,23 @@ const AdminDashboard = () => {
     setInvoiceModalOpen(true);
   };
 
-  const generateInvoice = () => {
-    const pendingAppointment = appointments.find(
-      (appointment) => !invoices.some((invoice) => invoice.appointmentId === appointment.id)
-    );
-
-    if (!pendingAppointment) {
-      showFeedback("error", "Aucun rendez-vous disponible pour generer une facture.");
+  const openInvoicePdf = (invoice) => {
+    if (!invoice) {
       return;
     }
 
-    const newInvoice = {
-      id: `INV-2026-${String(invoices.length + 1).padStart(3, "0")}`,
-      appointmentId: pendingAppointment.id,
-      client: pendingAppointment.client,
-      amount: pendingAppointment.amount,
-      status: "unpaid",
-      issuedAt: new Date().toISOString().slice(0, 10),
-    };
-
-    setInvoices((prev) => [newInvoice, ...prev]);
-    showFeedback("success", "Facture generee avec succes.");
+    const pdfBlob = buildSimplePdf([
+      `Facture: ${invoice.id}`,
+      `Client: ${invoice.client}`,
+      `Montant: ${formatCurrency(invoice.amount)}`,
+      `Date emission: ${invoice.issuedAt}`,
+      `Statut: ${statusLabels[invoice.status] || invoice.status}`,
+      "",
+      "Paiement obligatoire confirme pour cette facture.",
+    ]);
+    const pdfUrl = window.URL.createObjectURL(pdfBlob);
+    window.open(pdfUrl, "_blank", "noopener,noreferrer");
+    window.setTimeout(() => window.URL.revokeObjectURL(pdfUrl), 60_000);
   };
 
   const moderateReview = (review, nextStatus) => {
@@ -485,101 +642,147 @@ const AdminDashboard = () => {
     setPackModalOpen(true);
   };
 
+  const getProvidersForServiceCategory = (serviceCategory) =>
+    packProviderOptions.find((option) => option.serviceCategory === serviceCategory)?.providers || [];
+
+  const updatePackItemField = (index, field, value) => {
+    setPackForm((prev) => ({
+      ...prev,
+      items: prev.items.map((item, itemIndex) => {
+        if (itemIndex !== index) {
+          return item;
+        }
+        if (field === "serviceCategory") {
+          return { serviceCategory: value, serviceId: "", providerId: "" };
+        }
+        if (field === "providerSelection") {
+          const [serviceId, providerId] = String(value || "").split(":");
+          return {
+            ...item,
+            serviceId: serviceId || "",
+            providerId: providerId || "",
+          };
+        }
+        return { ...item, [field]: value };
+      }),
+    }));
+  };
+
+  const addPackItemRow = () => {
+    setPackForm((prev) => ({
+      ...prev,
+      items: [...prev.items, { serviceCategory: "", serviceId: "", providerId: "" }],
+    }));
+  };
+
+  const removePackItemRow = (index) => {
+    setPackForm((prev) => ({
+      ...prev,
+      items: prev.items.length === 1 ? prev.items : prev.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  };
+
   const openEditPackModal = (pack) => {
     setEditingPackId(pack.id);
     setPackForm({
       name: pack.name,
+      description: pack.description || "",
       price: String(pack.price),
       duration: pack.duration,
-      services: pack.services,
+      items:
+        pack.items?.map((item) => ({
+          serviceCategory: item.serviceCategory || "",
+          serviceId: String(item.serviceId || ""),
+          providerId: String(item.providerId || ""),
+        })) || defaultPackForm.items,
     });
     setPackModalOpen(true);
   };
 
-  const submitPack = (event) => {
-    event.preventDefault();
+  const submitPack = async (event) => {
+    event?.preventDefault?.();
 
-    if (!packForm.name || !packForm.price || !packForm.duration || !packForm.services) {
-      showFeedback("error", "Veuillez renseigner tous les champs du pack.");
+    const normalizedItems = packForm.items
+      .map((item) => ({
+        serviceCategory: String(item.serviceCategory || "").trim(),
+        serviceId: Number(item.serviceId || 0),
+        providerId: Number(item.providerId || 0),
+      }))
+      .filter((item) => item.serviceCategory && item.serviceId && item.providerId);
+
+    if (!packForm.name || !packForm.price || !packForm.duration || normalizedItems.length === 0) {
+      showFeedback("error", "Veuillez renseigner les champs du pack et choisir au moins un prestataire par service.");
       return;
     }
 
-    if (editingPackId) {
-      setPacks((prev) =>
-        prev.map((item) =>
-          item.id === editingPackId
-            ? {
-                ...item,
-                ...packForm,
-                price: Number(packForm.price),
-              }
-            : item
-        )
-      );
-      showFeedback("success", "Pack modifie avec succes.");
-    } else {
-      setPacks((prev) => [
-        {
-          id: Date.now(),
-          ...packForm,
-          price: Number(packForm.price),
-          status: "active",
-        },
-        ...prev,
-      ]);
-      showFeedback("success", "Pack cree avec succes.");
-    }
+    const payload = {
+      name: packForm.name,
+      description: packForm.description,
+      price: Number(packForm.price),
+      duration: packForm.duration,
+      items: normalizedItems,
+    };
 
-    setPackModalOpen(false);
-    setEditingPackId(null);
-    setPackForm(defaultPackForm);
+    setPackSubmitting(true);
+    try {
+      const response = editingPackId
+        ? await updateAdminPack(editingPackId, payload)
+        : await createAdminPack(payload);
+      await loadPacks();
+      showFeedback("success", response.message || "Pack enregistre avec succes.");
+      setPackModalOpen(false);
+      setEditingPackId(null);
+      setPackForm(defaultPackForm);
+    } catch (error) {
+      showFeedback("error", error.response?.data?.message || "Impossible d'enregistrer ce pack.");
+    } finally {
+      setPackSubmitting(false);
+    }
   };
 
   const togglePackStatus = (pack) => {
-    const nextStatus = pack.status === "active" ? "inactive" : "active";
-    setPacks((prev) => prev.map((item) => (item.id === pack.id ? { ...item, status: nextStatus } : item)));
-    showFeedback("success", `Pack ${nextStatus === "active" ? "active" : "desactive"}.`);
+    openEditPackModal(pack);
   };
 
   const providerColumns = [
     {
       key: "name",
       header: "Prestataire",
+      width: "30%",
+      cellClassName: "admin-cell-tight",
       render: (_, row) => (
-        <div className="admin-cell-stack">
+        <div className="admin-provider-inline-cell">
           <strong>{row.name}</strong>
           <small>{row.email}</small>
         </div>
       ),
     },
-    { key: "category", header: "Service" },
-    { key: "city", header: "Ville" },
+    {
+      key: "category",
+      header: "Service",
+      width: "16%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
+    {
+      key: "city",
+      header: "Ville",
+      width: "14%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
     {
       key: "rating",
       header: "Note",
-      render: (value) => `${value}/5`,
+      width: "10%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}/5</span>,
     },
     {
       key: "status",
       header: "Statut",
-      render: (value) => (
-        <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
-      ),
-    },
-  ];
-
-  const appointmentColumns = [
-    { key: "client", header: "Client" },
-    { key: "provider", header: "Prestataire" },
-    { key: "date", header: "Date" },
-    {
-      key: "amount",
-      header: "Montant",
-      render: (value) => formatCurrency(value),
-    },
-    {
-      key: "status",
-      header: "Statut",
+      width: "16%",
+      cellClassName: "admin-cell-tight",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
@@ -601,43 +804,39 @@ const AdminDashboard = () => {
   ];
 
   const invoiceColumns = [
-    { key: "id", header: "Facture" },
-    { key: "client", header: "Client" },
+    {
+      key: "id",
+      header: "Facture",
+      width: "18%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
+    {
+      key: "client",
+      header: "Client",
+      width: "24%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
     {
       key: "amount",
       header: "Montant",
-      render: (value) => formatCurrency(value),
+      width: "17%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{formatCurrency(value)}</span>,
     },
-    { key: "issuedAt", header: "Date emission" },
+    {
+      key: "issuedAt",
+      header: "Date emission",
+      width: "18%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
     {
       key: "status",
       header: "Statut",
-      render: (value) => (
-        <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
-      ),
-    },
-  ];
-
-  const reviewColumns = [
-    {
-      key: "author",
-      header: "Auteur",
-      render: (_, row) => (
-        <div className="admin-cell-stack">
-          <strong>{row.author}</strong>
-          <small>{row.target}</small>
-        </div>
-      ),
-    },
-    {
-      key: "rating",
-      header: "Note",
-      render: (value) => `${value}/5`,
-    },
-    { key: "comment", header: "Commentaire" },
-    {
-      key: "status",
-      header: "Statut",
+      width: "13%",
+      cellClassName: "admin-cell-tight",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
@@ -645,14 +844,31 @@ const AdminDashboard = () => {
   ];
 
   const packColumns = [
-    { key: "name", header: "Nom" },
+    {
+      key: "name",
+      header: "Pack",
+      render: (_, row) => (
+        <div className="admin-provider-inline-cell">
+          <strong>{row.name}</strong>
+          <small>{row.description || "Pack multi-prestataires"}</small>
+        </div>
+      ),
+    },
     {
       key: "price",
       header: "Prix",
       render: (value) => formatCurrency(value),
     },
     { key: "duration", header: "Duree" },
-    { key: "services", header: "Services inclus" },
+    {
+      key: "services",
+      header: "Services inclus",
+      render: (_, row) => (
+        <span className="admin-cell-wrap">
+          {row.items?.map((item) => `${item.serviceCategory}: ${item.providerName}`).join(" • ") || row.services}
+        </span>
+      ),
+    },
     {
       key: "status",
       header: "Statut",
@@ -724,8 +940,10 @@ const AdminDashboard = () => {
             keyField="id"
             loading={providersLoading}
             emptyMessage="Aucun prestataire trouve pour ce filtre."
+            tableClassName="admin-data-table-providers"
+            actionsColumnWidth="240px"
             renderActions={(row) => (
-              <div className="admin-provider-actions-row">
+              <div className="admin-provider-actions-row admin-provider-actions-row-shifted">
                 <button type="button" className="provider-ghost-btn" onClick={() => openProviderDetailsModal(row)}>
                   Details
                 </button>
@@ -748,8 +966,8 @@ const AdminDashboard = () => {
         <section className="provider-panel">
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
-              <h3>Appointment Management</h3>
-              <p>Filtrez par statut et modifiez les rendez-vous.</p>
+              <h3>Consultation des rendez-vous</h3>
+              <p>Explorez les rendez-vous par prestataire avec une vue plus claire et 100% lecture seule.</p>
             </div>
           </div>
 
@@ -766,23 +984,43 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          <DataTable
-            columns={appointmentColumns}
-            rows={filteredAppointments}
-            keyField="id"
-            loading={false}
-            emptyMessage="Aucun rendez-vous disponible pour ce statut."
-            renderActions={(row) => (
-              <>
-                <button type="button" className="provider-ghost-btn" onClick={() => openAppointmentEditModal(row)}>
-                  Modifier
+          {appointmentsByProvider.length === 0 ? (
+            <div className="admin-status-card">Aucun rendez-vous disponible pour ce statut.</div>
+          ) : (
+            <div className="admin-appointments-board">
+              {appointmentsByProvider.map((group) => (
+                <button
+                  key={group.provider}
+                  type="button"
+                  className="admin-appointment-provider-card"
+                  onClick={() => openAppointmentsModal(group)}
+                >
+                  <div className="admin-appointment-provider-head">
+                    <div className="admin-appointment-provider-identity">
+                      <span className="admin-appointment-provider-avatar">{getInitials(group.provider)}</span>
+                      <div>
+                        <strong>{group.provider}</strong>
+                        <p>{group.appointments.length} rendez-vous a consulter</p>
+                      </div>
+                    </div>
+
+                    <div className="admin-appointment-provider-metrics">
+                      <span>{formatCurrency(group.totalAmount)}</span>
+                      <small>Montant cumule</small>
+                    </div>
+                  </div>
+
+                  <div className="admin-appointment-provider-summary">
+                    <span className="admin-chip neutral">En attente: {group.statusCount.pending}</span>
+                    <span className="admin-chip ok">Confirmes: {group.statusCount.confirmed}</span>
+                    <span className="admin-chip warn">Annules: {group.statusCount.cancelled}</span>
+                  </div>
+
+                  <span className="admin-appointment-provider-cta">Cliquer pour afficher les rendez-vous tries par date</span>
                 </button>
-                <button type="button" className="provider-secondary-btn" onClick={() => deleteAppointment(row)}>
-                  Supprimer
-                </button>
-              </>
-            )}
-          />
+              ))}
+            </div>
+          )}
         </section>
       );
     }
@@ -804,19 +1042,9 @@ const AdminDashboard = () => {
             loading={false}
             emptyMessage="Aucun contrat disponible."
             renderActions={(row) => (
-              <>
-                <button type="button" className="provider-ghost-btn" onClick={() => openContractModal(row)}>
-                  Voir
-                </button>
-                <button
-                  type="button"
-                  className="provider-secondary-btn"
-                  onClick={() => signContractUi(row)}
-                  disabled={row.status === "signed"}
-                >
-                  {row.status === "signed" ? "Signe" : "Signer (UI)"}
-                </button>
-              </>
+              <button type="button" className="provider-ghost-btn" onClick={() => openContractPdf(row)}>
+                Voir
+              </button>
             )}
           />
         </section>
@@ -829,11 +1057,8 @@ const AdminDashboard = () => {
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
               <h3>Billing / Invoicing</h3>
-              <p>Statuts payee/impayee, generation et consultation des factures.</p>
+              <p>Consultation des factures payees avec ouverture directe du document PDF.</p>
             </div>
-            <button type="button" className="provider-primary-btn" onClick={generateInvoice}>
-              Generer une facture
-            </button>
           </div>
 
           <DataTable
@@ -842,8 +1067,14 @@ const AdminDashboard = () => {
             keyField="id"
             loading={false}
             emptyMessage="Aucune facture trouvee."
+            tableClassName="admin-data-table-billing"
+            actionsColumnWidth="190px"
             renderActions={(row) => (
-              <button type="button" className="provider-ghost-btn" onClick={() => openInvoiceModal(row)}>
+              <button
+                type="button"
+                className="provider-ghost-btn admin-action-btn-nowrap"
+                onClick={() => openInvoicePdf(row)}
+              >
                 Voir facture
               </button>
             )}
@@ -858,31 +1089,46 @@ const AdminDashboard = () => {
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
               <h3>Reviews & Comments</h3>
-              <p>Moderation des retours utilisateurs.</p>
+              <p>Consultez les avis par prestataire puis moderez chaque retour dans une popup detaillee.</p>
             </div>
           </div>
 
-          <DataTable
-            columns={reviewColumns}
-            rows={reviews}
-            keyField="id"
-            loading={false}
-            emptyMessage="Aucun avis disponible."
-            renderActions={(row) => (
-              <>
+          {reviewsByProvider.length === 0 ? (
+            <div className="admin-status-card">Aucun avis disponible.</div>
+          ) : (
+            <div className="admin-appointments-board">
+              {reviewsByProvider.map((group) => (
                 <button
+                  key={group.provider}
                   type="button"
-                  className="provider-ghost-btn"
-                  onClick={() => moderateReview(row, row.status === "hidden" ? "published" : "hidden")}
+                  className="admin-appointment-provider-card"
+                  onClick={() => openReviewsModal(group)}
                 >
-                  {row.status === "hidden" ? "Publier" : "Masquer"}
+                  <div className="admin-appointment-provider-head">
+                    <div className="admin-appointment-provider-identity">
+                      <span className="admin-appointment-provider-avatar">{getInitials(group.provider)}</span>
+                      <div>
+                        <strong>{group.provider}</strong>
+                        <p>{group.reviews.length} avis a consulter</p>
+                      </div>
+                    </div>
+
+                    <div className="admin-appointment-provider-metrics">
+                      <span>{group.averageRating}/5</span>
+                      <small>Note moyenne</small>
+                    </div>
+                  </div>
+
+                  <div className="admin-appointment-provider-summary">
+                    <span className="admin-chip ok">Publies: {group.statusCount.published}</span>
+                    <span className="admin-chip neutral">Masques: {group.statusCount.hidden}</span>
+                  </div>
+
+                  <span className="admin-appointment-provider-cta">Cliquer pour afficher les avis et conserver les actions</span>
                 </button>
-                <button type="button" className="provider-secondary-btn" onClick={() => deleteReview(row)}>
-                  Supprimer
-                </button>
-              </>
-            )}
-          />
+              ))}
+            </div>
+          )}
         </section>
       );
     }
@@ -893,7 +1139,7 @@ const AdminDashboard = () => {
           <div className="provider-panel-head provider-panel-head-inline">
             <div>
               <h3>Packs / Promotions</h3>
-              <p>Creation et gestion des offres promotionnelles.</p>
+              <p>Composez un pack par services puis associez un prestataire a chaque ligne pour suivre la validation.</p>
             </div>
             <button type="button" className="provider-primary-btn" onClick={openCreatePackModal}>
               Creer un pack
@@ -909,10 +1155,10 @@ const AdminDashboard = () => {
             renderActions={(row) => (
               <>
                 <button type="button" className="provider-ghost-btn" onClick={() => openEditPackModal(row)}>
-                  Modifier
+                  Gerer
                 </button>
                 <button type="button" className="provider-secondary-btn" onClick={() => togglePackStatus(row)}>
-                  {row.status === "active" ? "Desactiver" : "Activer"}
+                  Reaffecter
                 </button>
               </>
             )}
@@ -934,32 +1180,42 @@ const AdminDashboard = () => {
           <div className="admin-status-card">Aucune conversation a superviser.</div>
         ) : (
           <div className="admin-chat-supervision">
-            <div className="admin-chat-list">
-              {conversations.map((conversation) => (
-                <button
-                  key={conversation.id}
-                  type="button"
-                  className={`provider-chat-item ${activeConversation?.id === conversation.id ? "active" : ""}`}
-                  onClick={() => setActiveConversationId(conversation.id)}
-                >
-                  <div>
-                    <strong>{conversation.client}</strong>
-                    <p>{conversation.provider}</p>
-                    <small>{conversation.excerpt}</small>
-                  </div>
-                  <em>{conversation.lastAt}</em>
-                </button>
-              ))}
-            </div>
-
-            <div className="provider-chat-window admin-readonly-chat">
-              <div className="provider-chat-window-head">
-                <h3>
-                  {activeConversation?.client} x {activeConversation?.provider}
-                </h3>
-                <p>Mode supervision: lecture seule</p>
+            <section className="admin-chat-panel admin-chat-conversations-panel">
+              <div className="admin-chat-panel-head">
+                <strong>Conversations</strong>
+                <span>{conversations.length} fil(s)</span>
               </div>
-              <div className="provider-chat-messages">
+              <div className="admin-chat-list">
+                {conversations.map((conversation) => (
+                  <button
+                    key={conversation.id}
+                    type="button"
+                    className={`provider-chat-item ${activeConversation?.id === conversation.id ? "active" : ""}`}
+                    onClick={() => setActiveConversationId(conversation.id)}
+                  >
+                    <span className="admin-chat-avatar">{getInitials(conversation.client)}</span>
+                    <div className="admin-chat-item-copy">
+                      <strong>{conversation.client}</strong>
+                      <p>{conversation.provider}</p>
+                      <small>{conversation.excerpt}</small>
+                    </div>
+                    <em>{conversation.lastAt}</em>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="provider-chat-window admin-readonly-chat">
+              <div className="provider-chat-window-head">
+                <div>
+                  <h3>
+                    {activeConversation?.client} x {activeConversation?.provider}
+                  </h3>
+                  <p>Mode supervision: lecture seule</p>
+                </div>
+                <span className="admin-chat-readonly-badge">Lecture seule</span>
+              </div>
+              <div className="provider-chat-messages admin-chat-messages-panel">
                 {activeConversation?.messages.map((message) => (
                   <div
                     key={message.id}
@@ -973,7 +1229,7 @@ const AdminDashboard = () => {
                   </div>
                 ))}
               </div>
-            </div>
+            </section>
           </div>
         )}
       </section>
@@ -1012,6 +1268,92 @@ const AdminDashboard = () => {
           {renderSection()}
         </div>
       </AdminLayout>
+
+      <Modal
+        open={appointmentsModalOpen}
+        title={selectedAppointmentGroup ? `Rendez-vous de ${selectedAppointmentGroup.provider}` : "Rendez-vous"}
+        onClose={() => setAppointmentsModalOpen(false)}
+        actions={
+          <button type="button" className="provider-primary-btn" onClick={() => setAppointmentsModalOpen(false)}>
+            Fermer
+          </button>
+        }
+      >
+        <div className="admin-appointment-modal-list">
+          {(selectedAppointmentGroup?.appointments || []).map((appointment) => (
+            <article key={appointment.id} className="admin-appointment-item">
+              <div className="admin-appointment-item-main">
+                <div>
+                  <span className="admin-appointment-item-label">Client</span>
+                  <strong>{appointment.client}</strong>
+                </div>
+                <div>
+                  <span className="admin-appointment-item-label">Date</span>
+                  <strong>{formatAppointmentDate(appointment.date)}</strong>
+                </div>
+              </div>
+
+              <div className="admin-appointment-item-side">
+                <span className={`admin-chip ${statusClass(appointment.status)}`}>
+                  {statusLabels[appointment.status] || appointment.status}
+                </span>
+                <strong>{formatCurrency(appointment.amount)}</strong>
+              </div>
+            </article>
+          ))}
+          {!selectedAppointmentGroup?.appointments?.length ? (
+            <div className="admin-status-card">Aucun rendez-vous a afficher pour ce prestataire.</div>
+          ) : null}
+        </div>
+      </Modal>
+
+      <Modal
+        open={reviewsModalOpen}
+        title={selectedReviewGroup ? `Avis de ${selectedReviewGroup.provider}` : "Avis"}
+        onClose={() => setReviewsModalOpen(false)}
+        actions={
+          <button type="button" className="provider-primary-btn" onClick={() => setReviewsModalOpen(false)}>
+            Fermer
+          </button>
+        }
+      >
+        <div className="admin-review-modal-list">
+          {(selectedReviewGroup?.reviews || []).map((review) => (
+            <article key={review.id} className="admin-review-item">
+              <div className="admin-review-item-head">
+                <div>
+                  <strong>{review.author}</strong>
+                  <small>{review.createdAt || "Date indisponible"}</small>
+                </div>
+                <div className="admin-review-item-side">
+                  <span className="admin-cell-nowrap">{review.rating}/5</span>
+                  <span className={`admin-chip ${statusClass(review.status)}`}>
+                    {getReviewStatusLabel(review.status)}
+                  </span>
+                </div>
+              </div>
+
+              <p>{review.comment}</p>
+
+              <div className="admin-review-item-actions">
+                <button
+                  type="button"
+                  className="provider-ghost-btn"
+                  onClick={() => moderateReview(review, review.status === "hidden" ? "published" : "hidden")}
+                >
+                  {review.status === "hidden" ? "Publier" : "Masquer"}
+                </button>
+                <button type="button" className="provider-secondary-btn" onClick={() => deleteReview(review)}>
+                  Supprimer
+                </button>
+              </div>
+            </article>
+          ))}
+          {!selectedReviewGroup?.reviews?.length ? (
+            <div className="admin-status-card">Aucun avis a afficher pour ce prestataire.</div>
+          ) : null}
+        </div>
+      </Modal>
 
       <Modal
         open={providerModalOpen}
@@ -1066,59 +1408,6 @@ const AdminDashboard = () => {
       </Modal>
 
       <Modal
-        open={appointmentModalOpen}
-        title="Modifier un rendez-vous"
-        onClose={() => setAppointmentModalOpen(false)}
-        actions={
-          <>
-            <button type="button" className="provider-ghost-btn" onClick={() => setAppointmentModalOpen(false)}>
-              Annuler
-            </button>
-            <button type="button" className="provider-primary-btn" onClick={saveAppointment}>
-              Enregistrer
-            </button>
-          </>
-        }
-      >
-        <form className="admin-form-grid" onSubmit={saveAppointment}>
-          <input className="provider-input" value={appointmentDraft?.client || ""} onChange={(event) => setAppointmentDraft((prev) => ({ ...prev, client: event.target.value }))} placeholder="Client" />
-          <input className="provider-input" value={appointmentDraft?.provider || ""} onChange={(event) => setAppointmentDraft((prev) => ({ ...prev, provider: event.target.value }))} placeholder="Prestataire" />
-          <input className="provider-input" type="date" value={appointmentDraft?.date || ""} onChange={(event) => setAppointmentDraft((prev) => ({ ...prev, date: event.target.value }))} />
-          <select className="provider-select" value={appointmentDraft?.status || "pending"} onChange={(event) => setAppointmentDraft((prev) => ({ ...prev, status: event.target.value }))}>
-            <option value="pending">En attente</option>
-            <option value="confirmed">Confirme</option>
-            <option value="cancelled">Annule</option>
-          </select>
-        </form>
-      </Modal>
-
-      <Modal
-        open={contractModalOpen}
-        title="Details du contrat"
-        onClose={() => setContractModalOpen(false)}
-        actions={
-          <>
-            <button type="button" className="provider-ghost-btn" onClick={() => setContractModalOpen(false)}>Fermer</button>
-            <button type="button" className="provider-primary-btn" disabled={selectedContract?.status === "signed"} onClick={() => selectedContract && signContractUi(selectedContract)}>
-              {selectedContract?.status === "signed" ? "Deja signe" : "Signer numeriquement (UI)"}
-            </button>
-          </>
-        }
-      >
-        <div className="admin-detail-grid">
-          <div><strong>Reference</strong><p>{selectedContract?.id}</p></div>
-          <div><strong>Contrat</strong><p>{selectedContract?.title}</p></div>
-          <div><strong>Client</strong><p>{selectedContract?.client}</p></div>
-          <div><strong>Prestataire</strong><p>{selectedContract?.provider}</p></div>
-          <div><strong>Statut</strong><p>{selectedContract ? statusLabels[selectedContract.status] : "-"}</p></div>
-        </div>
-        <div className="admin-signature-box">
-          <p>{selectedContract?.details}</p>
-          <div className="admin-signature-placeholder">Zone de signature numerique (UI)</div>
-        </div>
-      </Modal>
-
-      <Modal
         open={invoiceModalOpen}
         title="Facture"
         onClose={() => setInvoiceModalOpen(false)}
@@ -1140,7 +1429,9 @@ const AdminDashboard = () => {
         actions={
           <>
             <button type="button" className="provider-ghost-btn" onClick={() => setPackModalOpen(false)}>Annuler</button>
-            <button type="button" className="provider-primary-btn" onClick={submitPack}>Enregistrer</button>
+            <button type="button" className="provider-primary-btn" onClick={submitPack} disabled={packSubmitting}>
+              {packSubmitting ? "Enregistrement..." : "Enregistrer"}
+            </button>
           </>
         }
       >
@@ -1148,7 +1439,62 @@ const AdminDashboard = () => {
           <input className="provider-input" placeholder="Nom du pack" value={packForm.name} onChange={(event) => setPackForm((prev) => ({ ...prev, name: event.target.value }))} />
           <input className="provider-input" type="number" placeholder="Prix" value={packForm.price} onChange={(event) => setPackForm((prev) => ({ ...prev, price: event.target.value }))} />
           <input className="provider-input" placeholder="Duree" value={packForm.duration} onChange={(event) => setPackForm((prev) => ({ ...prev, duration: event.target.value }))} />
-          <input className="provider-input" placeholder="Services inclus" value={packForm.services} onChange={(event) => setPackForm((prev) => ({ ...prev, services: event.target.value }))} />
+          <textarea className="provider-textarea" placeholder="Description du pack" value={packForm.description} onChange={(event) => setPackForm((prev) => ({ ...prev, description: event.target.value }))} />
+
+          <div className="admin-pack-builder">
+            <div className="admin-pack-builder-head">
+              <strong>Services et prestataires</strong>
+              <button type="button" className="provider-ghost-btn" onClick={addPackItemRow}>
+                Ajouter un service
+              </button>
+            </div>
+
+            <div className="admin-pack-builder-list">
+              {packForm.items.map((item, index) => {
+                const providerChoices = getProvidersForServiceCategory(item.serviceCategory);
+                const selectionValue =
+                  item.serviceId && item.providerId ? `${item.serviceId}:${item.providerId}` : "";
+
+                return (
+                  <div key={`${item.serviceCategory}-${index}`} className="admin-pack-builder-row">
+                    <select
+                      className="provider-select"
+                      value={item.serviceCategory}
+                      onChange={(event) => updatePackItemField(index, "serviceCategory", event.target.value)}
+                    >
+                      <option value="">Choisir un type de service</option>
+                      {packProviderOptions.map((option) => (
+                        <option key={option.serviceCategory} value={option.serviceCategory}>
+                          {option.serviceCategory}
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      className="provider-select"
+                      value={selectionValue}
+                      onChange={(event) => updatePackItemField(index, "providerSelection", event.target.value)}
+                      disabled={!item.serviceCategory}
+                    >
+                      <option value="">Choisir un prestataire</option>
+                      {providerChoices.map((option) => (
+                        <option
+                          key={`${option.serviceId}-${option.providerId}`}
+                          value={`${option.serviceId}:${option.providerId}`}
+                        >
+                          {option.providerName} - {option.serviceTitle}
+                        </option>
+                      ))}
+                    </select>
+
+                    <button type="button" className="provider-secondary-btn" onClick={() => removePackItemRow(index)}>
+                      Retirer
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         </form>
       </Modal>
 

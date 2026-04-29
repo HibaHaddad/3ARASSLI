@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import api from "../services/api";
+import { showToast } from "../services/toast";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ServiceCard from "./client/ServiceCard";
 import {
@@ -42,6 +43,18 @@ const ClientSearchPage = () => {
     setCurrentPage(1);
     loadServices(nextFilters);
   }, [searchParams]);
+
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   const totalPages = Math.max(Math.ceil(services.length / SERVICES_PER_PAGE), 1);
   const paginatedServices = useMemo(() => {
@@ -175,9 +188,6 @@ const ClientSearchPage = () => {
 
       <section className="client-section client-search-results-section">
         <div className="client-shell">
-          {message ? <p className="client-message">{message}</p> : null}
-          {error ? <p className="client-error">{error}</p> : null}
-
           <div className="client-section-head">
             <div>
               <span className="section-kicker">Resultats</span>

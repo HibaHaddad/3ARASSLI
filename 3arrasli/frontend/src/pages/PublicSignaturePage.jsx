@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { API_BASE_URL } from "../services/api";
+import { showToast } from "../services/toast";
 import SignaturePad from "./client/SignaturePad";
 import "./PublicSignaturePage.css";
 
@@ -38,6 +39,18 @@ const PublicSignaturePage = () => {
     loadSession();
   }, [token]);
 
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
+
   const submitSignature = async (event) => {
     event.preventDefault();
     if (!signatureData) {
@@ -67,8 +80,8 @@ const PublicSignaturePage = () => {
     <main className="public-signature-page">
       <h1 className="public-signature-title">Signature du contrat</h1>
       {loading ? <p>Chargement...</p> : null}
-      {error ? <p className="public-signature-error">{error}</p> : null}
-      {message ? <p className="public-signature-success">{message}</p> : null}
+      {!loading && !reservation && !message ? <p>Cette session de signature n'est pas disponible.</p> : null}
+      {message ? <p>La signature a ete enregistree. Vous pouvez fermer cette page.</p> : null}
       {reservation && !message ? (
         <form className="public-signature-form" onSubmit={submitSignature}>
           <p>Reservation #{reservation.id}</p>

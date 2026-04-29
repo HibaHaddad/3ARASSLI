@@ -52,8 +52,6 @@ const ServiceDetailContent = ({
 
       <div className="client-booking-box">
         <h3>Reserver ce service</h3>
-        {message ? <p className="client-message">{message}</p> : null}
-        {error ? <p className="client-error">{error}</p> : null}
         <div className="client-booking-fields">
           <input
             type="date"

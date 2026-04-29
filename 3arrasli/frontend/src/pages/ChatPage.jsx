@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router-dom";
 import api from "../services/api";
 import { getStoredToken, getStoredUser } from "../services/auth";
 import { connectChatSocket, emitRealtimeMessage, emitTypingStatus, joinConversationRoom } from "../services/socket";
+import { showToast } from "../services/toast";
 import "./provider.css";
 import ClientPageLayout from "./client/ClientPageLayout";
 
@@ -31,6 +32,7 @@ const ChatPage = () => {
   const [messages, setMessages] = useState([]);
   const [receiverId, setReceiverId] = useState("");
   const [content, setContent] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
   const [error, setError] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [typingLabel, setTypingLabel] = useState("");
@@ -99,6 +101,12 @@ const ChatPage = () => {
     loadServices();
     loadChatPreview();
   }, []);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   useEffect(() => {
     const preferredProvider = searchParams.get("provider");
@@ -295,6 +303,8 @@ const ChatPage = () => {
         unique.set(service.prestataire_id, {
           id: service.prestataire_id,
           name: service.prestataire_name,
+          serviceType: service.category || service.type || "Service",
+          clientName: getStoredUser()?.name || "Client",
           excerpt: preview?.content || "Commencez la conversation avec ce prestataire.",
           time: preview?.timestamp
             ? new Date(preview.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
@@ -306,6 +316,18 @@ const ChatPage = () => {
     return Array.from(unique.values());
   }, [chatPreview, currentUserId, services]);
 
+  const filteredConversations = useMemo(() => {
+    const normalized = searchTerm.trim().toLowerCase();
+    if (!normalized) {
+      return conversations;
+    }
+
+    return conversations.filter((conversation) =>
+      [conversation.name, conversation.serviceType, conversation.clientName]
+        .some((value) => String(value || "").toLowerCase().includes(normalized))
+    );
+  }, [conversations, searchTerm]);
+
   const activeConversation = conversations.find((item) => String(item.id) === String(receiverId));
 
   return (
@@ -316,17 +338,25 @@ const ChatPage = () => {
     >
       <section className="client-section">
         <div className="client-shell">
-          {error ? <p className="client-error">{error}</p> : null}
-
           <article className="provider-panel provider-chat-shell">
             <div className="provider-chat-sidebar">
               <div className="provider-panel-head">
                 <h3>Conversations</h3>
-                <p>Selectionnez un prestataire pour afficher vos messages.</p>
+                <p>Recherchez un prestataire, un service ou votre nom client pour filtrer instantanement.</p>
+              </div>
+
+              <div className="client-chat-search">
+                <input
+                  type="text"
+                  className="client-input"
+                  value={searchTerm}
+                  onChange={(event) => setSearchTerm(event.target.value)}
+                  placeholder="Rechercher par prestataire, service, client..."
+                />
               </div>
 
               <div className="provider-chat-list">
-                {conversations.map((conversation) => (
+                {filteredConversations.map((conversation) => (
                   <button
                     key={conversation.id}
                     type="button"
@@ -341,7 +371,8 @@ const ChatPage = () => {
                     </span>
                     <div>
                       <strong>{conversation.name}</strong>
-                      <p>{conversation.excerpt}</p>
+                      <p>{conversation.serviceType}</p>
+                      <small>{conversation.excerpt}</small>
                     </div>
                     <span className="provider-chat-meta">
                       <em>{conversation.time}</em>
@@ -354,8 +385,15 @@ const ChatPage = () => {
             <div className="provider-chat-window">
               <div className="provider-chat-window-head">
                 <div>
+                  <small>Conversation mariage</small>
                   <h3>{activeConversation?.name || "Choisir une conversation"}</h3>
-                  <p>{typingLabel || (activeConversation ? "Conversation active" : "Aucun prestataire selectionne")}</p>
+                  <p>
+                    {typingLabel || (
+                      activeConversation
+                        ? `${activeConversation.serviceType} • ${activeConversation.clientName}`
+                        : "Aucun prestataire selectionne"
+                    )}
+                  </p>
                 </div>
                 <span className="provider-status validated">{providerOnline ? "En ligne" : "Hors ligne"}</span>
               </div>
@@ -368,7 +406,15 @@ const ChatPage = () => {
                       Number(message.sender_id) === Number(receiverId) ? "client" : "provider"
                     }`}
                   >
-                    {message.content}
+                    <p>{message.content}</p>
+                    <span>
+                      {message.timestamp
+                        ? new Date(message.timestamp).toLocaleTimeString([], {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })
+                        : "--:--"}
+                    </span>
                   </div>
                 ))}
                 <div ref={messagesEndRef} />

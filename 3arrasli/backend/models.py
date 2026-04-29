@@ -134,6 +134,8 @@ class Notification(db.Model):
     message = db.Column(db.Text, nullable=False)
     reservation_id = db.Column(db.Integer, db.ForeignKey("reservations.id"), nullable=True, index=True)
     appointment_id = db.Column(db.Integer, db.ForeignKey("appointments.id"), nullable=True, index=True)
+    pack_id = db.Column(db.Integer, db.ForeignKey("packs.id"), nullable=True, index=True)
+    pack_item_id = db.Column(db.Integer, db.ForeignKey("pack_items.id"), nullable=True, index=True)
     is_read = db.Column(db.Boolean, nullable=False, default=False)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
@@ -188,6 +190,51 @@ class Review(db.Model):
 
     __table_args__ = (
         db.UniqueConstraint("service_id", "client_id", name="uq_service_client_review"),
+    )
+
+
+class Pack(db.Model):
+    __tablename__ = "packs"
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(180), nullable=False)
+    description = db.Column(db.Text, nullable=True)
+    price = db.Column(db.Float, nullable=False, default=0)
+    duration = db.Column(db.String(120), nullable=True)
+    status = db.Column(db.String(40), nullable=False, default="pending")
+    created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+    items = db.relationship(
+        "PackItem",
+        backref="pack",
+        cascade="all, delete-orphan",
+        lazy=True,
+        order_by="PackItem.id.asc()",
+    )
+
+
+class PackItem(db.Model):
+    __tablename__ = "pack_items"
+
+    id = db.Column(db.Integer, primary_key=True)
+    pack_id = db.Column(db.Integer, db.ForeignKey("packs.id"), nullable=False, index=True)
+    service_id = db.Column(db.Integer, db.ForeignKey("services.id"), nullable=True, index=True)
+    provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
+    service_category = db.Column(db.String(120), nullable=False)
+    response_status = db.Column(db.String(40), nullable=False, default="pending")
+    invited_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    responded_at = db.Column(db.DateTime, nullable=True)
+    updated_at = db.Column(
+        db.DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
     )
 class ProviderAvailabilitySlot(db.Model):
     __tablename__ = "provider_availability_slots"

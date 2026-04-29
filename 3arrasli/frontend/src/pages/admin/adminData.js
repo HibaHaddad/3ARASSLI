@@ -17,8 +17,8 @@ export const adminSections = [
     id: "appointments",
     icon: "appointments",
     label: "Rendez-vous",
-    title: "Gestion des rendez-vous",
-    description: "Filtrez les statuts et ajustez les rendez-vous en un clic.",
+    title: "Consultation des rendez-vous",
+    description: "Consultez les rendez-vous en lecture seule.",
   },
   {
     id: "contracts",
@@ -154,7 +154,7 @@ export const mockInvoices = [
     appointmentId: 101,
     client: "Amira Ben Salem",
     amount: 1800,
-    status: "unpaid",
+    status: "paid",
     issuedAt: "2026-04-15",
   },
   {

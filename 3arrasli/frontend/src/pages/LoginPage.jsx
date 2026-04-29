@@ -1,9 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import Spinner from "../components/Spinner";
 import api from "../services/api";
 import { getDashboardPathForUser, saveStoredUser } from "../services/auth";
+import { showToast } from "../services/toast";
 import "./auth.css";
 
 const LoginPage = () => {
@@ -18,6 +19,18 @@ const LoginPage = () => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
   };
+
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   const onSubmit = async (event) => {
     event.preventDefault();
@@ -147,10 +160,6 @@ const LoginPage = () => {
                 )}
               </button>
             </form>
-
-            {error && <p className="auth-alert error">{error}</p>}
-            {message && <p className="auth-alert success">{message}</p>}
-
             <p className="auth-link-text">
               Vous n'avez pas de compte ? <Link to="/signup">Creer un compte</Link>
             </p>

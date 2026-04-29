@@ -7,6 +7,7 @@ import AdminDashboard from "./pages/AdminDashboard";
 import ChatPage from "./pages/ChatPage";
 import ClientDashboard from "./pages/ClientDashboard";
 import ClientProfilePage from "./pages/ClientProfilePage";
+import ClientPacksPage from "./pages/ClientPacksPage";
 import ClientProviderPage from "./pages/ClientProviderPage";
 import ClientReservationsPage from "./pages/ClientReservationsPage";
 import ClientSearchPage from "./pages/ClientSearchPage";
@@ -75,6 +76,7 @@ const App = () => {
         <Route path="/client-dashboard" element={<Navigate to="/client" replace />} />
         <Route path="/search" element={<Navigate to="/client/search" replace />} />
         <Route path="/favorites" element={<Navigate to="/client/favorites" replace />} />
+        <Route path="/packs" element={<Navigate to="/client/packs" replace />} />
         <Route path="/chat" element={<Navigate to="/client/chat" replace />} />
         <Route path="/planner" element={<Navigate to="/client/planner" replace />} />
         <Route path="/reservations" element={<Navigate to="/client/reservations" replace />} />
@@ -124,6 +126,14 @@ const App = () => {
           element={
             <RequireRole role="Client">
               <ClientReservationsPage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/client/packs"
+          element={
+            <RequireRole role="Client">
+              <ClientPacksPage />
             </RequireRole>
           }
         />

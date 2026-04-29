@@ -5,6 +5,7 @@ import ProviderCalendar from "./provider/ProviderCalendar";
 import ProviderChat from "./provider/ProviderChat";
 import ProviderDashboardHome from "./provider/ProviderDashboardHome";
 import ProviderLayout from "./provider/ProviderLayout";
+import ProviderPacks from "./provider/ProviderPacks";
 import ProviderProfile from "./provider/ProviderProfile";
 import ProviderServices from "./provider/ProviderServices";
 import { resolveAssetUrl } from "../services/assets";
@@ -28,6 +29,11 @@ import {
   getProviderNotifications,
   markProviderNotificationRead,
 } from "../services/providerNotifications";
+import {
+  getProviderPack,
+  getProviderPacks,
+  respondProviderPack,
+} from "../services/providerPacks";
 import { getProviderProfile, updateProviderProfile } from "../services/providerProfile";
 import { validateServiceForm } from "./provider/serviceForm";
 import {
@@ -157,6 +163,10 @@ const ProviderDashboard = () => {
   const [notifications, setNotifications] = useState([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [notificationsMessage, setNotificationsMessage] = useState("");
+  const [packs, setPacks] = useState([]);
+  const [packsLoading, setPacksLoading] = useState(false);
+  const [activePackId, setActivePackId] = useState(null);
+  const [respondingPack, setRespondingPack] = useState(false);
   const currentProviderId = Number(getStoredSession()?.user?.id || 0);
   const socketRef = useRef(null);
   const joinedChatIdsRef = useRef(new Set());
@@ -230,6 +240,35 @@ const ProviderDashboard = () => {
 
   useEffect(() => {
     loadNotifications();
+  }, []);
+
+  const loadProviderPacksData = async (options = {}) => {
+    const { silent = false } = options;
+    if (!silent) {
+      setPacksLoading(true);
+    }
+
+    try {
+      const response = await getProviderPacks();
+      const nextPacks = response.packs || [];
+      setPacks(nextPacks);
+      setActivePackId((currentId) => {
+        if (nextPacks.some((pack) => pack.id === currentId)) {
+          return currentId;
+        }
+        return nextPacks[0]?.id || null;
+      });
+    } catch (error) {
+      setNotificationsMessage(error.response?.data?.message || "Impossible de charger les invitations pack.");
+    } finally {
+      if (!silent) {
+        setPacksLoading(false);
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadProviderPacksData();
   }, []);
 
   const loadProviderServices = async (options = {}) => {
@@ -369,6 +408,7 @@ const ProviderDashboard = () => {
   }, []);
 
   const activeChat = chats.find((chat) => chat.id === activeChatId) || null;
+  const activePack = packs.find((pack) => pack.id === activePackId) || null;
 
   useEffect(() => {
     activeChatIdRef.current = activeChatId;
@@ -1273,6 +1313,24 @@ const ProviderDashboard = () => {
     }
 
     const target = notification.target || notification.reservation;
+    if (target?.kind === "pack" || notification.packId) {
+      setActiveSection("packs");
+      const packId = notification.packId || target?.packId || target?.id;
+      if (packId) {
+        try {
+          const response = await getProviderPack(packId);
+          const pack = response.pack;
+          setPacks((prev) => {
+            const withoutPack = prev.filter((item) => item.id !== pack.id);
+            return [pack, ...withoutPack];
+          });
+          setActivePackId(pack.id);
+        } catch (error) {
+          setNotificationsMessage(error.response?.data?.message || "Impossible d'ouvrir ce pack.");
+        }
+      }
+      return;
+    }
     if (target?.date) {
       setCalendarWeekStart(toIsoDate(getWeekStartDate(new Date(target.date))));
       setCalendarTargetSlot({
@@ -1292,6 +1350,47 @@ const ProviderDashboard = () => {
     setActiveSection("chat");
     if (chatId) {
       await openChat(chatId);
+    }
+  };
+
+  const openPack = async (packId) => {
+    if (!packId) {
+      return;
+    }
+    setActiveSection("packs");
+    setActivePackId(packId);
+    try {
+      const response = await getProviderPack(packId);
+      const pack = response.pack;
+      setPacks((prev) => {
+        const withoutPack = prev.filter((item) => item.id !== pack.id);
+        return [pack, ...withoutPack];
+      });
+    } catch (error) {
+      setNotificationsMessage(error.response?.data?.message || "Impossible d'ouvrir ce pack.");
+    }
+  };
+
+  const handlePackResponse = async (packId, decision) => {
+    if (!packId || respondingPack) {
+      return;
+    }
+
+    setRespondingPack(true);
+    try {
+      const response = await respondProviderPack(packId, decision);
+      const pack = response.pack;
+      setPacks((prev) => {
+        const withoutPack = prev.filter((item) => item.id !== pack.id);
+        return [pack, ...withoutPack];
+      });
+      setActivePackId(pack.id);
+      await loadNotifications({ silent: true });
+      showToast("success", response.message || "Votre reponse a ete enregistree.");
+    } catch (error) {
+      showToast("error", error.response?.data?.message || "Impossible de repondre a cette invitation.");
+    } finally {
+      setRespondingPack(false);
     }
   };
 
@@ -1397,6 +1496,17 @@ const ProviderDashboard = () => {
             activePresenceLabel={activeClientOnline ? "En ligne" : "Hors ligne"}
             messagesEndRef={messagesEndRef}
             onMessageDraftBlur={() => emitTypingStatus(socketRef.current, activeChatId, false)}
+          />
+        );
+      case "packs":
+        return (
+          <ProviderPacks
+            packs={packs}
+            activePack={activePack}
+            loading={packsLoading}
+            onSelectPack={openPack}
+            onRespond={handlePackResponse}
+            responding={respondingPack}
           />
         );
       default:

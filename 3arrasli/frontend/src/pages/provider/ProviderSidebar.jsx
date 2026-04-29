@@ -36,6 +36,13 @@ const SidebarIcon = ({ name }) => {
           <path d="M6.25 6.25h11.5a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2H11l-4.75 3v-3H6.25a2 2 0 0 1-2-2v-6.5a2 2 0 0 1 2-2Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
         </svg>
       );
+    case "packs":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 4.75 19 8.5v7L12 19.25 5 15.5v-7L12 4.75Z" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+          <path d="M12 12.25 19 8.5M12 12.25 5 8.5M12 12.25v7" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      );
     case "dashboard":
     default:
       return (

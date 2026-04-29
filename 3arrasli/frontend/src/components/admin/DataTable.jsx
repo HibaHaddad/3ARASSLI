@@ -1,6 +1,16 @@
 import React from "react";
 
-const DataTable = ({ columns, rows, keyField, loading, emptyMessage, renderActions }) => {
+const DataTable = ({
+  columns,
+  rows,
+  keyField,
+  loading,
+  emptyMessage,
+  renderActions,
+  wrapClassName = "",
+  tableClassName = "",
+  actionsColumnWidth = "",
+}) => {
   if (loading) {
     return <div className="admin-status-card">Chargement des donnees...</div>;
   }
@@ -10,12 +20,18 @@ const DataTable = ({ columns, rows, keyField, loading, emptyMessage, renderActio
   }
 
   return (
-    <div className="admin-table-wrap">
-      <table className="admin-data-table">
+    <div className={`admin-table-wrap ${wrapClassName}`.trim()}>
+      <table className={`admin-data-table ${tableClassName}`.trim()}>
+        <colgroup>
+          {columns.map((column) => (
+            <col key={column.key} style={column.width ? { width: column.width } : undefined} />
+          ))}
+          {renderActions ? <col style={actionsColumnWidth ? { width: actionsColumnWidth } : undefined} /> : null}
+        </colgroup>
         <thead>
           <tr>
             {columns.map((column) => (
-              <th key={column.key} scope="col">
+              <th key={column.key} scope="col" className={column.headerClassName || ""}>
                 {column.header}
               </th>
             ))}
@@ -26,7 +42,7 @@ const DataTable = ({ columns, rows, keyField, loading, emptyMessage, renderActio
           {rows.map((row) => (
             <tr key={row[keyField]}>
               {columns.map((column) => (
-                <td key={`${row[keyField]}-${column.key}`}>
+                <td key={`${row[keyField]}-${column.key}`} className={column.cellClassName || ""}>
                   {column.render ? column.render(row[column.key], row) : row[column.key]}
                 </td>
               ))}

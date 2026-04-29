@@ -5,6 +5,7 @@ import { Link, useParams } from "react-router-dom";
 import api from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
 import { getStoredSession } from "../services/auth";
+import { showToast } from "../services/toast";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ClientModal from "./client/ClientModal";
 import StarRating from "./client/StarRating";
@@ -351,6 +352,18 @@ const ClientProviderPage = () => {
     loadService();
   }, [id]);
 
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
+
   const selectedAppointmentDay = useMemo(
     () => availability.days.find((day) => day.date === appointmentForm.date),
     [appointmentForm.date, availability.days]
@@ -547,7 +560,6 @@ const ClientProviderPage = () => {
       <section className="client-section client-detail-section">
         <div className="client-shell">
           {loading ? <p className="client-loading">Chargement de la fiche...</p> : null}
-          {!loading && error && !service ? <p className="client-error">{error}</p> : null}
 
           {!loading && !service ? (
             <div className="client-empty-state">
@@ -561,9 +573,6 @@ const ClientProviderPage = () => {
 
           {service ? (
             <>
-              {message ? <p className="client-message">{message}</p> : null}
-              {error ? <p className="client-error">{error}</p> : null}
-
               <div className="client-detail-layout client-provider-layout">
                 <div className="client-detail-gallery client-provider-gallery">
                   <div className="client-provider-gallery-stage">

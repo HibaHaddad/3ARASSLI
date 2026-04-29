@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import Navbar from "../components/Navbar";
 import api from "../services/api";
 import { getStoredUser } from "../services/auth";
+import { showToast } from "../services/toast";
 import "../Home.css";
 import "./client.css";
 import ServiceCard from "./client/ServiceCard";
@@ -30,6 +31,18 @@ const ClientDashboard = () => {
   useEffect(() => {
     loadServices();
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   const onFilterChange = (event) => {
     const { name, value } = event.target;
@@ -93,6 +106,9 @@ const ClientDashboard = () => {
                 <div className="client-hero-actions">
                   <Link className="client-btn client-btn-primary" to="/client/search">
                     Explorer les prestataires
+                  </Link>
+                  <Link className="client-btn client-btn-soft" to="/client/packs">
+                    Voir les packs
                   </Link>
                   <Link className="client-btn client-btn-soft" to="/client/reservations">
                     Mes reservations
@@ -167,9 +183,6 @@ const ClientDashboard = () => {
 
         <section className="client-section">
           <div className="client-shell">
-            {message ? <p className="client-message">{message}</p> : null}
-            {error ? <p className="client-error">{error}</p> : null}
-
             <div className="client-section-head">
               <div>
                 <span className="section-kicker">A decouvrir</span>

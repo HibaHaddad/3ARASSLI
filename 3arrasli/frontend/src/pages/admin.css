@@ -6,6 +6,53 @@
   position: relative;
 }
 
+.admin-page-unified .provider-main {
+  min-height: calc(100vh - 60px);
+  padding-top: 14px;
+}
+
+.admin-page-unified .provider-shell {
+  align-items: stretch;
+}
+
+.admin-page-unified .provider-sidebar {
+  top: 78px;
+  height: calc(100vh - 86px);
+  max-height: calc(100vh - 86px);
+  overflow: hidden;
+  scrollbar-width: none;
+  padding: 20px 18px;
+}
+
+.admin-page-unified .provider-sidebar::-webkit-scrollbar {
+  display: none;
+}
+
+.admin-page-unified .provider-sidebar-link {
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: center;
+  padding: 13px 14px;
+}
+
+.admin-page-unified .provider-sidebar-link strong {
+  margin: 0;
+}
+
+.admin-page-unified .provider-sidebar-brand {
+  padding-bottom: 12px;
+  margin-bottom: 12px;
+}
+
+.admin-page-unified .provider-sidebar-brand h1 {
+  margin: 10px 0 4px;
+  font-size: 1.52rem;
+}
+
+.admin-page-unified .provider-sidebar-brand span {
+  line-height: 1.4;
+  font-size: 0.84rem;
+}
+
 .admin-notifications {
   position: relative;
   z-index: 8;
@@ -295,11 +342,155 @@
 }
 
 .admin-table-wrap {
-  overflow: auto;
+  overflow: hidden;
   border-radius: 24px;
   border: 1px solid rgba(184, 124, 145, 0.16);
   background: rgba(255, 255, 255, 0.74);
   margin-top: 16px;
+  width: 100%;
+}
+
+.admin-appointments-board {
+  display: grid;
+  gap: 18px;
+}
+
+.admin-appointment-provider-card {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 28px;
+  border: 1px solid rgba(184, 124, 145, 0.14);
+  background:
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.86), transparent 28%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.86), rgba(249, 241, 235, 0.84));
+  padding: 22px;
+  box-shadow: 0 20px 40px rgba(93, 59, 70, 0.08);
+  transition: transform 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+}
+
+.admin-appointment-provider-card:hover,
+.admin-appointment-provider-card:focus-visible {
+  transform: translateY(-2px);
+  box-shadow: 0 24px 42px rgba(93, 59, 70, 0.12);
+  border-color: rgba(184, 124, 145, 0.22);
+  outline: none;
+}
+
+.admin-appointment-provider-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+
+.admin-appointment-provider-identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.admin-appointment-provider-avatar {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #6b3949 0%, #b77667 56%, #d8b56d 100%);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  box-shadow: 0 16px 30px rgba(107, 57, 73, 0.22);
+}
+
+.admin-appointment-provider-identity strong {
+  display: block;
+  color: #4f2d38;
+  font-size: 1.08rem;
+}
+
+.admin-appointment-provider-identity p {
+  margin: 4px 0 0;
+  color: rgba(93, 59, 70, 0.74);
+}
+
+.admin-appointment-provider-metrics {
+  display: grid;
+  gap: 4px;
+  justify-items: end;
+}
+
+.admin-appointment-provider-metrics span {
+  color: #4f2d38;
+  font-size: 1.08rem;
+  font-weight: 800;
+}
+
+.admin-appointment-provider-metrics small {
+  color: rgba(93, 59, 70, 0.68);
+}
+
+.admin-appointment-provider-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.admin-appointment-item {
+  border-radius: 22px;
+  border: 1px solid rgba(184, 124, 145, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-appointment-provider-cta {
+  display: inline-flex;
+  margin-top: 2px;
+  color: rgba(93, 59, 70, 0.72);
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.admin-appointment-modal-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-appointment-item-main {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  flex: 1;
+}
+
+.admin-appointment-item-main strong,
+.admin-appointment-item-side strong {
+  color: #4f2d38;
+}
+
+.admin-appointment-item-label {
+  display: block;
+  margin-bottom: 4px;
+  color: rgba(94, 61, 71, 0.68);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+.admin-appointment-item-side {
+  display: grid;
+  gap: 8px;
+  justify-items: end;
+  min-width: 160px;
 }
 
 @media (max-width: 860px) {
@@ -317,7 +508,8 @@
 .admin-data-table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 860px;
+  min-width: 0;
+  table-layout: fixed;
 }
 
 .admin-data-table th,
@@ -326,6 +518,8 @@
   padding: 12px 14px;
   border-bottom: 1px solid rgba(184, 124, 145, 0.12);
   vertical-align: top;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .admin-data-table th {
@@ -339,6 +533,21 @@
   color: rgba(68, 41, 52, 0.88);
 }
 
+.admin-data-table-providers th,
+.admin-data-table-providers td,
+.admin-data-table-billing th,
+.admin-data-table-billing td {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-cell-tight {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .admin-cell-stack strong,
 .admin-cell-stack small {
   display: block;
@@ -349,10 +558,36 @@
   color: rgba(98, 65, 76, 0.7);
 }
 
-.admin-table-actions {
-  white-space: nowrap;
+.admin-provider-inline-cell {
   display: flex;
-  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.admin-provider-inline-cell strong,
+.admin-provider-inline-cell small {
+  display: inline;
+  margin: 0;
+}
+
+.admin-provider-inline-cell small {
+  color: rgba(98, 65, 76, 0.7);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-cell-nowrap {
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.admin-table-actions {
+  white-space: normal;
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
@@ -362,6 +597,68 @@
   align-items: center;
   gap: 8px;
   flex-wrap: nowrap;
+}
+
+.admin-provider-actions-row-shifted {
+  justify-content: flex-end;
+  width: 100%;
+  padding-left: 18px;
+  padding-right: 6px;
+}
+
+.admin-action-btn-nowrap {
+  white-space: nowrap;
+  min-width: 156px;
+}
+
+.admin-review-modal-list {
+  display: grid;
+  gap: 14px;
+}
+
+.admin-review-item {
+  border-radius: 22px;
+  border: 1px solid rgba(184, 124, 145, 0.12);
+  background: rgba(255, 255, 255, 0.72);
+  padding: 18px;
+  display: grid;
+  gap: 12px;
+}
+
+.admin-review-item-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.admin-review-item-head strong {
+  display: block;
+  color: #4f2d38;
+}
+
+.admin-review-item-head small {
+  color: rgba(98, 65, 76, 0.7);
+}
+
+.admin-review-item-side {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-review-item p {
+  margin: 0;
+  color: rgba(93, 59, 70, 0.86);
+  line-height: 1.6;
+}
+
+.admin-review-item-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .admin-chip {
@@ -390,16 +687,50 @@
 
 .admin-chat-supervision {
   display: grid;
-  grid-template-columns: 350px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+
+.admin-chat-panel,
+.admin-readonly-chat {
+  border-radius: 28px;
+  border: 1px solid rgba(184, 124, 145, 0.14);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 36px rgba(93, 59, 70, 0.08);
+}
+
+.admin-chat-conversations-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 620px;
+  overflow: hidden;
+}
+
+.admin-chat-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid rgba(184, 124, 145, 0.12);
+}
+
+.admin-chat-panel-head strong {
+  color: #4f2d38;
+  font-size: 1rem;
+}
+
+.admin-chat-panel-head span {
+  color: rgba(93, 59, 70, 0.72);
+  font-size: 0.84rem;
 }
 
 .admin-chat-list {
   display: grid;
   gap: 10px;
-  max-height: 640px;
   overflow: auto;
-  padding-right: 6px;
+  padding: 16px;
 }
 
 .admin-chat-list .provider-chat-item {
@@ -407,16 +738,91 @@
   text-align: left;
   border: 1px solid rgba(184, 124, 145, 0.1);
   background: rgba(255, 255, 255, 0.74);
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.admin-chat-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, #6b3949 0%, #b77667 56%, #d8b56d 100%);
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  box-shadow: 0 12px 24px rgba(107, 57, 73, 0.2);
+}
+
+.admin-chat-item-copy {
+  min-width: 0;
+}
+
+.admin-chat-item-copy strong,
+.admin-chat-item-copy p,
+.admin-chat-item-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-chat-item-copy p {
+  margin: 4px 0 0;
+}
+
+.admin-chat-item-copy small {
+  margin-top: 6px;
 }
 
 .admin-chat-list .provider-chat-item em {
   color: rgba(111, 61, 77, 0.72);
   font-style: normal;
   font-size: 0.78rem;
+  white-space: nowrap;
 }
 
-.admin-readonly-chat .provider-chat-messages {
-  min-height: 420px;
+.admin-readonly-chat {
+  min-height: 620px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.admin-readonly-chat .provider-chat-window-head {
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid rgba(184, 124, 145, 0.12);
+}
+
+.admin-chat-readonly-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border-radius: 999px;
+  background: rgba(255, 245, 231, 0.9);
+  color: #a06d24;
+  font-weight: 700;
+  font-size: 0.82rem;
+}
+
+.admin-chat-messages-panel {
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.admin-readonly-chat .provider-message-bubble {
+  max-width: min(78%, 520px);
+  padding: 16px 18px;
+  box-shadow: 0 14px 28px rgba(93, 59, 70, 0.08);
 }
 
 .admin-readonly-chat .provider-message-bubble p {
@@ -433,6 +839,51 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+.admin-form-grid .provider-textarea,
+.admin-pack-builder {
+  grid-column: 1 / -1;
+}
+
+.admin-cell-wrap {
+  display: block;
+  white-space: normal;
+  line-height: 1.55;
+}
+
+.admin-pack-builder {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border-radius: 24px;
+  border: 1px solid rgba(184, 124, 145, 0.14);
+  background:
+    radial-gradient(circle at top right, rgba(241, 223, 186, 0.22), transparent 28%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(255, 245, 241, 0.78));
+}
+
+.admin-pack-builder-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-pack-builder-head strong {
+  color: #4f2d38;
+}
+
+.admin-pack-builder-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-pack-builder-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr)) auto;
+  gap: 12px;
+  align-items: center;
 }
 
 .admin-detail-grid {
@@ -621,8 +1072,9 @@
     grid-template-columns: 1fr;
   }
 
-  .admin-chat-list {
-    max-height: 300px;
+  .admin-chat-conversations-panel,
+  .admin-readonly-chat {
+    min-height: 420px;
   }
 }
 
@@ -632,6 +1084,25 @@
   .admin-detail-grid,
   .admin-kpi-grid,
   .admin-provider-gallery {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-pack-builder-row {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-appointment-provider-head,
+  .admin-appointment-item {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-appointment-provider-metrics,
+  .admin-appointment-item-side {
+    justify-items: start;
+  }
+
+  .admin-appointment-item-main {
     grid-template-columns: 1fr;
   }
 

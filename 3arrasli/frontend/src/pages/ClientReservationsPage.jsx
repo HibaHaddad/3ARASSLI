@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import api, { API_BASE_URL } from "../services/api";
+import { showToast } from "../services/toast";
 import ClientPageLayout from "./client/ClientPageLayout";
 import ClientModal from "./client/ClientModal";
 
@@ -26,6 +27,18 @@ const ClientReservationsPage = () => {
   useEffect(() => {
     loadReservations();
   }, []);
+
+  useEffect(() => {
+    if (message) {
+      showToast("success", message);
+    }
+  }, [message]);
+
+  useEffect(() => {
+    if (error) {
+      showToast("error", error);
+    }
+  }, [error]);
 
   useEffect(() => {
     const checkout = searchParams.get("checkout");
@@ -102,9 +115,6 @@ const ClientReservationsPage = () => {
     >
       <section className="client-section">
         <div className="client-shell">
-          {message ? <p className="client-message">{message}</p> : null}
-          {error ? <p className="client-error">{error}</p> : null}
-
           <div className="client-reservation-grid client-reservation-grid-rich">
             {reservations.map((reservation) => (
               <article key={reservation.id} className="client-reservation-card client-reservation-card-rich">

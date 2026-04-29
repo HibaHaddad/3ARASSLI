@@ -47,6 +47,14 @@ export const providerSections = [
     description:
       "Echangez avec les clients dans une interface simple, elegante et moderne.",
   },
+  {
+    id: "packs",
+    icon: "packs",
+    label: "Packs",
+    title: "Invitations packs",
+    description:
+      "Confirmez votre participation aux packs multi-prestataires et suivez leur validation.",
+  },
 ];
 
 export const initialReservations = [

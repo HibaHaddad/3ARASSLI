@@ -36,6 +36,7 @@ const clientLinks = [
   { to: "/client/search", label: "Recherche" },
   { to: "/client/reservations", label: "Reservations" },
   { to: "/client/favorites", label: "Favoris" },
+  { to: "/client/packs", label: "Packs" },
   { to: "/client/planner", label: "Planner" },
   { to: "/client/chat", label: "Chat" },
 ];
