@@ -2009,10 +2009,30 @@
 
 .client-pack-service-pill {
   display: grid;
+  text-align: left;
   gap: 2px;
   min-width: 146px;
   padding: 9px 11px;
   border-radius: 12px;
+  font: inherit;
+  cursor: pointer;
+  box-shadow: 0 10px 22px rgba(87, 45, 59, 0.05);
+  transition: transform 200ms ease, border-color 200ms ease, box-shadow 200ms ease, background 200ms ease;
+}
+
+.client-pack-service-pill:hover,
+.client-pack-service-pill:focus-visible {
+  transform: translateY(-2px);
+  border-color: rgba(183, 112, 99, 0.32);
+  background:
+    radial-gradient(circle at top right, rgba(214, 176, 97, 0.16), transparent 34%),
+    rgba(255, 255, 255, 0.96);
+  box-shadow: 0 16px 30px rgba(87, 45, 59, 0.12);
+}
+
+.client-pack-service-pill:focus-visible {
+  outline: 3px solid rgba(214, 176, 97, 0.28);
+  outline-offset: 2px;
 }
 
 .client-pack-service-pill strong {
@@ -2103,6 +2123,160 @@
   border-radius: 12px;
   color: rgba(82, 49, 61, 0.72);
   background: rgba(255, 255, 255, 0.72);
+}
+
+.client-pack-service-modal {
+  width: min(860px, calc(100vw - 32px));
+}
+
+.client-pack-service-modal .client-modal-panel {
+  padding: 0;
+  overflow: hidden;
+}
+
+.client-pack-service-modal .client-modal-panel-head {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+
+.client-pack-service-modal .client-modal-panel-body {
+  padding: 0;
+}
+
+.client-pack-service-details {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(0, 1.05fr);
+  min-height: 520px;
+  background:
+    radial-gradient(circle at 82% 12%, rgba(214, 176, 97, 0.16), transparent 24%),
+    linear-gradient(135deg, #fffaf7 0%, #fff1ed 100%);
+}
+
+.client-pack-service-hero {
+  position: relative;
+  min-height: 520px;
+  overflow: hidden;
+  background: #f4dedb;
+}
+
+.client-pack-service-hero img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.client-pack-service-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(67, 36, 49, 0.08) 0%, rgba(67, 36, 49, 0.68) 100%),
+    radial-gradient(circle at 25% 20%, rgba(255, 244, 231, 0.28), transparent 26%);
+}
+
+.client-pack-service-hero-overlay {
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  bottom: 22px;
+  z-index: 1;
+  display: grid;
+  gap: 8px;
+  color: #fffaf7;
+}
+
+.client-pack-service-hero-overlay span {
+  width: max-content;
+  max-width: 100%;
+  min-height: 30px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 11px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(12px);
+}
+
+.client-pack-service-hero-overlay strong {
+  font-size: clamp(1.35rem, 2.5vw, 2.35rem);
+  line-height: 1.05;
+}
+
+.client-pack-service-detail-content {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 20px;
+  padding: 42px;
+}
+
+.client-pack-service-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.client-pack-service-detail-meta span {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid rgba(117, 66, 84, 0.12);
+  border-radius: 999px;
+  color: #6f394c;
+  font-size: 0.82rem;
+  font-weight: 850;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.client-pack-service-detail-content > p {
+  margin: 0;
+  color: rgba(82, 49, 61, 0.78);
+  font-size: 1rem;
+  line-height: 1.85;
+}
+
+.client-pack-service-provider-box {
+  display: grid;
+  gap: 6px;
+  padding: 18px;
+  border: 1px solid rgba(117, 66, 84, 0.12);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.78);
+  box-shadow: 0 14px 34px rgba(87, 45, 59, 0.08);
+}
+
+.client-pack-service-provider-box span {
+  color: #bb8a46;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.client-pack-service-provider-box strong {
+  color: #432431;
+  font-size: 1.12rem;
+}
+
+.client-pack-service-provider-box p {
+  margin: 0;
+  color: rgba(82, 49, 61, 0.66);
+  line-height: 1.55;
+}
+
+.client-pack-service-more-btn {
+  width: max-content;
+  min-width: 150px;
+  min-height: 44px;
+  padding: 0 18px;
 }
 
 .client-tools-grid {
@@ -2741,6 +2915,7 @@
   .client-provider-review-grid,
   .client-planner-layout,
   .provider-chat-shell,
+  .client-pack-service-details,
   .client-service-modal {
     grid-template-columns: 1fr;
   }
@@ -2755,6 +2930,18 @@
 
   .client-modal-media {
     min-height: 320px;
+  }
+
+  .client-pack-service-details {
+    min-height: 0;
+  }
+
+  .client-pack-service-hero {
+    min-height: 300px;
+  }
+
+  .client-pack-service-detail-content {
+    padding: 28px;
   }
 
   .client-search-fields,
@@ -2857,6 +3044,31 @@
 
   .client-pack-price {
     min-width: 0;
+    width: 100%;
+  }
+
+  .client-pack-service-pill {
+    width: 100%;
+  }
+
+  .client-pack-service-hero {
+    min-height: 240px;
+  }
+
+  .client-pack-service-detail-content {
+    padding: 22px;
+  }
+
+  .client-pack-service-detail-meta {
+    display: grid;
+  }
+
+  .client-pack-service-detail-meta span {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .client-pack-service-more-btn {
     width: 100%;
   }
 

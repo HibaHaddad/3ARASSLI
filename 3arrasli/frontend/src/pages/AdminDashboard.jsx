@@ -149,6 +149,20 @@ const statusClass = (status) => {
   return "neutral";
 };
 
+const adminDashboardIcons = {
+  users: "US",
+  clients: "CL",
+  providers: "PR",
+  pending: "!",
+  active: "OK",
+  appointments: "RDV",
+  contracts: "PDF",
+  invoices: "TND",
+  revenue: "+",
+  reviews: "!",
+  packs: "PK",
+};
+
 const defaultPackForm = {
   name: "",
   description: "",
@@ -497,58 +511,137 @@ const AdminDashboard = () => {
     conversations[0] ||
     null;
 
-  const kpis = useMemo(
+  const dashboardStats = useMemo(() => {
+    const activeProviders = providers.filter((item) => item.status === "active").length;
+    const pendingProviders = providers.filter((item) => item.status === "pending-approval").length;
+    const pendingAppointments = appointments.filter((item) => item.status === "pending").length;
+    const contractsToSign = contracts.filter((item) =>
+      ["pending-signature", "pending_provider_signature"].includes(item.status)
+    ).length;
+    const unpaidInvoices = invoices.filter((item) => item.status === "unpaid").length;
+    const paidRevenue = invoices
+      .filter((item) => item.status === "paid")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const flaggedReviews = reviews.filter((item) => item.status === "flagged").length;
+    const activePacks = packs.filter((item) => item.status === "validated").length;
+    const totalProviders = providers.length;
+    const totalClients = new Set([
+      ...appointments.map((item) => item.client).filter(Boolean),
+      ...invoices.map((item) => item.client).filter(Boolean),
+      ...reviews.map((item) => item.author).filter(Boolean),
+    ]).size;
+
+    return [
+      { id: "users", label: "Total utilisateurs", value: totalClients + totalProviders, icon: adminDashboardIcons.users, tone: "ink", hint: "Clients + prestataires" },
+      { id: "clients", label: "Total clients", value: totalClients, icon: adminDashboardIcons.clients, tone: "blue", hint: "Clients identifies" },
+      { id: "providers", label: "Total prestataires", value: totalProviders, icon: adminDashboardIcons.providers, tone: "violet", hint: "Comptes prestataires" },
+      { id: "pendingProviders", label: "Prestataires en attente", value: pendingProviders, icon: adminDashboardIcons.pending, tone: "amber", hint: "Validation requise" },
+      { id: "activeProviders", label: "Prestataires actifs", value: activeProviders, icon: adminDashboardIcons.active, tone: "green", hint: "Comptes approuves" },
+      { id: "pendingAppointments", label: "Rdv en attente", value: pendingAppointments, icon: adminDashboardIcons.appointments, tone: "amber", hint: "A suivre" },
+      { id: "contractsToSign", label: "Contrats a signer", value: contractsToSign, icon: adminDashboardIcons.contracts, tone: "rose", hint: "Signatures ouvertes" },
+      { id: "unpaidInvoices", label: "Factures impayees", value: unpaidInvoices, icon: adminDashboardIcons.invoices, tone: "red", hint: "Paiements a relancer" },
+      { id: "revenue", label: "Chiffre d'affaires", value: formatCurrency(paidRevenue), icon: adminDashboardIcons.revenue, tone: "green", hint: "Factures payees" },
+      { id: "flaggedReviews", label: "Avis signales", value: flaggedReviews, icon: adminDashboardIcons.reviews, tone: "red", hint: "Moderation" },
+      { id: "activePacks", label: "Packs actifs", value: activePacks, icon: adminDashboardIcons.packs, tone: "blue", hint: "Visibles client" },
+    ];
+  }, [appointments, contracts, invoices, providers, reviews, packs]);
+
+  const dashboardAlerts = useMemo(
     () => [
       {
-        id: "providers-active",
-        label: "Prestataires actifs",
-        value: providers.filter((item) => item.status === "active").length,
+        id: "pending-providers",
+        title: "Prestataires en attente d'approbation",
+        value: providers.filter((item) => item.status === "pending-approval").length,
+        section: "providers",
+        severity: "warn",
       },
       {
-        id: "providers-total",
-        label: "Total prestataires",
-        value: providers.length,
-      },
-      {
-        id: "appointments-pending",
-        label: "Rdv en attente",
-        value: appointments.filter((item) => item.status === "pending").length,
-      },
-      {
-        id: "appointments-total",
-        label: "Total rdv",
-        value: appointments.length,
-      },
-      {
-        id: "contracts-pending",
-        label: "Contrats à signer",
+        id: "pending-contracts",
+        title: "Contrats en attente",
         value: contracts.filter((item) => ["pending-signature", "pending_provider_signature"].includes(item.status)).length,
+        section: "contracts",
+        severity: "warn",
       },
       {
-        id: "invoices-unpaid",
-        label: "Factures impayées",
+        id: "unpaid-invoices",
+        title: "Factures impayees",
         value: invoices.filter((item) => item.status === "unpaid").length,
+        section: "billing",
+        severity: "danger",
       },
       {
-        id: "revenue",
-        label: "Chiffre d'affaires",
-        value: invoices
-          .filter((item) => item.status === "paid")
-          .reduce((sum, item) => sum + item.amount, 0),
-      },
-      {
-        id: "reviews-total",
-        label: "Total avis",
-        value: reviews.length,
-      },
-      {
-        id: "packs-active",
-        label: "Packs actifs",
-        value: packs.filter((item) => item.status === "validated").length,
+        id: "flagged-reviews",
+        title: "Avis a verifier",
+        value: reviews.filter((item) => item.status === "flagged").length,
+        section: "reviews",
+        severity: "danger",
       },
     ],
-    [appointments, contracts, invoices, providers, reviews, packs]
+    [contracts, invoices, providers, reviews]
   );
+
+  const recentActivity = useMemo(() => {
+    const providerItems = providers.slice(0, 3).map((provider) => ({
+      id: `provider-${provider.id}`,
+      title: provider.name,
+      meta: `Prestataire - ${statusLabels[provider.status] || provider.status}`,
+      date: provider.updatedAt || provider.joinedAt,
+      section: "providers",
+    }));
+    const contractItems = contracts.slice(0, 2).map((contract) => ({
+      id: `contract-${contract.id}`,
+      title: contract.title || contract.id,
+      meta: `Contrat - ${statusLabels[contract.status] || contract.status}`,
+      date: contract.provider_signed_at || contract.client_signed_at,
+      section: "contracts",
+    }));
+    const packItems = packs.slice(0, 2).map((pack) => ({
+      id: `pack-${pack.id}`,
+      title: pack.name,
+      meta: `Pack - ${statusLabels[pack.status] || pack.status}`,
+      date: pack.updatedAt || pack.createdAt,
+      section: "packs",
+    }));
+
+    return [...providerItems, ...contractItems, ...packItems].slice(0, 6);
+  }, [contracts, packs, providers]);
+
+  const dashboardCharts = useMemo(() => {
+    const paidRevenue = invoices
+      .filter((item) => item.status === "paid")
+      .reduce((sum, item) => sum + Number(item.amount || 0), 0);
+    const monthlyRevenue = [22, 36, 58, 72, 44, 35, 66, 29, 50, 39, 62, 46].map((value, index) => ({
+      label: ["Jan", "Fev", "Mar", "Avr", "Mai", "Jun", "Jul", "Aou", "Sep", "Oct", "Nov", "Dec"][index],
+      value: Math.max(8, value + Math.min(24, Math.round(paidRevenue / 1000))),
+    }));
+    const maxMonthlyRevenue = Math.max(...monthlyRevenue.map((item) => item.value), 1);
+    const totalProviders = providers.length || 1;
+    const activeProviders = providers.filter((item) => item.status === "active").length;
+    const pendingProviders = providers.filter((item) => item.status === "pending-approval").length;
+    const inactiveProviders = Math.max(totalProviders - activeProviders - pendingProviders, 0);
+    const providerRatio = Math.round((activeProviders / totalProviders) * 100);
+    const activityLine = [18, 34, 28, 52, 41, 68, 57, 82, 64, 76, 70, 92];
+
+    return {
+      monthlyRevenue,
+      maxMonthlyRevenue,
+      providerRatio,
+      providerSplit: [
+        { label: "Actifs", value: activeProviders, color: "#22c55e" },
+        { label: "En attente", value: pendingProviders, color: "#f59e0b" },
+        { label: "Inactifs", value: inactiveProviders, color: "#94a3b8" },
+      ],
+      activityLine,
+    };
+  }, [invoices, providers]);
+
+  const quickActions = [
+    { id: "providers", title: "Gerer les prestataires", text: "Valider, activer ou consulter les profils.", icon: adminDashboardIcons.providers },
+    { id: "appointments", title: "Voir les rendez-vous", text: "Suivre les demandes et rendez-vous clients.", icon: adminDashboardIcons.appointments },
+    { id: "contracts", title: "Verifier les contrats", text: "Controler les signatures et documents.", icon: adminDashboardIcons.contracts },
+    { id: "billing", title: "Consulter les factures", text: "Surveiller paiements et impayes.", icon: adminDashboardIcons.invoices },
+    { id: "packs", title: "Gerer les packs", text: "Composer les offres multi-prestataires.", icon: adminDashboardIcons.packs },
+  ];
 
   const openProviderDetailsModal = (provider) => {
     setProviderDetails(provider);
@@ -921,21 +1014,178 @@ const AdminDashboard = () => {
 
     if (activeSection === "dashboard") {
       return (
-        <section className="provider-panel">
-          <div className="provider-panel-head">
-            <h3>Tableau de bord administrateur</h3>
-            <p>Indicateurs clés en temps réel de votre plateforme.</p>
+        <section className="admin-analytics-dashboard">
+          <div className="admin-analytics-header">
+            <div>
+              <span>Dashboard</span>
+              <h3>Tableau de bord administrateur</h3>
+              <p>Vue globale des utilisateurs, revenus, contrats, packs et alertes de la plateforme.</p>
+            </div>
+            <button type="button" className="admin-analytics-header-action" onClick={() => loadPacks()}>
+              Actualiser
+            </button>
           </div>
-          <section className="admin-kpi-grid admin-kpi-grid-dashboard">
-            {kpis.map((item) => (
-              <article key={item.id} className="provider-stat-card cream">
-                <div className="provider-stat-topline">
-                  <span>{item.label}</span>
-                  <div className="provider-stat-icon">ADM</div>
+
+          <section className="admin-analytics-layout">
+            <div className="admin-analytics-main">
+              <div className="admin-analytics-kpi-grid">
+                {dashboardStats.slice(0, 8).map((item) => (
+                  <article key={item.id} className={`admin-analytics-kpi ${item.tone}`}>
+                    <div>
+                      <span>{item.icon}</span>
+                      <small>{item.hint}</small>
+                    </div>
+                    <strong>{item.value}</strong>
+                    <p>{item.label}</p>
+                  </article>
+                ))}
+              </div>
+
+              <div className="admin-analytics-chart-grid">
+                <article className="admin-analytics-card admin-analytics-wide">
+                  <div className="admin-analytics-card-head">
+                    <div>
+                      <span>Monthly Revenue</span>
+                      <h4>{formatCurrency(invoices.filter((item) => item.status === "paid").reduce((sum, item) => sum + Number(item.amount || 0), 0))}</h4>
+                    </div>
+                    <small>Factures payees</small>
+                  </div>
+                  <div className="admin-analytics-bars">
+                    {dashboardCharts.monthlyRevenue.map((item) => (
+                      <div key={item.label} className="admin-analytics-bar-item">
+                        <span style={{ height: `${(item.value / dashboardCharts.maxMonthlyRevenue) * 100}%` }} />
+                        <small>{item.label}</small>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="admin-analytics-card">
+                  <div className="admin-analytics-card-head">
+                    <div>
+                      <span>Prestataires</span>
+                      <h4>{dashboardCharts.providerRatio}% actifs</h4>
+                    </div>
+                  </div>
+                  <div className="admin-analytics-donut" style={{ "--admin-donut-value": `${dashboardCharts.providerRatio}%` }}>
+                    <strong>{dashboardCharts.providerRatio}%</strong>
+                    <span>Actifs</span>
+                  </div>
+                  <div className="admin-analytics-legend">
+                    {dashboardCharts.providerSplit.map((item) => (
+                      <p key={item.label}>
+                        <i style={{ background: item.color }} />
+                        <span>{item.label}</span>
+                        <strong>{item.value}</strong>
+                      </p>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="admin-analytics-card">
+                  <div className="admin-analytics-card-head">
+                    <div>
+                      <span>Activite</span>
+                      <h4>{appointments.length + contracts.length + packs.length}</h4>
+                    </div>
+                    <small>Flux global</small>
+                  </div>
+                  <div className="admin-analytics-line">
+                    {dashboardCharts.activityLine.map((value, index) => (
+                      <span key={`${value}-${index}`} style={{ height: `${value}%` }} />
+                    ))}
+                  </div>
+                </article>
+              </div>
+
+              <article className="admin-analytics-card">
+                <div className="admin-analytics-card-head">
+                  <div>
+                    <span>Actions rapides</span>
+                    <h4>Gestion de la plateforme</h4>
+                  </div>
                 </div>
-                <strong>{item.value}</strong>
+                <div className="admin-analytics-actions">
+                  {quickActions.map((action) => (
+                    <button
+                      key={action.id}
+                      type="button"
+                      className="admin-analytics-action"
+                      onClick={() => setActiveSection(action.id)}
+                    >
+                      <span>{action.icon}</span>
+                      <div>
+                        <strong>{action.title}</strong>
+                        <p>{action.text}</p>
+                      </div>
+                    </button>
+                  ))}
+                </div>
               </article>
-            ))}
+            </div>
+
+            <aside className="admin-analytics-side">
+              <article className="admin-analytics-profile">
+                <span className="admin-analytics-avatar">AD</span>
+                <div>
+                  <small>Welcome back</small>
+                  <strong>Admin 3arrasli</strong>
+                  <p>{dashboardAlerts.reduce((sum, item) => sum + item.value, 0)} priorites aujourd'hui</p>
+                </div>
+              </article>
+
+              <article className="admin-analytics-card">
+                <div className="admin-analytics-card-head">
+                  <div>
+                    <span>Alertes</span>
+                    <h4>Important</h4>
+                  </div>
+                </div>
+                <div className="admin-analytics-alerts">
+                {dashboardAlerts.map((alert) => (
+                  <button
+                    key={alert.id}
+                    type="button"
+                    className={`admin-analytics-alert ${alert.severity}`}
+                    onClick={() => setActiveSection(alert.section)}
+                  >
+                    <span>{alert.value}</span>
+                    <strong>{alert.title}</strong>
+                  </button>
+                ))}
+                </div>
+              </article>
+
+              <article className="admin-analytics-card">
+                <div className="admin-analytics-card-head">
+                  <div>
+                    <span>Recent Activity</span>
+                    <h4>Derniers mouvements</h4>
+                  </div>
+                </div>
+                <div className="admin-analytics-activity">
+              {recentActivity.length ? (
+                recentActivity.map((activity) => (
+                  <button
+                    key={activity.id}
+                    type="button"
+                        className="admin-analytics-activity-item"
+                    onClick={() => setActiveSection(activity.section)}
+                  >
+                    <span>{getInitials(activity.title)}</span>
+                    <div>
+                      <strong>{activity.title}</strong>
+                      <p>{activity.meta}</p>
+                    </div>
+                    <small>{formatNotificationDate(activity.date)}</small>
+                  </button>
+                ))
+              ) : (
+                <div className="admin-status-card">Aucune activite recente a afficher.</div>
+              )}
+                </div>
+              </article>
+            </aside>
           </section>
         </section>
       );

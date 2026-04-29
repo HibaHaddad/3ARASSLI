@@ -885,6 +885,7 @@ def refresh_pack_status(pack):
 def serialize_pack_item(item):
     service = Service.query.get(item.service_id) if item.service_id else None
     provider = User.query.get(item.provider_id) if item.provider_id else None
+    service_details = serialize_service(service) if service else None
     return {
         "id": item.id,
         "packId": item.pack_id,
@@ -897,6 +898,7 @@ def serialize_pack_item(item):
         "providerCity": provider.city if provider else "",
         "providerRole": provider.category if provider else item.service_category,
         "providerStatus": item.response_status,
+        "serviceDetails": service_details,
         "invitedAt": item.invited_at.isoformat() if item.invited_at else None,
         "respondedAt": item.responded_at.isoformat() if item.responded_at else None,
     }

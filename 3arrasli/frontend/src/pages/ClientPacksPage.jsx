@@ -3,6 +3,7 @@ import { CardElement, Elements, useElements, useStripe } from "@stripe/react-str
 import { loadStripe } from "@stripe/stripe-js";
 import { useNavigate } from "react-router-dom";
 import api from "../services/api";
+import { resolveAssetUrl } from "../services/assets";
 import ClientPageLayout from "./client/ClientPageLayout";
 import { getClientPacks, getClientStripeConfig, reserveClientPack } from "../services/clientPacks";
 import { showToast } from "../services/toast";
@@ -11,6 +12,7 @@ import "./client.css";
 
 const formatCurrency = (value) => `${Number(value || 0).toFixed(0)} TND`;
 const WORKING_HOURS = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
+const SERVICE_PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1400&q=85";
 
 const cardElementOptions = {
   style: {
@@ -231,6 +233,48 @@ const PackPaymentForm = ({
   );
 };
 
+const PackServiceDetails = ({ item, onViewMore }) => {
+  const service = item?.serviceDetails || {};
+  const title = service.title || item?.serviceTitle || item?.serviceCategory || "Service mariage";
+  const category = service.category || service.type || item?.serviceCategory || "Service";
+  const image = resolveAssetUrl(service.image || service.images?.[0]?.url || SERVICE_PLACEHOLDER_IMAGE);
+  const serviceId = service.id || item?.serviceId;
+
+  return (
+    <div className="client-pack-service-details">
+      <div className="client-pack-service-hero">
+        <img src={image || SERVICE_PLACEHOLDER_IMAGE} alt={title} />
+        <div className="client-pack-service-hero-overlay">
+          <span>{category}</span>
+          <strong>{title}</strong>
+        </div>
+      </div>
+
+      <div className="client-pack-service-detail-content">
+        <div className="client-pack-service-detail-meta">
+          <span>{formatCurrency(service.price || 0)}</span>
+          <span>{service.city || item?.providerCity || "Tunisie"}</span>
+          <span>Note {service.rating || "4.8"}</span>
+        </div>
+
+        <p>{service.description || "Prestation selectionnee pour composer une experience mariage harmonieuse et elegante."}</p>
+
+        <div className="client-pack-service-provider-box">
+          <span>Prestataire</span>
+          <strong>{item?.providerName || service.provider_name || service.prestataire_name || "Prestataire"}</strong>
+          <p>{service.provider_description || item?.providerRole || category}</p>
+        </div>
+
+        {serviceId ? (
+          <button type="button" className="client-btn client-btn-primary client-pack-service-more-btn" onClick={() => onViewMore(serviceId)}>
+            Voir plus
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+};
+
 const ClientPacksPage = () => {
   const navigate = useNavigate();
   const [packs, setPacks] = useState([]);
@@ -240,6 +284,7 @@ const ClientPacksPage = () => {
   const [stripeConfig, setStripeConfig] = useState({ enabled: false, publishable_key: "" });
   const [selectedPack, setSelectedPack] = useState(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [selectedServiceItem, setSelectedServiceItem] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const [reservationForm, setReservationForm] = useState({
     date: "",
@@ -295,6 +340,19 @@ const ClientPacksPage = () => {
     setSelectedPack(null);
   };
 
+  const openServiceModal = (item) => {
+    setSelectedServiceItem(item);
+  };
+
+  const closeServiceModal = () => {
+    setSelectedServiceItem(null);
+  };
+
+  const openServiceDetailsPage = (serviceId) => {
+    closeServiceModal();
+    navigate(`/client/provider/${serviceId}`);
+  };
+
   const stripePromise = useMemo(
     () => (stripeConfig.publishable_key ? loadStripe(stripeConfig.publishable_key) : null),
     [stripeConfig.publishable_key]
@@ -338,10 +396,15 @@ const ClientPacksPage = () => {
 
                   <div className="client-pack-services">
                     {(pack.items || []).map((item) => (
-                      <div key={item.id} className="client-pack-service-pill">
-                        <strong>{item.serviceCategory}</strong>
+                      <button
+                        key={item.id}
+                        type="button"
+                        className="client-pack-service-pill"
+                        onClick={() => openServiceModal(item)}
+                      >
+                        <strong>{item.serviceTitle || item.serviceCategory}</strong>
                         <span>{item.providerName}</span>
-                      </div>
+                      </button>
                     ))}
                   </div>
 
@@ -372,6 +435,15 @@ const ClientPacksPage = () => {
             submitting={submitting}
           />
         </Elements>
+      </ClientModal>
+
+      <ClientModal
+        open={Boolean(selectedServiceItem)}
+        title={selectedServiceItem?.serviceTitle || selectedServiceItem?.serviceCategory || "Detail du service"}
+        onClose={closeServiceModal}
+        className="client-pack-service-modal"
+      >
+        <PackServiceDetails item={selectedServiceItem} onViewMore={openServiceDetailsPage} />
       </ClientModal>
     </ClientPageLayout>
   );
