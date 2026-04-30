@@ -146,7 +146,7 @@ const statusLabels = {
   cancelled: "Annule",
   "pending-signature": "Signature en attente",
   signed: "Signe",
-  pending_provider_signature: "Signature prestataire en attente",
+  pending_provider_signature: "En attente",
   signed_by_provider: "Signe par prestataire",
   fully_signed: "Signe par les deux",
   refused_by_provider: "Refuse par prestataire",
@@ -1234,18 +1234,43 @@ const AdminDashboard = () => {
   ];
 
   const contractColumns = [
-    { key: "id", header: "Ref" },
-    { key: "title", header: "Contrat" },
-    { key: "client", header: "Client" },
-    { key: "provider", header: "Prestataire" },
+    {
+      key: "id",
+      header: "Ref",
+      width: "10%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
+    },
+    {
+      key: "title",
+      header: "Contrat",
+      width: "12%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value || "-"}</span>,
+    },
+    {
+      key: "client",
+      header: "Client",
+      width: "12%",
+      cellClassName: "admin-cell-tight",
+      render: (value) => <span className="admin-cell-nowrap">{value || "-"}</span>,
+    },
+    {
+      key: "provider",
+      header: "Prestataire",
+      width: "14%",
+      render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
+    },
     {
       key: "details",
       header: "Details",
+      width: "22%",
       render: (value) => <span className="admin-cell-wrap">{value}</span>,
     },
     {
       key: "status",
       header: "Statut",
+      width: "16%",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
@@ -1253,12 +1278,14 @@ const AdminDashboard = () => {
     {
       key: "provider_signed_at",
       header: "Signature prestataire",
-      render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
+      width: "14%",
+      render: (value) => <span className="admin-cell-nowrap">{value ? formatAppointmentDate(value) : "-"}</span>,
     },
     {
       key: "client_signed_at",
       header: "Signature client",
-      render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
+      width: "14%",
+      render: (value) => <span className="admin-cell-nowrap">{value ? formatAppointmentDate(value) : "-"}</span>,
     },
   ];
 
@@ -1684,8 +1711,11 @@ const AdminDashboard = () => {
             keyField="id"
             loading={contractsLoading}
             emptyMessage="Aucun contrat disponible."
+            wrapClassName="admin-contracts-table-wrap"
+            tableClassName="admin-data-table-contracts"
+            actionsColumnWidth="130px"
             renderActions={(row) => (
-              <button type="button" className="provider-ghost-btn" onClick={() => openContractPdf(row)}>
+              <button type="button" className="provider-ghost-btn admin-action-btn-nowrap" onClick={() => openContractPdf(row)}>
                 PDF signe
               </button>
             )}

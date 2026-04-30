@@ -122,6 +122,14 @@ const ChatPage = () => {
   }, [receiverId]);
 
   useEffect(() => {
+    if (!receiverId || !socketConnected || !socketRef.current) {
+      return;
+    }
+    // Re-join to force an immediate presence:update for the selected provider.
+    joinConversationRoom(socketRef.current, receiverId);
+  }, [receiverId, socketConnected]);
+
+  useEffect(() => {
     activeReceiverIdRef.current = receiverId;
   }, [receiverId]);
 

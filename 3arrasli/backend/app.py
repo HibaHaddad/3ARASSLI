@@ -455,7 +455,6 @@ def write_contract_pdf(file_path, contract_data):
     signed_at = str(contract_data.get("signed_at") or "")
     provider_signed_at = str(contract_data.get("provider_signed_at") or "")
     has_client_signature = bool(contract_data.get("has_client_signature"))
-    contract_status = str(contract_data.get("contract_status") or "pending_provider_signature").strip() or "pending_provider_signature"
     client_signature_image = decode_signature_data_url(contract_data.get("client_signature"))
     provider_signature_image = decode_signature_data_url(contract_data.get("provider_signature"))
 
@@ -526,22 +525,12 @@ def write_contract_pdf(file_path, contract_data):
         add("/SigClient Do")
         add("Q")
         text(52, 432, f"Date de signature: {signed_at}", 9)
-        text(52, 418, "Statut: VALIDE", 10)
     elif has_client_signature:
         text(52, 474, "Signe electroniquement via espace client", 9)
         text(52, 458, f"Date de signature: {signed_at}", 9)
-        text(52, 438, "Statut: VALIDE", 10)
     else:
         text(52, 462, "En attente de signature client", 9)
-        text(52, 438, "Statut: NON SIGNE", 10)
 
-    provider_status_label = "EN ATTENTE"
-    if contract_status == "signed_by_provider":
-        provider_status_label = "SIGNE PRESTATAIRE"
-    elif contract_status == "fully_signed":
-        provider_status_label = "VALIDE"
-    elif contract_status == "refused_by_provider":
-        provider_status_label = "REFUSE PAR PRESTATAIRE"
     if provider_signature_image:
         provider_width = 170
         provider_height = min(46, round(provider_width * provider_signature_image["height"] / max(provider_signature_image["width"], 1)))
@@ -551,28 +540,24 @@ def write_contract_pdf(file_path, contract_data):
         add("Q")
         if provider_signed_at:
             text(327, 432, f"Date de signature: {provider_signed_at}", 9)
-        text(327, 418, f"Statut: {provider_status_label}", 10)
     else:
         text(327, 462, "Zone reservee au prestataire", 9)
         if provider_signed_at:
             text(327, 448, f"Date de signature: {provider_signed_at}", 9)
-        text(327, 438, f"Statut: {provider_status_label}", 10)
-
-    text(40, 388, f"Statut technique (DB): {contract_status}", 8)
     text(40, 374, "Ce document est genere automatiquement par 3arrasli et conserve une trace de signature numerique.", 8)
 
     stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
 
     image_resources = []
-    objects = [
-        b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
-        b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
-    ]
+    objects_by_id = {
+        1: b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
+        2: b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
+    }
 
     next_object_id = 6
     if client_signature_image:
         image_resources.append(f"/SigClient {next_object_id} 0 R")
-        objects.append(
+        objects_by_id[next_object_id] = (
             (
                 f"{next_object_id} 0 obj << /Type /XObject /Subtype /Image /Width {client_signature_image['width']} "
                 f"/Height {client_signature_image['height']} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
@@ -584,7 +569,7 @@ def write_contract_pdf(file_path, contract_data):
         next_object_id += 1
     if provider_signature_image:
         image_resources.append(f"/SigProvider {next_object_id} 0 R")
-        objects.append(
+        objects_by_id[next_object_id] = (
             (
                 f"{next_object_id} 0 obj << /Type /XObject /Subtype /Image /Width {provider_signature_image['width']} "
                 f"/Height {provider_signature_image['height']} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
@@ -596,31 +581,34 @@ def write_contract_pdf(file_path, contract_data):
         next_object_id += 1
 
     xobject_resource = f" /XObject << {' '.join(image_resources)} >>" if image_resources else ""
-    objects.extend(
-        [
-            (
-                f"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
-                f"/Resources << /Font << /F1 4 0 R >>{xobject_resource} >> /Contents 5 0 R >> endobj\n"
-            ).encode("ascii"),
-            b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
-            f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
-        ]
-    )
+    objects_by_id[3] = (
+        f"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+        f"/Resources << /ProcSet [/PDF /Text /ImageC] /Font << /F1 4 0 R >>{xobject_resource} >> /Contents 5 0 R >> endobj\n"
+    ).encode("ascii")
+    objects_by_id[4] = b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n"
+    objects_by_id[5] = f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n"
+
+    object_ids = sorted(objects_by_id.keys())
+    max_object_id = max(object_ids) if object_ids else 0
 
     content = bytearray(b"%PDF-1.4\n")
-    offsets = [0]
-    for obj in objects:
-        offsets.append(len(content))
-        content.extend(obj)
+    offsets = {0: 0}
+    for object_id in object_ids:
+        offsets[object_id] = len(content)
+        content.extend(objects_by_id[object_id])
 
     xref_offset = len(content)
-    content.extend(f"xref\n0 {len(objects) + 1}\n".encode("ascii"))
+    content.extend(f"xref\n0 {max_object_id + 1}\n".encode("ascii"))
     content.extend(b"0000000000 65535 f \n")
-    for offset in offsets[1:]:
-        content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+    for object_id in range(1, max_object_id + 1):
+        offset = offsets.get(object_id, 0)
+        if offset:
+            content.extend(f"{offset:010d} 00000 n \n".encode("ascii"))
+        else:
+            content.extend(b"0000000000 00000 f \n")
     content.extend(
         (
-            f"trailer << /Size {len(objects) + 1} /Root 1 0 R >>\n"
+            f"trailer << /Size {max_object_id + 1} /Root 1 0 R >>\n"
             f"startxref\n{xref_offset}\n%%EOF"
         ).encode("ascii")
     )
@@ -2245,20 +2233,30 @@ def create_app():
     @app.get("/uploads/<path:filename>")
     def uploaded_file(filename):
         normalized = str(filename or "").replace("\\", "/").lstrip("/")
-        if normalized.startswith("invoices/invoice-") and normalized.endswith(".pdf"):
-            invoice_id_part = normalized[len("invoices/invoice-") : -len(".pdf")]
-            if invoice_id_part.isdigit():
-                reservation = Reservation.query.get(int(invoice_id_part))
-                if reservation:
-                    generate_reservation_documents(reservation)
-                    db.session.commit()
-        if normalized.startswith("contracts/contract-") and normalized.endswith(".pdf"):
-            contract_id_part = normalized[len("contracts/contract-") : -len(".pdf")]
-            if contract_id_part.isdigit():
-                reservation = Reservation.query.get(int(contract_id_part))
-                if reservation:
-                    generate_reservation_documents(reservation)
-                    db.session.commit()
+        absolute_path = os.path.join(app.config["UPLOAD_ROOT"], normalized.replace("/", os.sep))
+
+        if not os.path.exists(absolute_path):
+            if normalized.startswith("contracts/contract-") and normalized.endswith(".pdf"):
+                reservation_id_part = normalized[len("contracts/contract-") : -len(".pdf")]
+                if reservation_id_part.isdigit():
+                    reservation = Reservation.query.get(int(reservation_id_part))
+                    if reservation:
+                        contract = (
+                            Contract.query.filter_by(reservation_id=reservation.id)
+                            .order_by(Contract.id.desc())
+                            .first()
+                        )
+                        if contract:
+                            render_contract_pdf_for_reservation(reservation, contract)
+                            db.session.commit()
+            elif normalized.startswith("invoices/invoice-") and normalized.endswith(".pdf"):
+                reservation_id_part = normalized[len("invoices/invoice-") : -len(".pdf")]
+                if reservation_id_part.isdigit():
+                    reservation = Reservation.query.get(int(reservation_id_part))
+                    if reservation:
+                        generate_reservation_documents(reservation)
+                        db.session.commit()
+
         return send_from_directory(app.config["UPLOAD_ROOT"], filename)
 
     def save_service_image(image_file):

@@ -1194,21 +1194,12 @@ const ProviderDashboard = () => {
       if (!socketResponse?.success) {
         throw new Error(socketResponse?.message || "Impossible d'envoyer ce message.");
       }
-
-      setChatFeedback({
-        type: "success",
-        text: socketResponse.message || "Message envoye avec succes.",
-      });
     } catch (socketError) {
       try {
         const response = await sendProviderChatMessage(activeChatId, content);
         if (response.chat) {
           setChats((prev) => mergeProviderChat(prev, response.chat));
         }
-        setChatFeedback({
-          type: "success",
-          text: response.message || "Message envoye avec succes.",
-        });
       } catch (error) {
         setMessageDraft(content);
         setChatFeedback({
@@ -1250,9 +1241,12 @@ const ProviderDashboard = () => {
       prev.map((chat) => (chat.id === chatId ? { ...chat, unread: 0 } : chat))
     );
 
-    if (socketRef.current && !joinedChatIdsRef.current.has(chatId)) {
+    if (socketRef.current) {
+      // Re-join to trigger an immediate presence:update for accurate online status.
       joinConversationRoom(socketRef.current, chatId);
-      joinedChatIdsRef.current.add(chatId);
+      if (!joinedChatIdsRef.current.has(chatId)) {
+        joinedChatIdsRef.current.add(chatId);
+      }
     }
 
     try {

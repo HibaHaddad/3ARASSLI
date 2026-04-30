@@ -447,11 +447,6 @@ const ProviderBookings = ({
               <div className="client-signature-qr">
                 <img src={providerSignatureQr} alt="QR code signature prestataire" width="180" height="180" />
                 <p>Scannez ce QR avec votre telephone pour signer sans vous reconnecter.</p>
-                {providerSignatureLink ? (
-                  <a className="provider-ghost-btn" href={providerSignatureLink} target="_blank" rel="noreferrer">
-                    Ouvrir le lien de signature
-                  </a>
-                ) : null}
               </div>
             ) : null}
           </section>

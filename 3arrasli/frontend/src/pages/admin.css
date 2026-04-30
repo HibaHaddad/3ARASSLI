@@ -13,6 +13,7 @@
 
 .admin-page-unified .provider-shell {
   align-items: stretch;
+  width: min(1680px, calc(100% - 24px));
 }
 
 .admin-page-unified .provider-sidebar {
@@ -1499,6 +1500,41 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.admin-data-table-contracts th {
+  white-space: normal;
+  word-break: normal;
+  overflow-wrap: break-word;
+}
+
+.admin-data-table-contracts td {
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.admin-data-table-contracts td:nth-child(1),
+.admin-data-table-contracts td:nth-child(2),
+.admin-data-table-contracts td:nth-child(3),
+.admin-data-table-contracts td:nth-child(7),
+.admin-data-table-contracts td:nth-child(8),
+.admin-data-table-contracts td:nth-child(9) {
+  white-space: nowrap;
+}
+
+.admin-data-table-contracts td:nth-child(6) .admin-chip {
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.admin-contracts-table-wrap {
+  overflow-x: visible;
+  overflow-y: visible;
+}
+
+.admin-data-table-contracts {
+  min-width: 0;
+  table-layout: auto;
 }
 
 .admin-cell-tight {
