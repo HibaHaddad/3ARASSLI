@@ -5,14 +5,21 @@ import DataTable from "../components/admin/DataTable";
 import Modal from "../components/admin/Modal";
 import api, { API_BASE_URL } from "../services/api";
 import { resolveAssetUrl } from "../services/assets";
-import { createAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
 import {
-  adminSections,
-  mockAppointments,
-  mockConversations,
-  mockInvoices,
-  mockReviews,
-} from "./admin/adminData";
+  deleteAdminReview,
+  getAdminAppointments,
+  getAdminChats,
+  getAdminContracts,
+  getAdminInvoices,
+  getAdminNotifications,
+  getAdminReviews,
+  getAdminServices,
+  markAdminNotificationRead,
+  updateAdminService,
+  updateAdminReview,
+} from "../services/adminDashboard";
+import { createAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
+import { adminSections } from "./admin/adminData";
 import "./provider.css";
 import "./admin.css";
 
@@ -32,6 +39,21 @@ const formatAppointmentDate = (value) => {
     month: "long",
     year: "numeric",
   }).format(parsed);
+};
+
+const formatDateInputValue = (value) => {
+  if (!value) {
+    return "";
+  }
+  const normalized = String(value);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) {
+    return normalized;
+  }
+  const parsed = new Date(normalized);
+  if (Number.isNaN(parsed.getTime())) {
+    return "";
+  }
+  return parsed.toISOString().slice(0, 10);
 };
 
 const getInitials = (value) =>
@@ -153,6 +175,7 @@ const adminDashboardIcons = {
   users: "US",
   clients: "CL",
   providers: "PR",
+  services: "SV",
   pending: "!",
   active: "OK",
   appointments: "RDV",
@@ -168,11 +191,53 @@ const defaultPackForm = {
   description: "",
   price: "",
   duration: "",
-  items: [{ serviceCategory: "", serviceId: "", providerId: "" }],
+  expiresAt: "",
+  items: [{ id: null, serviceCategory: "", serviceId: "", providerId: "", providerStatus: "pending" }],
 };
 
 const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
 const isMobileSidebarViewport = () => window.innerWidth <= 980;
+
+const mergeAdminNotifications = (systemNotifications, pendingProviders, previousNotifications) => {
+  const previousById = new Map((previousNotifications || []).map((item) => [item.id, item]));
+  const providerNotifications = pendingProviders.map((provider) => {
+    const notificationId = `provider-request-${provider.id}`;
+    const existing = previousById.get(notificationId);
+
+    return {
+      id: notificationId,
+      type: "provider-request",
+      seen: existing?.seen ?? false,
+      title: "Nouveau prestataire a approuver",
+      message: `${provider.name} a soumis son espace prestataire et attend la validation de l'administration.`,
+      providerId: provider.id,
+      providerName: provider.name,
+      dateLabel: formatNotificationDate(provider.joinedAt || provider.updatedAt),
+      createdAt: provider.joinedAt || provider.updatedAt || new Date().toISOString(),
+    };
+  });
+
+  const backendNotifications = (systemNotifications || []).map((notification) => {
+    const existing = previousById.get(notification.id);
+    return {
+      id: notification.id,
+      type: notification.type,
+      seen: notification.isRead ?? existing?.seen ?? false,
+      title: notification.title,
+      message: notification.message,
+      dateLabel: formatNotificationDate(notification.createdAt),
+      createdAt: notification.createdAt,
+      target: notification.target,
+      appointmentId: notification.appointmentId,
+      packId: notification.packId,
+      reservationId: notification.reservationId,
+    };
+  });
+
+  return [...providerNotifications, ...backendNotifications].sort(
+    (left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
+  );
+};
 
 const AdminDashboard = () => {
   const [activeSection, setActiveSection] = useState("dashboard");
@@ -190,6 +255,7 @@ const AdminDashboard = () => {
   const [feedbackMessage, setFeedbackMessage] = useState(null);
 
   const [providers, setProviders] = useState([]);
+  const [serviceProviderCards, setServiceProviderCards] = useState([]);
   const [appointments, setAppointments] = useState([]);
   const [contracts, setContracts] = useState([]);
   const [invoices, setInvoices] = useState([]);
@@ -202,11 +268,21 @@ const AdminDashboard = () => {
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState("all");
   const [appointmentStatusFilter, setAppointmentStatusFilter] = useState("all");
+  const [chatSearch, setChatSearch] = useState("");
+  const [chatProviderFilter, setChatProviderFilter] = useState("all");
 
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [providerDetails, setProviderDetails] = useState(null);
+  const [serviceProviderModalOpen, setServiceProviderModalOpen] = useState(false);
+  const [selectedServiceProvider, setSelectedServiceProvider] = useState(null);
   const [providersLoading, setProvidersLoading] = useState(true);
   const [contractsLoading, setContractsLoading] = useState(false);
+  const [appointmentsLoading, setAppointmentsLoading] = useState(false);
+  const [invoicesLoading, setInvoicesLoading] = useState(false);
+  const [reviewsLoading, setReviewsLoading] = useState(false);
+  const [servicesLoading, setServicesLoading] = useState(false);
+  const [packsLoading, setPacksLoading] = useState(false);
+  const [chatsLoading, setChatsLoading] = useState(false);
   const [appointmentsModalOpen, setAppointmentsModalOpen] = useState(false);
   const [selectedAppointmentGroup, setSelectedAppointmentGroup] = useState(null);
   const [reviewsModalOpen, setReviewsModalOpen] = useState(false);
@@ -227,19 +303,6 @@ const AdminDashboard = () => {
     confirmLabel: "Confirmer",
     action: null,
   });
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      setAppointments(mockAppointments);
-      setInvoices(mockInvoices);
-      setReviews(mockReviews);
-      setConversations(mockConversations);
-      setActiveConversationId(mockConversations[0]?.id || null);
-      setInitialLoading(false);
-    }, 700);
-
-    return () => clearTimeout(timer);
-  }, []);
 
   useEffect(() => {
     if (initialLoading) {
@@ -276,33 +339,14 @@ const AdminDashboard = () => {
     });
   };
 
-  const syncProviderNotifications = (pendingProviders) => {
-    setAdminNotifications((prev) => {
-      const previousById = new Map(prev.map((item) => [item.id, item]));
-      const nextNotifications = pendingProviders.map((provider) => {
-        const notificationId = `provider-request-${provider.id}`;
-        const existing = previousById.get(notificationId);
-
-        return {
-          id: notificationId,
-          type: "provider-request",
-          seen: existing?.seen ?? false,
-          title: "Nouveau prestataire a approuver",
-          message: `${provider.name} a soumis son espace prestataire et attend la validation de l'administration.`,
-          providerId: provider.id,
-          providerName: provider.name,
-          dateLabel: formatNotificationDate(provider.joinedAt || provider.updatedAt),
-          createdAt: provider.joinedAt || provider.updatedAt || new Date().toISOString(),
-        };
-      });
-
-      return nextNotifications.sort(
-        (left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime()
-      );
-    });
+  const syncProviderNotifications = (pendingProviders, systemNotifications = []) => {
+    setAdminNotifications((prev) => mergeAdminNotifications(systemNotifications, pendingProviders, prev));
   };
 
   const dismissNotification = (id) => {
+    if (typeof id === "number") {
+      markAdminNotificationRead(id).catch(() => undefined);
+    }
     setAdminNotifications((prev) => prev.filter((item) => item.id !== id));
   };
 
@@ -310,13 +354,41 @@ const AdminDashboard = () => {
     setAdminNotifications((prev) =>
       prev.map((item) => (item.id === notification.id ? { ...item, seen: true } : item))
     );
-    setActiveSection("providers");
+    if (typeof notification.id === "number") {
+      markAdminNotificationRead(notification.id).catch(() => undefined);
+    }
+    if (notification.type === "provider-request") {
+      setActiveSection("providers");
+    } else if (String(notification.type || "").startsWith("pack_response")) {
+      setActiveSection("packs");
+    } else if (notification.appointmentId || notification.target?.kind === "appointment") {
+      setActiveSection("appointments");
+    } else {
+      setActiveSection("providers");
+    }
     if (isMobileSidebarViewport()) {
       setSidebarOpen(false);
     }
   };
 
-  const loadProviders = async () => {
+  const loadAdminNotifications = async (options = {}) => {
+    const { silent = false, pendingProviders = null } = options;
+    try {
+      const response = await getAdminNotifications();
+      const nextPendingProviders =
+        pendingProviders || providers.filter((provider) => provider.status === "pending-approval");
+      syncProviderNotifications(nextPendingProviders, response.notifications || []);
+      return response.notifications || [];
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les notifications admin.");
+      }
+      return [];
+    }
+  };
+
+  const loadProviders = async (options = {}) => {
+    const { silent = false } = options;
     setProvidersLoading(true);
 
     try {
@@ -325,57 +397,202 @@ const AdminDashboard = () => {
       setProviders(nextProviders);
 
       const pendingProviders = nextProviders.filter((provider) => provider.status === "pending-approval");
-      syncProviderNotifications(pendingProviders);
+      await loadAdminNotifications({ silent: true, pendingProviders });
     } catch (error) {
-      showFeedback("error", error.response?.data?.message || "Impossible de charger les prestataires.");
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les prestataires.");
+      }
       setProviders([]);
     } finally {
       setProvidersLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadProviders();
-  }, []);
-
-  const loadContracts = async () => {
+  const loadContracts = async (options = {}) => {
+    const { silent = false } = options;
     setContractsLoading(true);
     try {
-      const response = await api.get("/api/admin/contracts");
-      setContracts(Array.isArray(response.data?.contracts) ? response.data.contracts : []);
+      const response = await getAdminContracts();
+      setContracts(Array.isArray(response?.contracts) ? response.contracts : []);
     } catch (error) {
-      showFeedback("error", error.response?.data?.message || "Impossible de charger les contrats.");
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les contrats.");
+      }
       setContracts([]);
     } finally {
       setContractsLoading(false);
     }
   };
 
-  useEffect(() => {
-    loadContracts();
-  }, []);
+  const loadAppointments = async (options = {}) => {
+    const { silent = false } = options;
+    setAppointmentsLoading(true);
+    try {
+      const response = await getAdminAppointments();
+      setAppointments(response.appointments || []);
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les rendez-vous.");
+      }
+      setAppointments([]);
+    } finally {
+      setAppointmentsLoading(false);
+    }
+  };
+
+  const loadInvoices = async (options = {}) => {
+    const { silent = false } = options;
+    setInvoicesLoading(true);
+    try {
+      const response = await getAdminInvoices();
+      setInvoices(response.invoices || []);
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les factures.");
+      }
+      setInvoices([]);
+    } finally {
+      setInvoicesLoading(false);
+    }
+  };
+
+  const loadServices = async (options = {}) => {
+    const { silent = false } = options;
+    setServicesLoading(true);
+    try {
+      const response = await getAdminServices();
+      setServiceProviderCards(response.providerCards || []);
+      return response;
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les services.");
+      }
+      setServiceProviderCards([]);
+      return null;
+    } finally {
+      setServicesLoading(false);
+    }
+  };
+
+  const loadReviews = async (options = {}) => {
+    const { silent = false } = options;
+    setReviewsLoading(true);
+    try {
+      const response = await getAdminReviews();
+      setReviews(response.reviews || []);
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les avis.");
+      }
+      setReviews([]);
+    } finally {
+      setReviewsLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (activeSection === "contracts") {
-      loadContracts();
+      loadContracts({ silent: true });
+    }
+    if (activeSection === "appointments") {
+      loadAppointments({ silent: true });
+    }
+    if (activeSection === "billing") {
+      loadInvoices({ silent: true });
+    }
+    if (activeSection === "reviews") {
+      loadReviews({ silent: true });
+    }
+    if (activeSection === "services") {
+      loadServices({ silent: true });
+    }
+    if (activeSection === "packs") {
+      loadPacks({ silent: true });
+    }
+    if (activeSection === "chat") {
+      loadConversations({ silent: true });
     }
   }, [activeSection]);
 
-  const loadPacks = async () => {
+  const loadPacks = async (options = {}) => {
+    const { silent = false } = options;
+    setPacksLoading(true);
     try {
       const response = await getAdminPacks();
       setPacks(response.packs || []);
       setPackProviderOptions(response.providerOptions || []);
     } catch (error) {
-      showFeedback("error", error.response?.data?.message || "Impossible de charger les packs.");
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les packs.");
+      }
       setPacks([]);
       setPackProviderOptions([]);
+    } finally {
+      setPacksLoading(false);
+    }
+  };
+
+  const loadConversations = async (options = {}) => {
+    const { silent = false } = options;
+    setChatsLoading(true);
+    try {
+      const response = await getAdminChats();
+      const nextConversations = response.conversations || [];
+      setConversations(nextConversations);
+      setActiveConversationId((currentId) => {
+        if (nextConversations.some((conversation) => conversation.id === currentId)) {
+          return currentId;
+        }
+        return nextConversations[0]?.id || null;
+      });
+    } catch (error) {
+      if (!silent) {
+        showFeedback("error", error.response?.data?.message || "Impossible de charger les conversations.");
+      }
+      setConversations([]);
+      setActiveConversationId(null);
+    } finally {
+      setChatsLoading(false);
     }
   };
 
   useEffect(() => {
-    loadPacks();
+    let isMounted = true;
+
+    const initializeDashboard = async () => {
+      try {
+        await Promise.all([
+          loadProviders({ silent: true }),
+          loadContracts({ silent: true }),
+          loadAppointments({ silent: true }),
+          loadInvoices({ silent: true }),
+          loadServices({ silent: true }),
+          loadReviews({ silent: true }),
+          loadPacks({ silent: true }),
+          loadConversations({ silent: true }),
+        ]);
+      } finally {
+        if (isMounted) {
+          setInitialLoading(false);
+        }
+      }
+    };
+
+    initializeDashboard();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      loadAdminNotifications({ silent: true });
+      loadPacks({ silent: true });
+    }, 30000);
+
+    return () => window.clearInterval(intervalId);
+  }, [providers]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -506,10 +723,54 @@ const AdminDashboard = () => {
       .sort((left, right) => left.provider.localeCompare(right.provider));
   }, [reviews]);
 
+  const chatProviderOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          conversations
+            .map((conversation) => String(conversation.provider || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((left, right) => left.localeCompare(right)),
+    [conversations]
+  );
+
+  const filteredConversations = useMemo(() => {
+    const normalizedSearch = chatSearch.trim().toLowerCase();
+    return conversations.filter((conversation) => {
+      const matchesProvider =
+        chatProviderFilter === "all" || String(conversation.provider || "").trim() === chatProviderFilter;
+      if (!matchesProvider) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+      const haystack = [
+        conversation.client,
+        conversation.provider,
+        conversation.excerpt,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return haystack.includes(normalizedSearch);
+    });
+  }, [chatProviderFilter, chatSearch, conversations]);
+
   const activeConversation =
-    conversations.find((conversation) => conversation.id === activeConversationId) ||
-    conversations[0] ||
+    filteredConversations.find((conversation) => conversation.id === activeConversationId) ||
+    filteredConversations[0] ||
     null;
+
+  useEffect(() => {
+    if (filteredConversations.length === 0) {
+      setActiveConversationId(null);
+      return;
+    }
+    if (!filteredConversations.some((conversation) => conversation.id === activeConversationId)) {
+      setActiveConversationId(filteredConversations[0].id);
+    }
+  }, [activeConversationId, filteredConversations]);
 
   const dashboardStats = useMemo(() => {
     const activeProviders = providers.filter((item) => item.status === "active").length;
@@ -637,6 +898,7 @@ const AdminDashboard = () => {
 
   const quickActions = [
     { id: "providers", title: "Gerer les prestataires", text: "Valider, activer ou consulter les profils.", icon: adminDashboardIcons.providers },
+    { id: "services", title: "Voir les services", text: "Consulter les offres publiees par prestataire.", icon: adminDashboardIcons.services },
     { id: "appointments", title: "Voir les rendez-vous", text: "Suivre les demandes et rendez-vous clients.", icon: adminDashboardIcons.appointments },
     { id: "contracts", title: "Verifier les contrats", text: "Controler les signatures et documents.", icon: adminDashboardIcons.contracts },
     { id: "billing", title: "Consulter les factures", text: "Surveiller paiements et impayes.", icon: adminDashboardIcons.invoices },
@@ -646,6 +908,11 @@ const AdminDashboard = () => {
   const openProviderDetailsModal = (provider) => {
     setProviderDetails(provider);
     setProviderModalOpen(true);
+  };
+
+  const openServiceProviderModal = (providerCard) => {
+    setSelectedServiceProvider(providerCard);
+    setServiceProviderModalOpen(true);
   };
 
   const toggleProviderStatus = (provider) => {
@@ -717,6 +984,16 @@ const AdminDashboard = () => {
       return;
     }
 
+    const rawUrl = String(invoice.pdfUrl || "").trim();
+    if (rawUrl) {
+      const resolvedUrl =
+        rawUrl.startsWith("http://") || rawUrl.startsWith("https://")
+          ? rawUrl
+          : `${API_BASE_URL}${rawUrl.startsWith("/") ? rawUrl : `/${rawUrl}`}`;
+      window.open(resolvedUrl, "_blank", "noopener,noreferrer");
+      return;
+    }
+
     const pdfBlob = buildSimplePdf([
       `Facture: ${invoice.id}`,
       `Client: ${invoice.client}`,
@@ -732,10 +1009,44 @@ const AdminDashboard = () => {
   };
 
   const moderateReview = (review, nextStatus) => {
-    setReviews((prev) =>
-      prev.map((item) => (item.id === review.id ? { ...item, status: nextStatus } : item))
+    openConfirm(
+      "Mettre a jour cet avis",
+      `Confirmer le passage de l'avis de ${review.author} au statut ${nextStatus} ?`,
+      "Confirmer",
+      async () => {
+        try {
+          const response = await updateAdminReview(review.id, { status: nextStatus });
+          const updatedReview = response.review;
+          setReviews((prev) => prev.map((item) => (item.id === updatedReview.id ? updatedReview : item)));
+          setSelectedReviewGroup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  reviews: prev.reviews.map((item) => (item.id === updatedReview.id ? updatedReview : item)),
+                }
+              : prev
+          );
+          showFeedback("success", response.message || "Avis modere avec succes.");
+        } catch (error) {
+          showFeedback("error", error.response?.data?.message || "Impossible de moderer cet avis.");
+        }
+      }
     );
-    showFeedback("success", "Avis modere avec succes.");
+  };
+
+  const moderateServiceVisibility = async (service, isVisible) => {
+    try {
+      const response = await updateAdminService(service.id, { is_visible: isVisible });
+      const nextData = await loadServices({ silent: true });
+      if (selectedServiceProvider?.id && nextData?.providerCards) {
+        const refreshedProvider = nextData.providerCards.find((item) => item.id === selectedServiceProvider.id) || null;
+        setSelectedServiceProvider(refreshedProvider);
+        setServiceProviderModalOpen(Boolean(refreshedProvider));
+      }
+      showFeedback("success", response.message || "Visibilite du service mise a jour.");
+    } catch (error) {
+      showFeedback("error", error.response?.data?.message || "Impossible de mettre a jour ce service.");
+    }
   };
 
   const deleteReview = (review) => {
@@ -743,9 +1054,22 @@ const AdminDashboard = () => {
       "Supprimer cet avis",
       `Supprimer l'avis de ${review.author} sur ${review.target} ?`,
       "Supprimer",
-      () => {
-        setReviews((prev) => prev.filter((item) => item.id !== review.id));
-        showFeedback("success", "Avis supprime.");
+      async () => {
+        try {
+          const response = await deleteAdminReview(review.id);
+          setReviews((prev) => prev.filter((item) => item.id !== review.id));
+          setSelectedReviewGroup((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  reviews: prev.reviews.filter((item) => item.id !== review.id),
+                }
+              : prev
+          );
+          showFeedback("success", response.message || "Avis supprime.");
+        } catch (error) {
+          showFeedback("error", error.response?.data?.message || "Impossible de supprimer cet avis.");
+        }
       }
     );
   };
@@ -767,7 +1091,7 @@ const AdminDashboard = () => {
           return item;
         }
         if (field === "serviceCategory") {
-          return { serviceCategory: value, serviceId: "", providerId: "" };
+          return { ...item, serviceCategory: value, serviceId: "", providerId: "", providerStatus: "pending" };
         }
         if (field === "providerSelection") {
           const [serviceId, providerId] = String(value || "").split(":");
@@ -775,6 +1099,7 @@ const AdminDashboard = () => {
             ...item,
             serviceId: serviceId || "",
             providerId: providerId || "",
+            providerStatus: "pending",
           };
         }
         return { ...item, [field]: value };
@@ -785,7 +1110,7 @@ const AdminDashboard = () => {
   const addPackItemRow = () => {
     setPackForm((prev) => ({
       ...prev,
-      items: [...prev.items, { serviceCategory: "", serviceId: "", providerId: "" }],
+      items: [...prev.items, { id: null, serviceCategory: "", serviceId: "", providerId: "", providerStatus: "pending" }],
     }));
   };
 
@@ -802,12 +1127,15 @@ const AdminDashboard = () => {
       name: pack.name,
       description: pack.description || "",
       price: String(pack.price),
-      duration: pack.duration,
+      duration: pack.duration || "",
+      expiresAt: formatDateInputValue(pack.expiresAt),
       items:
         pack.items?.map((item) => ({
+          id: item.id || null,
           serviceCategory: item.serviceCategory || "",
           serviceId: String(item.serviceId || ""),
           providerId: String(item.providerId || ""),
+          providerStatus: item.providerStatus || "pending",
         })) || defaultPackForm.items,
     });
     setPackModalOpen(true);
@@ -818,14 +1146,15 @@ const AdminDashboard = () => {
 
     const normalizedItems = packForm.items
       .map((item) => ({
+        id: item.id || null,
         serviceCategory: String(item.serviceCategory || "").trim(),
         serviceId: Number(item.serviceId || 0),
         providerId: Number(item.providerId || 0),
       }))
       .filter((item) => item.serviceCategory && item.serviceId && item.providerId);
 
-    if (!packForm.name || !packForm.price || !packForm.duration || normalizedItems.length === 0) {
-      showFeedback("error", "Veuillez renseigner les champs du pack et choisir au moins un prestataire par service.");
+    if (!packForm.name || !packForm.price || !packForm.expiresAt || normalizedItems.length === 0) {
+      showFeedback("error", "Veuillez renseigner le nom, le prix, la date de fin du pack et choisir au moins un prestataire par service.");
       return;
     }
 
@@ -834,6 +1163,7 @@ const AdminDashboard = () => {
       description: packForm.description,
       price: Number(packForm.price),
       duration: packForm.duration,
+      expires_at: packForm.expiresAt,
       items: normalizedItems,
     };
 
@@ -988,7 +1318,16 @@ const AdminDashboard = () => {
       header: "Prix",
       render: (value) => formatCurrency(value),
     },
-    { key: "duration", header: "Duree" },
+    {
+      key: "expiresAt",
+      header: "Fin",
+      render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
+    },
+    {
+      key: "duration",
+      header: "Duree",
+      render: (value, row) => value || (row.expiresAt ? `Jusqu'au ${formatAppointmentDate(row.expiresAt)}` : "-"),
+    },
     {
       key: "services",
       header: "Services inclus",
@@ -1021,7 +1360,23 @@ const AdminDashboard = () => {
               <h3>Tableau de bord administrateur</h3>
               <p>Vue globale des utilisateurs, revenus, contrats, packs et alertes de la plateforme.</p>
             </div>
-            <button type="button" className="admin-analytics-header-action" onClick={() => loadPacks()}>
+            <button
+              type="button"
+              className="admin-analytics-header-action"
+              onClick={() =>
+                Promise.all([
+                  loadProviders({ silent: true }),
+                  loadContracts({ silent: true }),
+                  loadAppointments({ silent: true }),
+                  loadInvoices({ silent: true }),
+                  loadServices({ silent: true }),
+                  loadReviews({ silent: true }),
+                  loadPacks({ silent: true }),
+                  loadConversations({ silent: true }),
+                  loadAdminNotifications({ silent: true }),
+                ])
+              }
+            >
               Actualiser
             </button>
           </div>
@@ -1270,7 +1625,9 @@ const AdminDashboard = () => {
             ))}
           </div>
 
-          {appointmentsByProvider.length === 0 ? (
+          {appointmentsLoading ? (
+            <div className="admin-status-card">Chargement des rendez-vous...</div>
+          ) : appointmentsByProvider.length === 0 ? (
             <div className="admin-status-card">Aucun rendez-vous disponible pour ce statut.</div>
           ) : (
             <div className="admin-appointments-board">
@@ -1351,7 +1708,7 @@ const AdminDashboard = () => {
             columns={invoiceColumns}
             rows={invoices}
             keyField="id"
-            loading={false}
+            loading={invoicesLoading}
             emptyMessage="Aucune facture trouvee."
             tableClassName="admin-data-table-billing"
             actionsColumnWidth="190px"
@@ -1379,7 +1736,9 @@ const AdminDashboard = () => {
             </div>
           </div>
 
-          {reviewsByProvider.length === 0 ? (
+          {reviewsLoading ? (
+            <div className="admin-status-card">Chargement des avis...</div>
+          ) : reviewsByProvider.length === 0 ? (
             <div className="admin-status-card">Aucun avis disponible.</div>
           ) : (
             <div className="admin-appointments-board">
@@ -1419,6 +1778,75 @@ const AdminDashboard = () => {
       );
     }
 
+    if (activeSection === "services") {
+      return (
+        <section className="provider-panel">
+          <div className="provider-panel-head provider-panel-head-inline">
+            <div>
+              <h3>Services des prestataires</h3>
+              <p>Chaque prestataire apparait dans une carte. Ouvrez-la pour voir le detail complet de ses services et ses albums photo.</p>
+            </div>
+          </div>
+
+          {servicesLoading ? (
+            <div className="admin-status-card">Chargement des services...</div>
+          ) : serviceProviderCards.length === 0 ? (
+            <div className="admin-status-card">Aucun service disponible.</div>
+          ) : (
+            <div className="admin-services-provider-grid">
+              {serviceProviderCards.map((providerCard) => (
+                <button
+                  key={providerCard.id}
+                  type="button"
+                  className="admin-service-provider-card"
+                  onClick={() => openServiceProviderModal(providerCard)}
+                >
+                  <div className="admin-service-provider-card-head">
+                    <div className="admin-service-provider-card-identity">
+                      <div className="admin-service-provider-card-avatar">
+                        {providerCard.image ? (
+                          <img src={resolveAssetUrl(providerCard.image)} alt={providerCard.name} />
+                        ) : (
+                          <span>{getInitials(providerCard.name)}</span>
+                        )}
+                      </div>
+                      <div>
+                        <strong>{providerCard.name}</strong>
+                        <p>{providerCard.city || "Ville non renseignee"}</p>
+                      </div>
+                    </div>
+
+                    <div className="admin-service-provider-card-score">
+                      <span>{providerCard.average_rating || 0}/5</span>
+                      <small>{providerCard.review_count || 0} avis</small>
+                    </div>
+                  </div>
+
+                  <p className="admin-service-provider-card-copy">
+                    {providerCard.short_description || "Prestataire disponible avec plusieurs services."}
+                  </p>
+
+                  <div className="admin-service-provider-card-tags">
+                    {(providerCard.service_types || []).slice(0, 4).map((item) => (
+                      <span key={`${providerCard.id}-${item}`} className="admin-chip neutral">{item}</span>
+                    ))}
+                  </div>
+
+                  <div className="admin-service-provider-card-metrics">
+                    <span className="admin-chip ok">Services: {providerCard.service_count || 0}</span>
+                    <span className="admin-chip ok">Visibles: {providerCard.visible_count || 0}</span>
+                    <span className="admin-chip neutral">Masques: {providerCard.hidden_count || 0}</span>
+                  </div>
+
+                  <span className="admin-appointment-provider-cta">Cliquer pour ouvrir tous les details, services et photos</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      );
+    }
+
     if (activeSection === "packs") {
       return (
         <section className="provider-panel">
@@ -1436,7 +1864,7 @@ const AdminDashboard = () => {
             columns={packColumns}
             rows={packs}
             keyField="id"
-            loading={false}
+            loading={packsLoading}
             emptyMessage="Aucun pack promo configure."
             renderActions={(row) => (
               <>
@@ -1462,32 +1890,61 @@ const AdminDashboard = () => {
           </div>
         </div>
 
-        {conversations.length === 0 ? (
+        {chatsLoading ? (
+          <div className="admin-status-card">Chargement des conversations...</div>
+        ) : conversations.length === 0 ? (
           <div className="admin-status-card">Aucune conversation a superviser.</div>
         ) : (
           <div className="admin-chat-supervision">
             <section className="admin-chat-panel admin-chat-conversations-panel">
               <div className="admin-chat-panel-head">
                 <strong>Conversations</strong>
-                <span>{conversations.length} fil(s)</span>
+                <span>{filteredConversations.length} fil(s)</span>
+              </div>
+              <div className="admin-chat-filters">
+                <input
+                  className="provider-input"
+                  type="search"
+                  placeholder="Rechercher un client ou un prestataire"
+                  value={chatSearch}
+                  onChange={(event) => setChatSearch(event.target.value)}
+                />
+                <select
+                  className="provider-select"
+                  value={chatProviderFilter}
+                  onChange={(event) => setChatProviderFilter(event.target.value)}
+                >
+                  <option value="all">Tous les prestataires</option>
+                  {chatProviderOptions.map((providerName) => (
+                    <option key={providerName} value={providerName}>
+                      {providerName}
+                    </option>
+                  ))}
+                </select>
               </div>
               <div className="admin-chat-list">
-                {conversations.map((conversation) => (
-                  <button
-                    key={conversation.id}
-                    type="button"
-                    className={`provider-chat-item ${activeConversation?.id === conversation.id ? "active" : ""}`}
-                    onClick={() => setActiveConversationId(conversation.id)}
-                  >
-                    <span className="admin-chat-avatar">{getInitials(conversation.client)}</span>
-                    <div className="admin-chat-item-copy">
-                      <strong>{conversation.client}</strong>
-                      <p>{conversation.provider}</p>
-                      <small>{conversation.excerpt}</small>
-                    </div>
-                    <em>{conversation.lastAt}</em>
-                  </button>
-                ))}
+                {filteredConversations.length === 0 ? (
+                  <div className="admin-chat-empty-state">
+                    Aucune conversation ne correspond a votre recherche ou au prestataire selectionne.
+                  </div>
+                ) : (
+                  filteredConversations.map((conversation) => (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      className={`provider-chat-item ${activeConversation?.id === conversation.id ? "active" : ""}`}
+                      onClick={() => setActiveConversationId(conversation.id)}
+                    >
+                      <span className="admin-chat-avatar">{getInitials(conversation.client)}</span>
+                      <div className="admin-chat-item-copy">
+                        <strong>{conversation.client}</strong>
+                        <p>{conversation.provider}</p>
+                        <small>{conversation.excerpt}</small>
+                      </div>
+                      <em>{conversation.lastAt}</em>
+                    </button>
+                  ))
+                )}
               </div>
             </section>
 
@@ -1495,25 +1952,31 @@ const AdminDashboard = () => {
               <div className="provider-chat-window-head">
                 <div>
                   <h3>
-                    {activeConversation?.client} x {activeConversation?.provider}
+                    {activeConversation?.client || "Aucune conversation"} x {activeConversation?.provider || "--"}
                   </h3>
                   <p>Mode supervision: lecture seule</p>
                 </div>
                 <span className="admin-chat-readonly-badge">Lecture seule</span>
               </div>
               <div className="provider-chat-messages admin-chat-messages-panel">
-                {activeConversation?.messages.map((message) => (
-                  <div
-                    key={message.id}
-                    className={`provider-message-bubble ${
-                      message.author === "provider" ? "provider" : "client"
-                    }`}
-                  >
-                    <strong>{message.author === "provider" ? "Prestataire" : "Client"}</strong>
-                    <p>{message.text}</p>
-                    <small>{message.time}</small>
+                {activeConversation ? (
+                  activeConversation.messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`provider-message-bubble ${
+                        message.author === "provider" ? "provider" : "client"
+                      }`}
+                    >
+                      <strong>{message.author === "provider" ? "Prestataire" : "Client"}</strong>
+                      <p>{message.text}</p>
+                      <small>{message.time}</small>
+                    </div>
+                  ))
+                ) : (
+                  <div className="admin-chat-empty-state">
+                    Choisissez un prestataire ou modifiez la recherche pour afficher un fil de discussion.
                   </div>
-                ))}
+                )}
               </div>
             </section>
           </div>
@@ -1709,6 +2172,99 @@ const AdminDashboard = () => {
       </Modal>
 
       <Modal
+        open={serviceProviderModalOpen}
+        title={selectedServiceProvider?.name || "Details prestataire"}
+        onClose={() => setServiceProviderModalOpen(false)}
+        actions={<button type="button" className="provider-primary-btn" onClick={() => setServiceProviderModalOpen(false)}>Fermer</button>}
+      >
+        <div className="admin-service-provider-modal">
+          <section className="admin-service-provider-modal-hero">
+            <div className="admin-service-provider-modal-avatar">
+              {selectedServiceProvider?.image ? (
+                <img src={resolveAssetUrl(selectedServiceProvider.image)} alt={selectedServiceProvider?.name || "Prestataire"} />
+              ) : (
+                <span>{getInitials(selectedServiceProvider?.name)}</span>
+              )}
+            </div>
+            <div className="admin-service-provider-modal-copy">
+              <strong>{selectedServiceProvider?.name || "-"}</strong>
+              <p>{selectedServiceProvider?.short_description || "Aucune presentation disponible."}</p>
+              <div className="admin-service-provider-modal-metrics">
+                <span className="admin-chip neutral">{selectedServiceProvider?.city || "Ville non renseignee"}</span>
+                <span className="admin-chip ok">{selectedServiceProvider?.service_count || 0} service(s)</span>
+                <span className="admin-chip ok">{selectedServiceProvider?.visible_count || 0} visible(s)</span>
+                <span className="admin-chip neutral">{selectedServiceProvider?.hidden_count || 0} masque(s)</span>
+              </div>
+            </div>
+          </section>
+
+          <div className="admin-service-provider-modal-list">
+            {(selectedServiceProvider?.services || []).map((service) => {
+              const gallery = Array.isArray(service.images) && service.images.length > 0
+                ? service.images
+                : service.image
+                  ? [{ id: `fallback-${service.id}`, image_path: service.image, url: service.image }]
+                  : [];
+
+              return (
+                <article key={service.id} className="admin-service-detail-card">
+                  <div className="admin-service-detail-head">
+                    <div>
+                      <strong>{service.title}</strong>
+                      <p>{service.category || service.type || "Service"}</p>
+                    </div>
+                    <div className="admin-service-detail-side">
+                      <span className={`admin-chip ${service.is_visible ? "ok" : "neutral"}`}>
+                        {service.is_visible ? "Visible" : "Masque"}
+                      </span>
+                      <small>{formatCurrency(service.price)} • {service.rating || 0}/5</small>
+                    </div>
+                  </div>
+
+                  <div className="admin-detail-grid">
+                    <div><strong>Ville</strong><p>{service.city || "-"}</p></div>
+                    <div><strong>Avis</strong><p>{service.review_count || 0}</p></div>
+                    <div><strong>Prestataire</strong><p>{service.provider_name || service.prestataire_name || "-"}</p></div>
+                    <div><strong>Statut</strong><p>{service.status || "-"}</p></div>
+                  </div>
+
+                  <div className="admin-provider-description-card">
+                    <strong>Description</strong>
+                    <p>{service.description || "Aucune description pour ce service."}</p>
+                  </div>
+
+                  <div className="admin-service-album-grid">
+                    {gallery.length > 0 ? (
+                      gallery.map((image, index) => (
+                        <div key={image.id || `${service.id}-${index}`} className="admin-service-album-item">
+                          <img
+                            src={resolveAssetUrl(image.url || image.image_path)}
+                            alt={`${service.title} visuel ${index + 1}`}
+                          />
+                        </div>
+                      ))
+                    ) : (
+                      <div className="admin-service-album-empty">Aucun album photo pour ce service.</div>
+                    )}
+                  </div>
+
+                  <div className="admin-service-detail-actions">
+                    <button
+                      type="button"
+                      className={service.is_visible ? "provider-secondary-btn" : "provider-primary-btn"}
+                      onClick={() => moderateServiceVisibility(service, !service.is_visible)}
+                    >
+                      {service.is_visible ? "Masquer ce service" : "Afficher ce service"}
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
         open={packModalOpen}
         title={editingPackId ? "Modifier un pack" : "Creer un pack"}
         onClose={() => setPackModalOpen(false)}
@@ -1724,7 +2280,8 @@ const AdminDashboard = () => {
         <form className="admin-form-grid" onSubmit={submitPack}>
           <input className="provider-input" placeholder="Nom du pack" value={packForm.name} onChange={(event) => setPackForm((prev) => ({ ...prev, name: event.target.value }))} />
           <input className="provider-input" type="number" placeholder="Prix" value={packForm.price} onChange={(event) => setPackForm((prev) => ({ ...prev, price: event.target.value }))} />
-          <input className="provider-input" placeholder="Duree" value={packForm.duration} onChange={(event) => setPackForm((prev) => ({ ...prev, duration: event.target.value }))} />
+          <input className="provider-input" type="date" value={packForm.expiresAt} onChange={(event) => setPackForm((prev) => ({ ...prev, expiresAt: event.target.value }))} />
+          <input className="provider-input" placeholder="Libelle de duree (optionnel)" value={packForm.duration} onChange={(event) => setPackForm((prev) => ({ ...prev, duration: event.target.value }))} />
           <textarea className="provider-textarea" placeholder="Description du pack" value={packForm.description} onChange={(event) => setPackForm((prev) => ({ ...prev, description: event.target.value }))} />
 
           <div className="admin-pack-builder">
@@ -1740,9 +2297,13 @@ const AdminDashboard = () => {
                 const providerChoices = getProvidersForServiceCategory(item.serviceCategory);
                 const selectionValue =
                   item.serviceId && item.providerId ? `${item.serviceId}:${item.providerId}` : "";
+                const requiresReplacement = item.providerStatus === "refused";
 
                 return (
-                  <div key={`${item.serviceCategory}-${index}`} className="admin-pack-builder-row">
+                  <div
+                    key={`${item.id || item.serviceCategory}-${index}`}
+                    className={`admin-pack-builder-row ${requiresReplacement ? "admin-pack-builder-row-alert" : ""}`}
+                  >
                     <select
                       className="provider-select"
                       value={item.serviceCategory}
@@ -1776,6 +2337,12 @@ const AdminDashboard = () => {
                     <button type="button" className="provider-secondary-btn" onClick={() => removePackItemRow(index)}>
                       Retirer
                     </button>
+
+                    {requiresReplacement ? (
+                      <p className="admin-pack-builder-warning">
+                        Ce prestataire a refuse le pack. Selectionnez ici le prestataire a remplacer.
+                      </p>
+                    ) : null}
                   </div>
                 );
               })}

@@ -196,7 +196,7 @@ const ClientDashboard = () => {
                 <ServiceCard
                   key={service.id}
                   service={service}
-                  onOpen={(selectedService) => navigate(`/client/provider/${selectedService.id}`)}
+                  onOpen={(selectedService) => navigate(`/client/service/${selectedService.id}`)}
                   onFavorite={toggleFavorite}
                 />
               ))}

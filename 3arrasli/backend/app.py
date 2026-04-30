@@ -1,10 +1,15 @@
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
+import base64
+import binascii
 from email.message import EmailMessage
 from functools import wraps
 import json
 import os
+import secrets
 import smtplib
+import struct
+import zlib
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -103,6 +108,7 @@ FRENCH_MONTHS = [
 ]
 STANDARD_WORKING_HOURS = STANDARD_SLOT_TIMES
 DEFAULT_ADVANCE_RATIO = 0.5
+RESET_CODE_EXPIRY_MINUTES = 15
 
 
 def get_frontend_base_url():
@@ -147,6 +153,123 @@ def resolve_document_url(path):
 
 def escape_pdf_text(value):
     return str(value or "").replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+
+
+def _paeth_predictor(left, up, up_left):
+    prediction = left + up - up_left
+    distance_left = abs(prediction - left)
+    distance_up = abs(prediction - up)
+    distance_up_left = abs(prediction - up_left)
+    if distance_left <= distance_up and distance_left <= distance_up_left:
+        return left
+    if distance_up <= distance_up_left:
+        return up
+    return up_left
+
+
+def decode_signature_data_url(signature_data):
+    raw_value = str(signature_data or "").strip()
+    if not raw_value or "," not in raw_value:
+        return None
+    header, encoded = raw_value.split(",", 1)
+    if "image/png" not in header.lower():
+        return None
+
+    try:
+        png_bytes = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+
+    if not png_bytes.startswith(b"\x89PNG\r\n\x1a\n"):
+        return None
+
+    position = 8
+    width = height = None
+    bit_depth = color_type = None
+    idat_chunks = []
+    while position + 8 <= len(png_bytes):
+        chunk_length = struct.unpack(">I", png_bytes[position:position + 4])[0]
+        chunk_type = png_bytes[position + 4:position + 8]
+        chunk_start = position + 8
+        chunk_end = chunk_start + chunk_length
+        chunk_data = png_bytes[chunk_start:chunk_end]
+        position = chunk_end + 4
+
+        if chunk_type == b"IHDR" and len(chunk_data) >= 13:
+            width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk_data[:10])
+        elif chunk_type == b"IDAT":
+            idat_chunks.append(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if not width or not height or bit_depth != 8 or color_type not in {2, 6} or not idat_chunks:
+        return None
+
+    bytes_per_pixel = 3 if color_type == 2 else 4
+    stride = width * bytes_per_pixel
+
+    try:
+        inflated = zlib.decompress(b"".join(idat_chunks))
+    except zlib.error:
+        return None
+
+    expected_row_size = stride + 1
+    if len(inflated) < expected_row_size * height:
+        return None
+
+    rgb_rows = bytearray()
+    previous_row = bytearray(stride)
+    offset = 0
+    for _ in range(height):
+        filter_type = inflated[offset]
+        offset += 1
+        current = bytearray(inflated[offset:offset + stride])
+        offset += stride
+        if len(current) != stride:
+            return None
+
+        for index in range(stride):
+            left = current[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            up = previous_row[index]
+            up_left = previous_row[index - bytes_per_pixel] if index >= bytes_per_pixel else 0
+            if filter_type == 1:
+                current[index] = (current[index] + left) & 255
+            elif filter_type == 2:
+                current[index] = (current[index] + up) & 255
+            elif filter_type == 3:
+                current[index] = (current[index] + ((left + up) // 2)) & 255
+            elif filter_type == 4:
+                current[index] = (current[index] + _paeth_predictor(left, up, up_left)) & 255
+            elif filter_type != 0:
+                return None
+
+        if color_type == 6:
+            for index in range(0, stride, 4):
+                red = current[index]
+                green = current[index + 1]
+                blue = current[index + 2]
+                alpha = current[index + 3]
+                if alpha >= 255:
+                    rgb_rows.extend((red, green, blue))
+                elif alpha <= 0:
+                    rgb_rows.extend((255, 255, 255))
+                else:
+                    rgb_rows.extend(
+                        (
+                            (red * alpha + 255 * (255 - alpha)) // 255,
+                            (green * alpha + 255 * (255 - alpha)) // 255,
+                            (blue * alpha + 255 * (255 - alpha)) // 255,
+                        )
+                    )
+        else:
+            rgb_rows.extend(current)
+        previous_row = current
+
+    return {
+        "width": width,
+        "height": height,
+        "data": zlib.compress(bytes(rgb_rows)),
+    }
 
 
 def write_simple_pdf(file_path, title, lines):
@@ -330,8 +453,11 @@ def write_contract_pdf(file_path, contract_data):
     paid_amount = format_currency(contract_data.get("paid_amount") or 0)
     remaining_amount = format_currency(contract_data.get("remaining_amount") or 0)
     signed_at = str(contract_data.get("signed_at") or "")
+    provider_signed_at = str(contract_data.get("provider_signed_at") or "")
     has_client_signature = bool(contract_data.get("has_client_signature"))
     contract_status = str(contract_data.get("contract_status") or "pending_provider_signature").strip() or "pending_provider_signature"
+    client_signature_image = decode_signature_data_url(contract_data.get("client_signature"))
+    provider_signature_image = decode_signature_data_url(contract_data.get("provider_signature"))
 
     stream_parts = []
 
@@ -392,7 +518,16 @@ def write_contract_pdf(file_path, contract_data):
     text(52, 500, "Signature Client", 10)
     text(327, 500, "Signature Prestataire", 10)
 
-    if has_client_signature:
+    if client_signature_image:
+        client_width = 170
+        client_height = min(46, round(client_width * client_signature_image["height"] / max(client_signature_image["width"], 1)))
+        add("q")
+        add(f"{client_width} 0 0 {client_height} 58 448 cm")
+        add("/SigClient Do")
+        add("Q")
+        text(52, 432, f"Date de signature: {signed_at}", 9)
+        text(52, 418, "Statut: VALIDE", 10)
+    elif has_client_signature:
         text(52, 474, "Signe electroniquement via espace client", 9)
         text(52, 458, f"Date de signature: {signed_at}", 9)
         text(52, 438, "Statut: VALIDE", 10)
@@ -400,7 +535,6 @@ def write_contract_pdf(file_path, contract_data):
         text(52, 462, "En attente de signature client", 9)
         text(52, 438, "Statut: NON SIGNE", 10)
 
-    text(327, 462, "Zone reservee au prestataire", 9)
     provider_status_label = "EN ATTENTE"
     if contract_status == "signed_by_provider":
         provider_status_label = "SIGNE PRESTATAIRE"
@@ -408,20 +542,70 @@ def write_contract_pdf(file_path, contract_data):
         provider_status_label = "VALIDE"
     elif contract_status == "refused_by_provider":
         provider_status_label = "REFUSE PAR PRESTATAIRE"
-    text(327, 438, f"Statut: {provider_status_label}", 10)
+    if provider_signature_image:
+        provider_width = 170
+        provider_height = min(46, round(provider_width * provider_signature_image["height"] / max(provider_signature_image["width"], 1)))
+        add("q")
+        add(f"{provider_width} 0 0 {provider_height} 333 448 cm")
+        add("/SigProvider Do")
+        add("Q")
+        if provider_signed_at:
+            text(327, 432, f"Date de signature: {provider_signed_at}", 9)
+        text(327, 418, f"Statut: {provider_status_label}", 10)
+    else:
+        text(327, 462, "Zone reservee au prestataire", 9)
+        if provider_signed_at:
+            text(327, 448, f"Date de signature: {provider_signed_at}", 9)
+        text(327, 438, f"Statut: {provider_status_label}", 10)
 
     text(40, 388, f"Statut technique (DB): {contract_status}", 8)
     text(40, 374, "Ce document est genere automatiquement par 3arrasli et conserve une trace de signature numerique.", 8)
 
     stream = "\n".join(stream_parts).encode("latin-1", errors="replace")
 
+    image_resources = []
     objects = [
         b"1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj\n",
         b"2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj\n",
-        b"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >> endobj\n",
-        b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
-        f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
     ]
+
+    next_object_id = 6
+    if client_signature_image:
+        image_resources.append(f"/SigClient {next_object_id} 0 R")
+        objects.append(
+            (
+                f"{next_object_id} 0 obj << /Type /XObject /Subtype /Image /Width {client_signature_image['width']} "
+                f"/Height {client_signature_image['height']} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                f"/Filter /FlateDecode /Length {len(client_signature_image['data'])} >> stream\n"
+            ).encode("ascii")
+            + client_signature_image["data"]
+            + b"\nendstream endobj\n"
+        )
+        next_object_id += 1
+    if provider_signature_image:
+        image_resources.append(f"/SigProvider {next_object_id} 0 R")
+        objects.append(
+            (
+                f"{next_object_id} 0 obj << /Type /XObject /Subtype /Image /Width {provider_signature_image['width']} "
+                f"/Height {provider_signature_image['height']} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                f"/Filter /FlateDecode /Length {len(provider_signature_image['data'])} >> stream\n"
+            ).encode("ascii")
+            + provider_signature_image["data"]
+            + b"\nendstream endobj\n"
+        )
+        next_object_id += 1
+
+    xobject_resource = f" /XObject << {' '.join(image_resources)} >>" if image_resources else ""
+    objects.extend(
+        [
+            (
+                f"3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] "
+                f"/Resources << /Font << /F1 4 0 R >>{xobject_resource} >> /Contents 5 0 R >> endobj\n"
+            ).encode("ascii"),
+            b"4 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj\n",
+            f"5 0 obj << /Length {len(stream)} >> stream\n".encode("ascii") + stream + b"\nendstream endobj\n",
+        ]
+    )
 
     content = bytearray(b"%PDF-1.4\n")
     offsets = [0]
@@ -488,13 +672,23 @@ def normalize_payment_status(status):
 
 def serialize_review(review):
     client = User.query.get(review.client_id)
+    provider = User.query.get(review.provider_id) if getattr(review, "provider_id", None) else None
+    service = Service.query.get(review.service_id) if getattr(review, "service_id", None) else None
     return {
         "id": review.id,
         "rating": review.rating,
         "comment": review.comment or "",
         "client_id": review.client_id,
         "client_name": client.username if client else "Client",
+        "author": client.username if client else "Client",
+        "provider_id": review.provider_id,
+        "provider_name": provider.username if provider else "Prestataire",
+        "target": provider.username if provider else "Prestataire",
+        "service_id": review.service_id,
+        "service_name": service.title if service else "Service",
+        "status": str(getattr(review, "status", "published") or "published"),
         "created_at": review.created_at.isoformat() if review.created_at else None,
+        "createdAt": review.created_at.isoformat() if review.created_at else None,
     }
 
 
@@ -557,6 +751,70 @@ def send_provider_approval_email(recipient_email, provider_name):
                 f"<p><strong>Email de connexion :</strong> {recipient_email}</p>",
                 "<p><strong>Mot de passe :</strong> utilisez le mot de passe choisi lors de l'inscription.</p>",
                 f"<p><a href=\"{login_url}\">Acceder a la page de connexion</a></p>",
+                "<p>Merci,<br/>L'equipe 3arrasli</p>",
+                "</body></html>",
+            ]
+        ),
+        subtype="html",
+    )
+
+    try:
+        smtp_class = smtplib.SMTP_SSL if use_ssl else smtplib.SMTP
+        with smtp_class(smtp_host, smtp_port, timeout=20) as server:
+            if not use_ssl and use_tls:
+                server.starttls()
+            if smtp_user and smtp_password:
+                server.login(smtp_user, smtp_password)
+            server.send_message(message)
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def send_password_reset_code_email(recipient_email, recipient_name, reset_code):
+    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_port = int(os.getenv("SMTP_PORT", "587") or 587)
+    smtp_user = os.getenv("SMTP_USER", "").strip()
+    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
+    smtp_sender = os.getenv("SMTP_SENDER", smtp_user or "").strip()
+    use_tls = str(os.getenv("SMTP_USE_TLS", "true")).strip().lower() != "false"
+    use_ssl = str(os.getenv("SMTP_USE_SSL", "false")).strip().lower() == "true"
+
+    if not smtp_host or not smtp_sender:
+        return False, "Configuration SMTP manquante. Definissez SMTP_HOST et SMTP_SENDER."
+
+    login_url = f"{get_frontend_base_url()}/login"
+    message = EmailMessage()
+    message["Subject"] = "Code de reinitialisation 3arrasli"
+    message["From"] = smtp_sender
+    message["To"] = recipient_email
+    message.set_content(
+        "\n".join(
+            [
+                f"Bonjour {recipient_name},",
+                "",
+                "Nous avons recu une demande de reinitialisation de votre mot de passe 3arrasli.",
+                f"Votre code de reinitialisation est : {reset_code}",
+                f"Ce code expire dans {RESET_CODE_EXPIRY_MINUTES} minutes.",
+                f"Vous pouvez revenir ici pour finaliser la reinitialisation : {login_url}",
+                "",
+                "Si vous n'etes pas a l'origine de cette demande, ignorez simplement cet email.",
+                "",
+                "Merci,",
+                "L'equipe 3arrasli",
+            ]
+        )
+    )
+    message.add_alternative(
+        "\n".join(
+            [
+                "<html><body>",
+                f"<p>Bonjour {recipient_name},</p>",
+                "<p>Nous avons recu une demande de reinitialisation de votre mot de passe 3arrasli.</p>",
+                f"<p><strong>Votre code de reinitialisation :</strong> {reset_code}</p>",
+                f"<p>Ce code expire dans {RESET_CODE_EXPIRY_MINUTES} minutes.</p>",
+                f"<p><a href=\"{login_url}\">Revenir a la page de connexion</a></p>",
+                "<p>Si vous n'etes pas a l'origine de cette demande, ignorez simplement cet email.</p>",
                 "<p>Merci,<br/>L'equipe 3arrasli</p>",
                 "</body></html>",
             ]
@@ -692,6 +950,7 @@ def serialize_service(service, client_id=None):
         "images": gallery,
         "rating": service.rating,
         "status": service.status or "Actif",
+        "is_visible": bool(getattr(service, "is_visible", True)),
         "provider_id": provider_id,
         "prestataire_id": provider_id,
         "prestataire_name": prestataire.username if prestataire else "Prestataire",
@@ -707,6 +966,66 @@ def serialize_service(service, client_id=None):
         "created_at": service.created_at.isoformat() if service.created_at else None,
         "updated_at": service.updated_at.isoformat() if getattr(service, "updated_at", None) else None,
     }
+
+
+def serialize_provider_card(provider, services):
+    ordered_services = sorted(
+        [service for service in services if service],
+        key=lambda item: (str(item.category or item.type or "").lower(), str(item.title or "").lower()),
+    )
+    categories = []
+    for service in ordered_services:
+        category = str(service.category or service.type or "").strip()
+        if category and category.lower() not in {value.lower() for value in categories}:
+            categories.append(category)
+
+    primary_service = ordered_services[0] if ordered_services else None
+    primary_image = None
+    if primary_service:
+        gallery = getattr(primary_service, "images", []) or []
+        if gallery:
+            primary_image = gallery[0].image_path
+        else:
+            primary_image = primary_service.image or primary_service.image_url
+    visible_count = sum(1 for service in ordered_services if bool(getattr(service, "is_visible", True)))
+    hidden_count = max(len(ordered_services) - visible_count, 0)
+    serialized_services = [serialize_service(service) for service in ordered_services]
+    review_total = sum(int(service.get("review_count", 0) or 0) for service in serialized_services)
+    weighted_rating = sum(float(getattr(service, "rating", 0) or 0) for service in ordered_services)
+
+    return {
+        "id": provider.id,
+        "name": provider.username,
+        "service_type": categories[0] if categories else (provider.category or "Service"),
+        "service_types": categories,
+        "short_description": (provider.description or "").strip() or "Prestataire disponible pour votre mariage.",
+        "image": provider.profile_photo or primary_image,
+        "city": provider.city or (primary_service.city if primary_service else ""),
+        "service_count": len(ordered_services),
+        "visible_count": visible_count,
+        "hidden_count": hidden_count,
+        "average_rating": round(weighted_rating / len(ordered_services), 1) if ordered_services else 0,
+        "review_count": review_total,
+        "services": serialized_services,
+    }
+
+
+def build_provider_cards_from_services(services):
+    provider_services = {}
+    for service in services:
+        provider_id = get_service_provider_id(service)
+        if not provider_id:
+            continue
+        provider_services.setdefault(provider_id, []).append(service)
+
+    cards = []
+    for provider_id, grouped_services in provider_services.items():
+        provider = User.query.get(provider_id)
+        if not provider:
+            continue
+        cards.append(serialize_provider_card(provider, grouped_services))
+
+    return sorted(cards, key=lambda item: item["name"].lower())
 
 
 def serialize_reservation(reservation):
@@ -861,13 +1180,22 @@ def serialize_notification(notification):
     }
 
 
+def normalize_pack_response_status(value):
+    status = str(value or "").strip().lower()
+    if status == "declined":
+        return "refused"
+    if status in {"pending", "accepted", "refused"}:
+        return status
+    return "pending"
+
+
 def get_pack_status_from_items(items):
     normalized = list(items or [])
     if not normalized:
         return "pending"
-    if any(str(item.response_status or "").strip().lower() == "declined" for item in normalized):
+    if any(normalize_pack_response_status(item.response_status) == "refused" for item in normalized):
         return "needs-replacement"
-    if all(str(item.response_status or "").strip().lower() == "accepted" for item in normalized):
+    if all(normalize_pack_response_status(item.response_status) == "accepted" for item in normalized):
         return "validated"
     return "pending"
 
@@ -880,6 +1208,34 @@ def refresh_pack_status(pack):
         pack.status = next_status
         pack.updated_at = datetime.utcnow()
     return next_status
+
+
+def is_pack_expired(pack, reference_date=None):
+    if not pack or not getattr(pack, "expires_at", None):
+        return False
+    current_date = reference_date or datetime.utcnow().date()
+    return pack.expires_at < current_date
+
+
+def purge_expired_packs(commit=True):
+    today = datetime.utcnow().date()
+    expired_packs = Pack.query.filter(Pack.expires_at.isnot(None), Pack.expires_at < today).all()
+    if not expired_packs:
+        return []
+
+    expired_pack_ids = [pack.id for pack in expired_packs]
+    expired_item_ids = [item.id for pack in expired_packs for item in getattr(pack, "items", []) or []]
+    if expired_pack_ids:
+        Notification.query.filter(Notification.pack_id.in_(expired_pack_ids)).delete(synchronize_session=False)
+    if expired_item_ids:
+        Notification.query.filter(Notification.pack_item_id.in_(expired_item_ids)).delete(synchronize_session=False)
+
+    for pack in expired_packs:
+        db.session.delete(pack)
+
+    if commit:
+        db.session.commit()
+    return expired_pack_ids
 
 
 def serialize_pack_item(item):
@@ -897,7 +1253,7 @@ def serialize_pack_item(item):
         "providerEmail": provider.email if provider else "",
         "providerCity": provider.city if provider else "",
         "providerRole": provider.category if provider else item.service_category,
-        "providerStatus": item.response_status,
+        "providerStatus": normalize_pack_response_status(item.response_status),
         "serviceDetails": service_details,
         "invitedAt": item.invited_at.isoformat() if item.invited_at else None,
         "respondedAt": item.responded_at.isoformat() if item.responded_at else None,
@@ -909,12 +1265,15 @@ def serialize_pack(pack, include_items=True):
     validation_status = get_pack_status_from_items(getattr(pack, "items", []))
     provider_names = [item["providerName"] for item in items] if include_items else []
     service_names = [item["serviceCategory"] for item in items] if include_items else []
+    duration_label = pack.duration or (f"Jusqu'au {pack.expires_at.isoformat()}" if getattr(pack, "expires_at", None) else "")
     return {
         "id": pack.id,
         "name": pack.name,
         "description": pack.description or "",
         "price": pack.price,
-        "duration": pack.duration or "",
+        "duration": duration_label,
+        "expiresAt": pack.expires_at.isoformat() if getattr(pack, "expires_at", None) else None,
+        "isExpired": is_pack_expired(pack),
         "status": validation_status,
         "isVisibleToClient": validation_status == "validated",
         "services": ", ".join(service_names),
@@ -961,6 +1320,17 @@ def build_pack_provider_options():
 
 
 def create_pack_notification(provider_id, pack, pack_item):
+    existing_notification = Notification.query.filter_by(
+        user_id=provider_id,
+        type="pack_invitation",
+        pack_id=pack.id,
+        pack_item_id=pack_item.id,
+    ).first()
+    if existing_notification:
+        existing_notification.is_read = False
+        existing_notification.created_at = datetime.utcnow()
+        return existing_notification
+
     notification = Notification(
         user_id=provider_id,
         type="pack_invitation",
@@ -972,6 +1342,100 @@ def create_pack_notification(provider_id, pack, pack_item):
     )
     db.session.add(notification)
     return notification
+
+
+def create_admin_pack_response_notification(admin_id, pack, pack_item, provider_name, decision):
+    normalized_decision = normalize_pack_response_status(decision)
+    if normalized_decision not in {"accepted", "refused"}:
+        return None
+
+    action_label = "accepted" if normalized_decision == "accepted" else "refused"
+    action_message = "accepte" if normalized_decision == "accepted" else "refuse"
+    existing_notification = Notification.query.filter_by(
+        user_id=admin_id,
+        type=f"pack_response_{action_label}",
+        pack_id=pack.id,
+        pack_item_id=pack_item.id,
+        is_read=False,
+    ).first()
+    if existing_notification:
+        return existing_notification
+
+    notification = Notification(
+        user_id=admin_id,
+        type=f"pack_response_{action_label}",
+        title="Reponse a un pack",
+        message=f"{provider_name} a {action_message} le pack {pack.name}.",
+        pack_id=pack.id,
+        pack_item_id=pack_item.id,
+        is_read=False,
+    )
+    db.session.add(notification)
+    return notification
+
+
+def serialize_admin_appointment(appointment):
+    service = Service.query.get(appointment.service_id) if appointment.service_id else None
+    client = User.query.get(appointment.client_id) if appointment.client_id else None
+    provider = User.query.get(appointment.provider_id) if appointment.provider_id else None
+    normalized_status = str(appointment.status or "pending").strip().lower()
+    admin_status = "confirmed" if normalized_status == "accepted" else "cancelled" if normalized_status == "refused" else normalized_status
+    amount = float(getattr(service, "price", 0) or 0)
+    return {
+        "id": appointment.id,
+        "client": client.username if client else "Client",
+        "clientId": appointment.client_id,
+        "provider": provider.username if provider else "Prestataire",
+        "providerId": appointment.provider_id,
+        "service": service.title if service else "Service",
+        "serviceId": appointment.service_id,
+        "date": appointment.date.isoformat() if appointment.date else None,
+        "startTime": appointment.start_time,
+        "endTime": appointment.end_time,
+        "status": admin_status,
+        "rawStatus": normalized_status,
+        "amount": amount,
+        "message": appointment.message or "",
+        "createdAt": appointment.created_at.isoformat() if appointment.created_at else None,
+        "updatedAt": appointment.updated_at.isoformat() if getattr(appointment, "updated_at", None) else None,
+    }
+
+
+def serialize_admin_invoice(reservation):
+    client = User.query.get(reservation.client_id) if reservation.client_id else None
+    service = Service.query.get(reservation.service_id) if reservation.service_id else None
+    payment_status = normalize_payment_status(getattr(reservation, "payment_status", None)).lower()
+    invoice_number = f"INV-{reservation.id:05d}"
+    issued_at = reservation.created_at or reservation.updated_at
+    return {
+        "id": invoice_number,
+        "reservationId": reservation.id,
+        "client": client.username if client else "Client",
+        "service": service.title if service else "Service",
+        "amount": float(reservation.amount or 0),
+        "status": payment_status,
+        "issuedAt": issued_at.date().isoformat() if issued_at else None,
+        "pdfUrl": resolve_document_url(getattr(reservation, "invoice_path", None)),
+        "createdAt": reservation.created_at.isoformat() if reservation.created_at else None,
+        "updatedAt": reservation.updated_at.isoformat() if getattr(reservation, "updated_at", None) else None,
+    }
+
+
+def serialize_admin_chat_conversation(client, provider, messages):
+    ordered_messages = sorted(messages, key=lambda item: item.timestamp or datetime.utcnow())
+    latest_message = ordered_messages[-1] if ordered_messages else None
+    return {
+        "id": f"{client.id}-{provider.id}",
+        "clientId": client.id,
+        "providerId": provider.id,
+        "client": client.username,
+        "provider": provider.username,
+        "lastAt": format_chat_time(latest_message.timestamp) if latest_message else "--",
+        "lastTimestamp": latest_message.timestamp.isoformat() if latest_message and latest_message.timestamp else None,
+        "excerpt": latest_message.content if latest_message else "",
+        "messages": [serialize_provider_chat_message(message, provider.id) for message in ordered_messages],
+    }
+
 
 
 def serialize_message(message):
@@ -1238,6 +1702,10 @@ def ensure_user_schema():
         statements.append("ALTER TABLE users ADD COLUMN profile_photo TEXT NULL")
     if "cover_photo" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN cover_photo TEXT NULL")
+    if "reset_code" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN reset_code VARCHAR(12) NULL")
+    if "reset_code_expires_at" not in columns:
+        statements.append("ALTER TABLE users ADD COLUMN reset_code_expires_at DATETIME NULL")
     if "updated_at" not in columns:
         statements.append("ALTER TABLE users ADD COLUMN updated_at DATETIME NULL")
 
@@ -1292,6 +1760,8 @@ def ensure_service_schema():
         statements.append("ALTER TABLE services ADD COLUMN image TEXT NULL")
     if "status" not in columns:
         statements.append("ALTER TABLE services ADD COLUMN status VARCHAR(40) NULL")
+    if "is_visible" not in columns:
+        statements.append("ALTER TABLE services ADD COLUMN is_visible BOOLEAN NOT NULL DEFAULT 1")
     if "updated_at" not in columns:
         statements.append("ALTER TABLE services ADD COLUMN updated_at DATETIME NULL")
 
@@ -1344,6 +1814,14 @@ def ensure_service_schema():
                 "UPDATE services "
                 "SET status = 'Actif' "
                 "WHERE status IS NULL OR status = ''"
+            )
+        )
+    if "is_visible" in columns:
+        db.session.execute(
+            text(
+                "UPDATE services "
+                "SET is_visible = 1 "
+                "WHERE is_visible IS NULL"
             )
         )
     if "updated_at" in columns:
@@ -1472,6 +1950,26 @@ def ensure_review_schema():
     if "reviews" not in tables:
         return
 
+    columns = {column["name"] for column in inspector.get_columns("reviews")}
+    statements = []
+    if "status" not in columns:
+        statements.append("ALTER TABLE reviews ADD COLUMN status VARCHAR(40) NOT NULL DEFAULT 'published'")
+    if statements:
+        for statement in statements:
+            db.session.execute(text(statement))
+        db.session.commit()
+        columns = {column["name"] for column in inspect(db.engine).get_columns("reviews")}
+
+    if "status" in columns:
+        db.session.execute(
+            text(
+                "UPDATE reviews "
+                "SET status = COALESCE(NULLIF(status, ''), 'published') "
+                "WHERE status IS NULL OR status = ''"
+            )
+        )
+        db.session.commit()
+
     try:
         unique_constraints = inspector.get_unique_constraints("reviews")
     except Exception:
@@ -1530,6 +2028,8 @@ def ensure_pack_schema():
             statements.append("ALTER TABLE packs ADD COLUMN description TEXT NULL")
         if "duration" not in columns:
             statements.append("ALTER TABLE packs ADD COLUMN duration VARCHAR(120) NULL")
+        if "expires_at" not in columns:
+            statements.append("ALTER TABLE packs ADD COLUMN expires_at DATE NULL")
         if "status" not in columns:
             statements.append("ALTER TABLE packs ADD COLUMN status VARCHAR(40) NOT NULL DEFAULT 'pending'")
         if "created_by" not in columns:
@@ -1573,7 +2073,10 @@ def ensure_pack_schema():
         db.session.execute(
             text(
                 "UPDATE pack_items "
-                "SET response_status = COALESCE(NULLIF(response_status, ''), 'pending'), "
+                "SET response_status = CASE "
+                "WHEN response_status = 'declined' THEN 'refused' "
+                "ELSE COALESCE(NULLIF(response_status, ''), 'pending') "
+                "END, "
                 "service_category = COALESCE(NULLIF(service_category, ''), 'Service'), "
                 "invited_at = COALESCE(invited_at, updated_at, NOW()), "
                 "updated_at = COALESCE(updated_at, invited_at, NOW())"
@@ -1703,7 +2206,16 @@ def create_app():
     os.makedirs(app.config["INVOICE_UPLOAD_FOLDER"], exist_ok=True)
     os.makedirs(app.config["CONTRACT_UPLOAD_FOLDER"], exist_ok=True)
 
-    CORS(app, resources={r"/api/*": {"origins": "*"}, r"/login": {"origins": "*"}, r"/register": {"origins": "*"}})
+    CORS(
+        app,
+        resources={
+            r"/api/*": {"origins": "*"},
+            r"/login": {"origins": "*"},
+            r"/register": {"origins": "*"},
+            r"/forgot-password": {"origins": "*"},
+            r"/reset-password": {"origins": "*"},
+        },
+    )
 
     db.init_app(app)
     bcrypt.init_app(app)
@@ -2725,11 +3237,18 @@ def create_app():
                 "paid_amount": paid_amount,
                 "remaining_amount": max(total_amount - paid_amount, 0),
                 "has_client_signature": bool(getattr(contract_source, "client_signature", None)),
+                "client_signature": getattr(contract_source, "client_signature", None),
+                "provider_signature": getattr(contract_source, "provider_signature", None),
                 "contract_status": str(getattr(contract_source, "status", "") or "pending_provider_signature"),
                 "signed_at": (
                     contract_source.client_signed_at.isoformat()
                     if getattr(contract_source, "client_signed_at", None)
                     else datetime.utcnow().isoformat()
+                ),
+                "provider_signed_at": (
+                    contract_source.provider_signed_at.isoformat()
+                    if getattr(contract_source, "provider_signed_at", None)
+                    else ""
                 ),
             },
         )
@@ -3356,6 +3875,81 @@ def create_app():
         token = make_token(user.id, user.role)
         return jsonify({"success": True, "message": "Connexion reussie.", "token": token, "user": serialize_user(user)})
 
+    @app.post("/forgot-password")
+    def forgot_password():
+        payload = request.get_json(silent=True) or {}
+        email = str(payload.get("email") or "").strip().lower()
+
+        if not email:
+            return jsonify({"success": False, "message": "L'email est obligatoire."}), 400
+
+        user = User.query.filter(db.func.lower(User.email) == email).first()
+        if not user:
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Si un compte existe avec cet email, un code de reinitialisation a ete envoye.",
+                }
+            )
+
+        reset_code = f"{secrets.randbelow(1000000):06d}"
+        user.reset_code = reset_code
+        user.reset_code_expires_at = datetime.utcnow() + timedelta(minutes=RESET_CODE_EXPIRY_MINUTES)
+        user.updated_at = datetime.utcnow()
+
+        sent, error_message = send_password_reset_code_email(user.email, user.username, reset_code)
+        if not sent:
+            db.session.rollback()
+            return jsonify(
+                {
+                    "success": False,
+                    "message": f"Impossible d'envoyer l'email de reinitialisation. Detail: {error_message}",
+                }
+            ), 500
+
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Si un compte existe avec cet email, un code de reinitialisation a ete envoye.",
+            }
+        )
+
+    @app.post("/reset-password")
+    def reset_password():
+        payload = request.get_json(silent=True) or {}
+        email = str(payload.get("email") or "").strip().lower()
+        code = str(payload.get("code") or "").strip()
+        new_password = str(payload.get("newPassword") or "")
+
+        if not email or not code or not new_password:
+            return jsonify({"success": False, "message": "Email, code et nouveau mot de passe sont obligatoires."}), 400
+
+        if len(new_password) < 6:
+            return jsonify({"success": False, "message": "Le mot de passe doit contenir au moins 6 caracteres."}), 400
+
+        user = User.query.filter(db.func.lower(User.email) == email).first()
+        if not user or not user.reset_code or not user.reset_code_expires_at:
+            return jsonify({"success": False, "message": "Code de reinitialisation invalide."}), 400
+
+        if user.reset_code != code:
+            return jsonify({"success": False, "message": "Code de reinitialisation invalide."}), 400
+
+        if user.reset_code_expires_at < datetime.utcnow():
+            user.reset_code = None
+            user.reset_code_expires_at = None
+            user.updated_at = datetime.utcnow()
+            db.session.commit()
+            return jsonify({"success": False, "message": "Le code de reinitialisation a expire."}), 400
+
+        user.password = bcrypt.generate_password_hash(new_password).decode("utf-8")
+        user.reset_code = None
+        user.reset_code_expires_at = None
+        user.updated_at = datetime.utcnow()
+        db.session.commit()
+
+        return jsonify({"success": True, "message": "Votre mot de passe a ete reinitialise avec succes."})
+
     @app.get("/api/admin/providers")
     @auth_required(allowed_roles={"admin"})
     def list_admin_providers():
@@ -3403,6 +3997,167 @@ def create_app():
                 }
             )
         return jsonify({"success": True, "contracts": items})
+
+    @app.get("/api/admin/appointments")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_appointments():
+        appointments = (
+            Appointment.query.order_by(Appointment.date.desc(), Appointment.start_time.desc(), Appointment.id.desc()).all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "appointments": [serialize_admin_appointment(appointment) for appointment in appointments],
+            }
+        )
+
+    @app.get("/api/admin/invoices")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_invoices():
+        reservations = (
+            Reservation.query.order_by(Reservation.created_at.desc(), Reservation.id.desc()).all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "invoices": [serialize_admin_invoice(reservation) for reservation in reservations],
+            }
+        )
+
+    @app.get("/api/admin/reviews")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_reviews():
+        reviews = Review.query.order_by(Review.created_at.desc(), Review.id.desc()).all()
+        return jsonify(
+            {
+                "success": True,
+                "reviews": [serialize_review(review) for review in reviews],
+            }
+        )
+
+    @app.get("/api/admin/services")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_services():
+        services = (
+            Service.query.order_by(Service.updated_at.desc(), Service.id.desc()).all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "services": [serialize_service(service) for service in services],
+                "providerCards": build_provider_cards_from_services(services),
+            }
+        )
+
+    @app.patch("/api/admin/services/<int:service_id>")
+    @auth_required(allowed_roles={"admin"})
+    def update_admin_service(service_id):
+        service = Service.query.get(service_id)
+        if not service:
+            return jsonify({"success": False, "message": "Service introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        if "is_visible" not in payload:
+            return jsonify({"success": False, "message": "is_visible est requis."}), 400
+
+        service.is_visible = bool(payload.get("is_visible"))
+        service.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify(
+            {
+                "success": True,
+                "message": "Visibilite du service mise a jour avec succes.",
+                "service": serialize_service(service),
+            }
+        )
+
+    @app.patch("/api/admin/reviews/<int:review_id>")
+    @auth_required(allowed_roles={"admin"})
+    def update_admin_review(review_id):
+        review = Review.query.get(review_id)
+        if not review:
+            return jsonify({"success": False, "message": "Avis introuvable."}), 404
+
+        payload = request.get_json(silent=True) or {}
+        next_status = str(payload.get("status") or "").strip().lower()
+        if next_status not in {"published", "hidden", "flagged"}:
+            return jsonify({"success": False, "message": "Statut d'avis invalide."}), 400
+
+        review.status = next_status
+        review.updated_at = datetime.utcnow()
+        db.session.commit()
+        return jsonify({"success": True, "message": "Avis mis a jour avec succes.", "review": serialize_review(review)})
+
+    @app.delete("/api/admin/reviews/<int:review_id>")
+    @auth_required(allowed_roles={"admin"})
+    def delete_admin_review(review_id):
+        review = Review.query.get(review_id)
+        if not review:
+            return jsonify({"success": False, "message": "Avis introuvable."}), 404
+
+        service = Service.query.get(review.service_id) if review.service_id else None
+        db.session.delete(review)
+        db.session.commit()
+        if service:
+            update_service_rating(service)
+        return jsonify({"success": True, "message": "Avis supprime avec succes."})
+
+    @app.get("/api/admin/chats")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_chats():
+        messages = Message.query.order_by(Message.timestamp.asc(), Message.id.asc()).all()
+        grouped = {}
+        for message in messages:
+            sender = User.query.get(message.sender_id)
+            receiver = User.query.get(message.receiver_id)
+            if not sender or not receiver:
+                continue
+
+            if sender.role == "client" and receiver.role == "prestataire":
+                client = sender
+                provider = receiver
+            elif sender.role == "prestataire" and receiver.role == "client":
+                client = receiver
+                provider = sender
+            else:
+                continue
+
+            key = (client.id, provider.id)
+            grouped.setdefault(key, {"client": client, "provider": provider, "messages": []})
+            grouped[key]["messages"].append(message)
+
+        chats = [
+            serialize_admin_chat_conversation(payload["client"], payload["provider"], payload["messages"])
+            for payload in grouped.values()
+        ]
+        chats.sort(key=lambda item: item.get("lastTimestamp") or "", reverse=True)
+        return jsonify({"success": True, "conversations": chats})
+
+    @app.get("/api/admin/notifications")
+    @auth_required(allowed_roles={"admin"})
+    def list_admin_notifications():
+        notifications = (
+            Notification.query.filter_by(user_id=request.user_id, is_read=False)
+            .order_by(Notification.created_at.desc(), Notification.id.desc())
+            .all()
+        )
+        return jsonify(
+            {
+                "success": True,
+                "notifications": [serialize_notification(notification) for notification in notifications],
+            }
+        )
+
+    @app.patch("/api/admin/notifications/<int:notification_id>/read")
+    @auth_required(allowed_roles={"admin"})
+    def mark_admin_notification_read(notification_id):
+        notification = Notification.query.filter_by(id=notification_id, user_id=request.user_id).first()
+        if not notification:
+            return jsonify({"success": False, "message": "Notification introuvable."}), 404
+
+        notification.is_read = True
+        db.session.commit()
+        return jsonify({"success": True, "notification": serialize_notification(notification)})
 
     @app.get("/api/client/profile")
     @auth_required(allowed_roles={"client"})
@@ -3575,6 +4330,7 @@ def create_app():
     @app.get("/api/admin/packs")
     @auth_required(allowed_roles={"admin"})
     def list_admin_packs():
+        purge_expired_packs()
         packs = Pack.query.order_by(Pack.created_at.desc(), Pack.id.desc()).all()
         changed = False
         for pack in packs:
@@ -3599,6 +4355,7 @@ def create_app():
         name = str(payload.get("name") or "").strip()
         description = str(payload.get("description") or "").strip()
         duration = str(payload.get("duration") or "").strip()
+        expires_at = parse_date_value(payload.get("expires_at") or payload.get("expiresAt"))
         items_payload = payload.get("items") or []
 
         try:
@@ -3606,8 +4363,10 @@ def create_app():
         except (TypeError, ValueError):
             price = -1
 
-        if not name or price < 0 or not duration:
-            return jsonify({"success": False, "message": "Nom, prix et duree sont obligatoires."}), 400
+        if not name or price < 0 or not expires_at:
+            return jsonify({"success": False, "message": "Nom, prix et date de fin sont obligatoires."}), 400
+        if expires_at < datetime.utcnow().date():
+            return jsonify({"success": False, "message": "La date de fin du pack ne peut pas etre deja depassee."}), 400
         if not isinstance(items_payload, list) or not items_payload:
             return jsonify({"success": False, "message": "Ajoutez au moins un service au pack."}), 400
 
@@ -3615,7 +4374,8 @@ def create_app():
             name=name,
             description=description or None,
             price=price,
-            duration=duration,
+            duration=duration or None,
+            expires_at=expires_at,
             status="pending",
             created_by=request.user_id,
         )
@@ -3657,6 +4417,7 @@ def create_app():
     @app.patch("/api/admin/packs/<int:pack_id>")
     @auth_required(allowed_roles={"admin"})
     def update_admin_pack(pack_id):
+        purge_expired_packs()
         pack = Pack.query.get(pack_id)
         if not pack:
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
@@ -3665,6 +4426,7 @@ def create_app():
         name = str(payload.get("name") or "").strip()
         description = str(payload.get("description") or "").strip()
         duration = str(payload.get("duration") or "").strip()
+        expires_at = parse_date_value(payload.get("expires_at") or payload.get("expiresAt"))
         items_payload = payload.get("items") or []
 
         try:
@@ -3672,25 +4434,28 @@ def create_app():
         except (TypeError, ValueError):
             price = -1
 
-        if not name or price < 0 or not duration:
-            return jsonify({"success": False, "message": "Nom, prix et duree sont obligatoires."}), 400
+        if not name or price < 0 or not expires_at:
+            return jsonify({"success": False, "message": "Nom, prix et date de fin sont obligatoires."}), 400
+        if expires_at < datetime.utcnow().date():
+            return jsonify({"success": False, "message": "La date de fin du pack ne peut pas etre deja depassee."}), 400
         if not isinstance(items_payload, list) or not items_payload:
             return jsonify({"success": False, "message": "Ajoutez au moins un service au pack."}), 400
 
         pack.name = name
         pack.description = description or None
         pack.price = price
-        pack.duration = duration
+        pack.duration = duration or None
+        pack.expires_at = expires_at
         pack.updated_at = datetime.utcnow()
-
-        Notification.query.filter_by(pack_id=pack.id).delete(synchronize_session=False)
-        PackItem.query.filter_by(pack_id=pack.id).delete(synchronize_session=False)
-        db.session.flush()
+        existing_items = {item.id: item for item in list(getattr(pack, "items", []) or [])}
+        kept_item_ids = set()
+        now = datetime.utcnow()
 
         for item_payload in items_payload:
             service_category = str(item_payload.get("serviceCategory") or "").strip()
             service_id = item_payload.get("serviceId")
             provider_id = item_payload.get("providerId")
+            item_id = item_payload.get("id")
             service = Service.query.get(service_id) if service_id else None
             provider = User.query.filter_by(id=provider_id, role="prestataire").first() if provider_id else None
 
@@ -3702,17 +4467,50 @@ def create_app():
                 db.session.rollback()
                 return jsonify({"success": False, "message": "Le prestataire choisi ne correspond pas au service selectionne."}), 400
 
-            pack_item = PackItem(
-                pack_id=pack.id,
-                service_id=service.id,
-                provider_id=provider.id,
-                service_category=service_category,
-                response_status="pending",
-                invited_at=datetime.utcnow(),
-            )
-            db.session.add(pack_item)
-            db.session.flush()
-            create_pack_notification(provider.id, pack, pack_item)
+            pack_item = existing_items.get(int(item_id)) if item_id else None
+            if pack_item and pack_item.pack_id != pack.id:
+                pack_item = None
+
+            if pack_item:
+                kept_item_ids.add(pack_item.id)
+                assignment_changed = (
+                    int(pack_item.service_id or 0) != int(service.id)
+                    or int(pack_item.provider_id or 0) != int(provider.id)
+                    or str(pack_item.service_category or "").strip().lower() != service_category.lower()
+                )
+                if assignment_changed:
+                    Notification.query.filter_by(pack_item_id=pack_item.id).delete(synchronize_session=False)
+                    pack_item.service_id = service.id
+                    pack_item.provider_id = provider.id
+                    pack_item.service_category = service_category
+                    pack_item.response_status = "pending"
+                    pack_item.responded_at = None
+                    pack_item.invited_at = now
+                    pack_item.updated_at = now
+                    create_pack_notification(provider.id, pack, pack_item)
+                else:
+                    pack_item.service_category = service_category
+                    pack_item.updated_at = now
+            else:
+                pack_item = PackItem(
+                    pack_id=pack.id,
+                    service_id=service.id,
+                    provider_id=provider.id,
+                    service_category=service_category,
+                    response_status="pending",
+                    invited_at=now,
+                    updated_at=now,
+                )
+                db.session.add(pack_item)
+                db.session.flush()
+                kept_item_ids.add(pack_item.id)
+                create_pack_notification(provider.id, pack, pack_item)
+
+        for existing_item in existing_items.values():
+            if existing_item.id in kept_item_ids:
+                continue
+            Notification.query.filter_by(pack_item_id=existing_item.id).delete(synchronize_session=False)
+            db.session.delete(existing_item)
 
         refresh_pack_status(pack)
         db.session.commit()
@@ -3740,7 +4538,10 @@ def create_app():
         if replacement_category.lower() != str(pack_item.service_category or "").strip().lower():
             return jsonify({"success": False, "message": "Le remplacement doit garder le meme type de service."}), 400
 
-        Notification.query.filter_by(pack_item_id=pack_item.id, type="pack_invitation").delete(synchronize_session=False)
+        if int(pack_item.service_id or 0) == int(service.id) and int(pack_item.provider_id or 0) == int(provider.id):
+            return jsonify({"success": True, "message": "Aucun changement detecte pour cette ligne.", "pack": serialize_pack(pack_item.pack)})
+
+        Notification.query.filter_by(pack_item_id=pack_item.id).delete(synchronize_session=False)
         pack_item.service_id = service.id
         pack_item.provider_id = provider.id
         pack_item.service_category = replacement_category
@@ -3841,6 +4642,7 @@ def create_app():
     @app.get("/api/provider/packs")
     @auth_required(allowed_roles={"prestataire"})
     def list_provider_packs():
+        purge_expired_packs()
         items = (
             PackItem.query.filter_by(provider_id=request.user_id)
             .order_by(PackItem.invited_at.desc(), PackItem.id.desc())
@@ -3865,6 +4667,7 @@ def create_app():
     @app.get("/api/provider/packs/<int:pack_id>")
     @auth_required(allowed_roles={"prestataire"})
     def get_provider_pack(pack_id):
+        purge_expired_packs()
         pack_item = PackItem.query.filter_by(pack_id=pack_id, provider_id=request.user_id).first()
         if not pack_item:
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
@@ -3881,14 +4684,30 @@ def create_app():
     @app.patch("/api/provider/packs/<int:pack_id>/respond")
     @auth_required(allowed_roles={"prestataire"})
     def respond_provider_pack(pack_id):
+        purge_expired_packs()
         pack_item = PackItem.query.filter_by(pack_id=pack_id, provider_id=request.user_id).first()
         if not pack_item:
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
 
+        refresh_pack_status(pack_item.pack)
+        if str(getattr(pack_item.pack, "status", "") or "").strip().lower() == "validated":
+            db.session.commit()
+            return jsonify({"success": False, "message": "Ce pack est deja valide. Votre reponse ne peut plus etre modifiee."}), 409
+
         payload = request.get_json(silent=True) or {}
-        decision = str(payload.get("decision") or "").strip().lower()
-        if decision not in {"accepted", "declined"}:
+        decision = normalize_pack_response_status(payload.get("decision"))
+        if decision not in {"accepted", "refused"}:
             return jsonify({"success": False, "message": "Decision invalide."}), 400
+
+        previous_status = normalize_pack_response_status(pack_item.response_status)
+        if previous_status == decision:
+            return jsonify(
+                {
+                    "success": True,
+                    "message": "Votre reponse est deja enregistree.",
+                    "pack": serialize_pack(pack_item.pack),
+                }
+            )
 
         pack_item.response_status = decision
         pack_item.responded_at = datetime.utcnow()
@@ -3897,20 +4716,13 @@ def create_app():
 
         admin = User.query.filter_by(role="admin").order_by(User.id.asc()).first()
         provider = User.query.get(pack_item.provider_id) if pack_item.provider_id else None
-        if admin:
-            db.session.add(
-                Notification(
-                    user_id=admin.id,
-                    type="pack_response",
-                    title="Reponse a un pack",
-                    message=(
-                        f"{provider.username if provider else 'Un prestataire'} a "
-                        f"{'accepte' if decision == 'accepted' else 'refuse'} le pack {pack_item.pack.name}."
-                    ),
-                    pack_id=pack_item.pack_id,
-                    pack_item_id=pack_item.id,
-                    is_read=False,
-                )
+        if admin and previous_status != decision:
+            create_admin_pack_response_notification(
+                admin.id,
+                pack_item.pack,
+                pack_item,
+                provider.username if provider else "Un prestataire",
+                decision,
             )
 
         db.session.commit()
@@ -3925,6 +4737,7 @@ def create_app():
     @app.get("/api/client/packs")
     @auth_required(allowed_roles={"client"})
     def list_client_packs():
+        purge_expired_packs()
         packs = Pack.query.order_by(Pack.created_at.desc(), Pack.id.desc()).all()
         changed = False
         visible_packs = []
@@ -3932,7 +4745,7 @@ def create_app():
             previous = pack.status
             refresh_pack_status(pack)
             changed = changed or previous != pack.status
-            if pack.status == "validated":
+            if pack.status == "validated" and not is_pack_expired(pack):
                 visible_packs.append(pack)
         if changed:
             db.session.commit()
@@ -3955,11 +4768,16 @@ def create_app():
     @app.post("/api/client/packs/<int:pack_id>/reserve")
     @auth_required(allowed_roles={"client"})
     def reserve_client_pack(pack_id):
+        purge_expired_packs()
         pack = Pack.query.get(pack_id)
         if not pack:
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
 
         refresh_pack_status(pack)
+        if is_pack_expired(pack):
+            db.session.delete(pack)
+            db.session.commit()
+            return jsonify({"success": False, "message": "Ce pack a expire et n'est plus disponible."}), 409
         if pack.status != "validated":
             return jsonify({"success": False, "message": "Ce pack n'est pas encore valide pour reservation."}), 409
 
@@ -4418,7 +5236,7 @@ def create_app():
         service_type = (request.args.get("type") or "").strip().lower()
         q = (request.args.get("q") or "").strip().lower()
 
-        query = Service.query
+        query = Service.query.filter(Service.is_visible.is_(True))
         if provider_id:
             try:
                 provider_id_value = int(provider_id)
@@ -4467,8 +5285,77 @@ def create_app():
 
     @app.get("/api/public/services")
     def list_public_services():
-        services = Service.query.order_by(Service.rating.desc(), Service.title.asc()).all()
+        services = Service.query.filter(Service.is_visible.is_(True)).order_by(Service.rating.desc(), Service.title.asc()).all()
         return jsonify({"success": True, "services": [serialize_service(item) for item in services]})
+
+    @app.get("/api/providers")
+    @auth_required(allowed_roles={"client"})
+    def list_client_providers():
+        city = (request.args.get("city") or "").strip().lower()
+        provider_id = (request.args.get("provider_id") or "").strip()
+        min_price = request.args.get("min_price")
+        max_price = request.args.get("max_price")
+        service_type = (request.args.get("type") or "").strip().lower()
+        q = (request.args.get("q") or "").strip().lower()
+
+        query = Service.query.filter(Service.is_visible.is_(True))
+        if provider_id:
+            try:
+                provider_id_value = int(provider_id)
+            except ValueError:
+                return jsonify({"success": False, "message": "provider_id doit etre numerique."}), 400
+            query = query.filter(
+                db.or_(
+                    Service.provider_id == provider_id_value,
+                    Service.prestataire_id == provider_id_value,
+                )
+            )
+        if city:
+            query = query.filter(
+                db.or_(
+                    db.func.lower(Service.city) == city,
+                    Service.provider_id.in_(db.session.query(User.id).filter(db.func.lower(User.city) == city)),
+                    Service.prestataire_id.in_(db.session.query(User.id).filter(db.func.lower(User.city) == city)),
+                )
+            )
+        if service_type:
+            query = query.filter(
+                db.or_(
+                    db.func.lower(Service.type).contains(service_type),
+                    db.func.lower(Service.category).contains(service_type),
+                )
+            )
+        if q:
+            provider_ids = db.session.query(User.id).filter(
+                db.or_(
+                    db.func.lower(User.username).contains(q),
+                    db.func.lower(User.description).contains(q),
+                    db.func.lower(User.category).contains(q),
+                )
+            )
+            query = query.filter(
+                db.or_(
+                    db.func.lower(Service.title).contains(q),
+                    db.func.lower(Service.description).contains(q),
+                    db.func.lower(Service.type).contains(q),
+                    db.func.lower(Service.category).contains(q),
+                    Service.provider_id.in_(provider_ids),
+                    Service.prestataire_id.in_(provider_ids),
+                )
+            )
+        if min_price:
+            try:
+                query = query.filter(Service.price >= float(min_price))
+            except ValueError:
+                return jsonify({"success": False, "message": "min_price doit etre numerique."}), 400
+        if max_price:
+            try:
+                query = query.filter(Service.price <= float(max_price))
+            except ValueError:
+                return jsonify({"success": False, "message": "max_price doit etre numerique."}), 400
+
+        services = query.order_by(Service.rating.desc(), Service.title.asc()).all()
+        return jsonify({"success": True, "providers": build_provider_cards_from_services(services)})
 
     @app.get("/api/provider/services")
     @auth_required(allowed_roles={"prestataire"})
@@ -4613,7 +5500,7 @@ def create_app():
     @app.get("/api/services/<int:service_id>")
     @auth_required(allowed_roles={"client"})
     def get_service(service_id):
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
         provider_id = get_service_provider_id(service)
@@ -4632,10 +5519,71 @@ def create_app():
             }
         )
 
+    @app.get("/api/providers/<int:provider_id>")
+    @auth_required(allowed_roles={"client"})
+    def get_provider_public_profile(provider_id):
+        provider = User.query.get(provider_id)
+        if not provider or str(provider.role or "").strip().lower() != "prestataire":
+            return jsonify({"success": False, "message": "Prestataire introuvable."}), 404
+
+        services = (
+            Service.query.filter(
+                Service.is_visible.is_(True),
+                db.or_(
+                    Service.provider_id == provider_id,
+                    Service.prestataire_id == provider_id,
+                ),
+            )
+            .order_by(Service.rating.desc(), Service.updated_at.desc(), Service.id.desc())
+            .all()
+        )
+        if not services:
+            return jsonify({"success": False, "message": "Aucun service visible pour ce prestataire."}), 404
+
+        total_reviews = 0
+        rating_total = 0
+        for service in services:
+            review_summary = get_service_rating_summary(service.id)
+            total_reviews += review_summary["count"]
+            rating_total += float(service.rating or 0) * review_summary["count"]
+
+        average_rating = round(rating_total / total_reviews, 1) if total_reviews else round(float(services[0].rating or 0), 1)
+        primary_gallery = []
+        for service in services:
+            images = [
+                {"id": item.id, "image_path": item.image_path, "url": item.image_path}
+                for item in getattr(service, "images", [])
+            ]
+            if not images and (service.image or service.image_url):
+                images = [{"id": None, "image_path": service.image or service.image_url, "url": service.image or service.image_url}]
+            for image in images:
+                if image["image_path"] not in {entry["image_path"] for entry in primary_gallery}:
+                    primary_gallery.append(image)
+
+        return jsonify(
+            {
+                "success": True,
+                "provider": {
+                    "id": provider.id,
+                    "name": provider.username,
+                    "description": provider.description or "",
+                    "category": provider.category or (services[0].category if services else "Service"),
+                    "city": provider.city or (services[0].city if services else ""),
+                    "image": provider.profile_photo,
+                    "cover": provider.cover_photo,
+                    "services_count": len(services),
+                    "review_count": total_reviews,
+                    "rating": average_rating,
+                    "gallery": primary_gallery,
+                    "services": [serialize_service(service, request.user_id) for service in services],
+                },
+            }
+        )
+
     @app.get("/api/services/<int:service_id>/availability")
     @auth_required(allowed_roles={"client"})
     def get_service_availability(service_id):
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
@@ -4650,7 +5598,7 @@ def create_app():
     @app.get("/api/services/<int:service_id>/reviews")
     @auth_required(allowed_roles={"client"})
     def list_service_reviews(service_id):
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
         rating_summary = get_service_rating_summary(service.id)
@@ -4666,7 +5614,7 @@ def create_app():
     @app.post("/api/services/<int:service_id>/reviews")
     @auth_required(allowed_roles={"client"})
     def create_service_review(service_id):
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
@@ -4713,7 +5661,7 @@ def create_app():
         if not service_id or not date_value or not start_time_label:
             return jsonify({"success": False, "message": "service_id, date et start_time sont requis."}), 400
 
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
@@ -4789,7 +5737,7 @@ def create_app():
         if not service_id or not slot_date or not parse_time_value(start_time_label):
             return jsonify({"success": False, "message": "service_id, date et start_time sont requis."}), 400
 
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 
@@ -4846,7 +5794,10 @@ def create_app():
         favorites = Favorite.query.filter_by(user_id=request.user_id).order_by(Favorite.created_at.desc()).all()
         services_by_id = {
             service.id: service
-            for service in Service.query.filter(Service.id.in_([item.service_id for item in favorites])).all()
+            for service in Service.query.filter(
+                Service.id.in_([item.service_id for item in favorites]),
+                Service.is_visible.is_(True),
+            ).all()
         } if favorites else {}
         services = [services_by_id[item.service_id] for item in favorites if item.service_id in services_by_id]
         return jsonify(
@@ -4872,7 +5823,7 @@ def create_app():
         if not service_id:
             return jsonify({"success": False, "message": "service_id est requis."}), 400
 
-        service = Service.query.get(service_id)
+        service = Service.query.filter(Service.id == service_id, Service.is_visible.is_(True)).first()
         if not service:
             return jsonify({"success": False, "message": "Service introuvable."}), 404
 

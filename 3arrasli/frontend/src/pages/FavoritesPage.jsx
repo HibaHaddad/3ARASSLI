@@ -66,7 +66,7 @@ const FavoritesPage = () => {
               <ServiceCard
                 key={service.id}
                 service={{ ...service, is_favorite: true }}
-                onOpen={(selectedService) => navigate(`/client/provider/${selectedService.id}`)}
+                onOpen={(selectedService) => navigate(`/client/service/${selectedService.id}`)}
                 onFavorite={removeFavorite}
               />
             ))}

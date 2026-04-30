@@ -10,14 +10,42 @@ import "./auth.css";
 const LoginPage = () => {
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: "", password: "" });
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [resetForm, setResetForm] = useState({ email: "", code: "", newPassword: "", confirmPassword: "" });
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [pendingApprovalPopup, setPendingApprovalPopup] = useState("");
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [resetStep, setResetStep] = useState("request");
   const [loading, setLoading] = useState(false);
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
   const onChange = (event) => {
     const { name, value } = event.target;
     setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const openForgotPassword = () => {
+    setError("");
+    setMessage("");
+    setPendingApprovalPopup("");
+    setForgotEmail(form.email || "");
+    setResetForm({
+      email: form.email || "",
+      code: "",
+      newPassword: "",
+      confirmPassword: "",
+    });
+    setResetStep("request");
+    setForgotPasswordOpen(true);
+  };
+
+  const closeForgotPassword = () => {
+    setForgotPasswordOpen(false);
+    setForgotLoading(false);
+    setResetLoading(false);
+    setResetStep("request");
   };
 
   useEffect(() => {
@@ -66,6 +94,66 @@ const LoginPage = () => {
     }
   };
 
+  const onRequestResetCode = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    if (!forgotEmail.trim()) {
+      setError("Veuillez saisir votre email.");
+      return;
+    }
+
+    setForgotLoading(true);
+    try {
+      const response = await api.post("/forgot-password", { email: forgotEmail.trim() });
+      setMessage(response.data.message);
+      setResetForm((prev) => ({ ...prev, email: forgotEmail.trim() }));
+      setResetStep("reset");
+    } catch (err) {
+      setError(err.response?.data?.message || "Impossible d'envoyer le code de reinitialisation.");
+    } finally {
+      setForgotLoading(false);
+    }
+  };
+
+  const onResetPassword = async (event) => {
+    event.preventDefault();
+    setMessage("");
+    setError("");
+
+    if (!resetForm.email.trim() || !resetForm.code.trim() || !resetForm.newPassword || !resetForm.confirmPassword) {
+      setError("Veuillez remplir tous les champs de reinitialisation.");
+      return;
+    }
+
+    if (resetForm.newPassword.length < 6) {
+      setError("Le nouveau mot de passe doit contenir au moins 6 caracteres.");
+      return;
+    }
+
+    if (resetForm.newPassword !== resetForm.confirmPassword) {
+      setError("La confirmation du mot de passe ne correspond pas.");
+      return;
+    }
+
+    setResetLoading(true);
+    try {
+      const response = await api.post("/reset-password", {
+        email: resetForm.email.trim(),
+        code: resetForm.code.trim(),
+        newPassword: resetForm.newPassword,
+      });
+      setMessage(response.data.message);
+      setForm((prev) => ({ ...prev, email: resetForm.email.trim(), password: "" }));
+      closeForgotPassword();
+    } catch (err) {
+      setError(err.response?.data?.message || "Impossible de reinitialiser le mot de passe.");
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   return (
     <div className="auth-page">
       {pendingApprovalPopup ? (
@@ -86,6 +174,119 @@ const LoginPage = () => {
                 Compris
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {forgotPasswordOpen ? (
+        <div className="auth-popup-overlay" role="dialog" aria-modal="true" aria-label="Mot de passe oublie">
+          <div className="auth-popup-card auth-forgot-popup-card">
+            <h3>Mot de passe oublie</h3>
+            <p>
+              Recevez un code par email puis choisissez un nouveau mot de passe pour retrouver votre acces.
+            </p>
+
+            {resetStep === "request" ? (
+              <form className="auth-form auth-popup-form" onSubmit={onRequestResetCode}>
+                <div className="auth-field">
+                  <label htmlFor="forgot-email">Email</label>
+                  <input
+                    id="forgot-email"
+                    name="forgotEmail"
+                    type="email"
+                    placeholder="votre@email.com"
+                    value={forgotEmail}
+                    onChange={(event) => setForgotEmail(event.target.value)}
+                  />
+                </div>
+
+                <div className="auth-popup-actions auth-popup-actions-split">
+                  <button type="button" className="auth-btn auth-btn-ghost" onClick={closeForgotPassword}>
+                    Annuler
+                  </button>
+                  <button type="submit" className="auth-btn auth-btn-request" disabled={forgotLoading}>
+                    {forgotLoading ? (
+                      <>
+                        <Spinner /> Envoi...
+                      </>
+                    ) : (
+                      "Envoyer le code"
+                    )}
+                  </button>
+                </div>
+              </form>
+            ) : (
+              <form className="auth-form auth-popup-form" onSubmit={onResetPassword}>
+                <div className="auth-field">
+                  <label htmlFor="reset-email">Email</label>
+                  <input
+                    id="reset-email"
+                    name="email"
+                    type="email"
+                    value={resetForm.email}
+                    onChange={(event) => setResetForm((prev) => ({ ...prev, email: event.target.value }))}
+                  />
+                </div>
+
+                <div className="auth-field">
+                  <label htmlFor="reset-code">Code de reinitialisation</label>
+                  <input
+                    id="reset-code"
+                    name="code"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="000000"
+                    value={resetForm.code}
+                    onChange={(event) => setResetForm((prev) => ({ ...prev, code: event.target.value }))}
+                  />
+                </div>
+
+                <div className="auth-field-split">
+                  <div className="auth-field">
+                    <label htmlFor="new-password">Nouveau mot de passe</label>
+                    <input
+                      id="new-password"
+                      name="newPassword"
+                      type="password"
+                      placeholder="Minimum 6 caracteres"
+                      value={resetForm.newPassword}
+                      onChange={(event) => setResetForm((prev) => ({ ...prev, newPassword: event.target.value }))}
+                    />
+                  </div>
+
+                  <div className="auth-field">
+                    <label htmlFor="confirm-new-password">Confirmer le mot de passe</label>
+                    <input
+                      id="confirm-new-password"
+                      name="confirmPassword"
+                      type="password"
+                      placeholder="Retapez le mot de passe"
+                      value={resetForm.confirmPassword}
+                      onChange={(event) => setResetForm((prev) => ({ ...prev, confirmPassword: event.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                <div className="auth-popup-actions auth-popup-actions-split">
+                  <button
+                    type="button"
+                    className="auth-btn auth-btn-ghost"
+                    onClick={() => setResetStep("request")}
+                  >
+                    Retour
+                  </button>
+                  <button type="submit" className="auth-btn auth-btn-request" disabled={resetLoading}>
+                    {resetLoading ? (
+                      <>
+                        <Spinner /> Reinitialisation...
+                      </>
+                    ) : (
+                      "Mettre a jour le mot de passe"
+                    )}
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       ) : null}
@@ -148,6 +349,12 @@ const LoginPage = () => {
                   value={form.password}
                   onChange={onChange}
                 />
+              </div>
+
+              <div className="auth-inline-action">
+                <button type="button" className="auth-text-button" onClick={openForgotPassword}>
+                  Mot de passe oublie ?
+                </button>
               </div>
 
               <button type="submit" className="auth-btn" disabled={loading}>

@@ -21,6 +21,8 @@ class User(db.Model):
     description = db.Column(db.Text, nullable=True)
     profile_photo = db.Column(db.Text, nullable=True)
     cover_photo = db.Column(db.Text, nullable=True)
+    reset_code = db.Column(db.String(12), nullable=True)
+    reset_code_expires_at = db.Column(db.DateTime, nullable=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,
@@ -41,6 +43,7 @@ class Service(db.Model):
     category = db.Column(db.String(120), nullable=False)
     image = db.Column(db.Text, nullable=False)
     status = db.Column(db.String(40), nullable=False, default="Actif")
+    is_visible = db.Column(db.Boolean, nullable=False, default=True)
     city = db.Column(db.String(120), nullable=True)
     type = db.Column(db.String(120), nullable=True)
     image_url = db.Column(db.Text, nullable=True)
@@ -205,6 +208,7 @@ class Review(db.Model):
     provider_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     rating = db.Column(db.Integer, nullable=False)
     comment = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(40), nullable=False, default="published")
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     updated_at = db.Column(
         db.DateTime,
@@ -226,6 +230,7 @@ class Pack(db.Model):
     description = db.Column(db.Text, nullable=True)
     price = db.Column(db.Float, nullable=False, default=0)
     duration = db.Column(db.String(120), nullable=True)
+    expires_at = db.Column(db.Date, nullable=True, index=True)
     status = db.Column(db.String(40), nullable=False, default="pending")
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)
     created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)

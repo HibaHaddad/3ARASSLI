@@ -42,6 +42,13 @@ export const adminSections = [
     description: "Controlez les commentaires et la qualite des retours.",
   },
   {
+    id: "services",
+    icon: "services",
+    label: "Services",
+    title: "Catalogue prestataires",
+    description: "Consultez les services publies par chaque prestataire.",
+  },
+  {
     id: "packs",
     icon: "packs",
     label: "Packs",

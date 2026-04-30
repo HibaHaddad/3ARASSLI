@@ -18,18 +18,17 @@ const ClientSearchPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [filters, setFilters] = useState(() => getFiltersFromSearch(searchParams));
-  const [services, setServices] = useState([]);
+  const [providers, setProviders] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [message, setMessage] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
   const loadServices = async (nextFilters = filters) => {
     setLoading(true);
     setError("");
     try {
-      const response = await api.get("/api/services", { params: buildServiceParams(nextFilters) });
-      setServices(response.data.services || []);
+      const response = await api.get("/api/providers", { params: buildServiceParams(nextFilters) });
+      setProviders(response.data.providers || []);
     } catch (err) {
       setError(err.response?.data?.message || "Impossible de charger les services.");
     } finally {
@@ -45,28 +44,22 @@ const ClientSearchPage = () => {
   }, [searchParams]);
 
   useEffect(() => {
-    if (message) {
-      showToast("success", message);
-    }
-  }, [message]);
-
-  useEffect(() => {
     if (error) {
       showToast("error", error);
     }
   }, [error]);
 
-  const totalPages = Math.max(Math.ceil(services.length / SERVICES_PER_PAGE), 1);
+  const totalPages = Math.max(Math.ceil(providers.length / SERVICES_PER_PAGE), 1);
   const paginatedServices = useMemo(() => {
     const startIndex = (currentPage - 1) * SERVICES_PER_PAGE;
-    return services.slice(startIndex, startIndex + SERVICES_PER_PAGE);
-  }, [currentPage, services]);
+    return providers.slice(startIndex, startIndex + SERVICES_PER_PAGE);
+  }, [currentPage, providers]);
   const pageNumbers = useMemo(
     () => Array.from({ length: totalPages }, (_, index) => index + 1),
     [totalPages]
   );
-  const firstResultIndex = services.length === 0 ? 0 : (currentPage - 1) * SERVICES_PER_PAGE + 1;
-  const lastResultIndex = Math.min(currentPage * SERVICES_PER_PAGE, services.length);
+  const firstResultIndex = providers.length === 0 ? 0 : (currentPage - 1) * SERVICES_PER_PAGE + 1;
+  const lastResultIndex = Math.min(currentPage * SERVICES_PER_PAGE, providers.length);
 
   useEffect(() => {
     if (currentPage > totalPages) {
@@ -87,34 +80,6 @@ const ClientSearchPage = () => {
   const resetSearch = () => {
     setFilters({ q: "", city: "", budget: "", min_price: "", max_price: "", type: "", provider_id: "" });
     setSearchParams("");
-  };
-
-  const toggleFavorite = async (service) => {
-    setError("");
-    setMessage("");
-    try {
-      if (service.is_favorite && service.favorite_id) {
-        await api.delete(`/api/favorites/${service.favorite_id}`);
-        setServices((current) =>
-          current.map((item) =>
-            item.id === service.id ? { ...item, is_favorite: false, favorite_id: null } : item
-          )
-        );
-        setMessage("Service retire de vos favoris.");
-      } else {
-        const response = await api.post("/api/favorites", { service_id: service.id });
-        setServices((current) =>
-          current.map((item) =>
-            item.id === service.id
-              ? { ...item, is_favorite: true, favorite_id: response.data.favorite?.id }
-              : item
-          )
-        );
-        setMessage("Service ajoute a vos favoris.");
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || "Action favoris impossible.");
-    }
   };
 
   return (
@@ -191,11 +156,11 @@ const ClientSearchPage = () => {
           <div className="client-section-head">
             <div>
               <span className="section-kicker">Resultats</span>
-              <h2>{services.length} service(s) disponible(s)</h2>
+              <h2>{providers.length} prestataire(s) disponible(s)</h2>
             </div>
-            {services.length > 0 ? (
+            {providers.length > 0 ? (
               <p>
-                Affichage {firstResultIndex} - {lastResultIndex} sur {services.length}
+                Affichage {firstResultIndex} - {lastResultIndex} sur {providers.length}
               </p>
             ) : null}
           </div>
@@ -207,13 +172,13 @@ const ClientSearchPage = () => {
               <ServiceCard
                 key={service.id}
                 service={service}
-                onOpen={(selectedService) => navigate(`/client/provider/${selectedService.id}`)}
-                onFavorite={toggleFavorite}
+                cardType="provider"
+                onOpen={(selectedProvider) => navigate(`/client/provider/${selectedProvider.id}`)}
               />
             ))}
           </div>
 
-          {!loading && services.length > SERVICES_PER_PAGE ? (
+          {!loading && providers.length > SERVICES_PER_PAGE ? (
             <nav className="client-search-pagination" aria-label="Pagination des services">
               <button
                 type="button"
@@ -249,9 +214,9 @@ const ClientSearchPage = () => {
             </nav>
           ) : null}
 
-          {!loading && services.length === 0 ? (
+          {!loading && providers.length === 0 ? (
             <div className="client-empty-state">
-              <h3>Aucun service trouve.</h3>
+              <h3>Aucun prestataire trouve.</h3>
               <p>Essayez une autre ville, un budget plus large ou une autre categorie.</p>
             </div>
           ) : null}

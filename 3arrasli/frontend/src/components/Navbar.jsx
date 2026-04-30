@@ -61,7 +61,7 @@ const isLinkActive = (pathname, to) => {
   if (pathname === to) {
     return true;
   }
-  if (to === "/client/search" && pathname.startsWith("/client/provider/")) {
+  if (to === "/client/search" && (pathname.startsWith("/client/provider/") || pathname.startsWith("/client/service/"))) {
     return true;
   }
   return pathname.startsWith(`${to}/`);

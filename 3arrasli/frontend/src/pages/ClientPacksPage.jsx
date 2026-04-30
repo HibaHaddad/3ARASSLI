@@ -350,7 +350,7 @@ const ClientPacksPage = () => {
 
   const openServiceDetailsPage = (serviceId) => {
     closeServiceModal();
-    navigate(`/client/provider/${serviceId}`);
+    navigate(`/client/service/${serviceId}`);
   };
 
   const stripePromise = useMemo(

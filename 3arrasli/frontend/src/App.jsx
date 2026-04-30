@@ -10,6 +10,7 @@ import ClientDashboard from "./pages/ClientDashboard";
 import ClientProfilePage from "./pages/ClientProfilePage";
 import ClientPacksPage from "./pages/ClientPacksPage";
 import ClientProviderPage from "./pages/ClientProviderPage";
+import ClientProviderProfilePage from "./pages/ClientProviderProfilePage";
 import ClientReservationsPage from "./pages/ClientReservationsPage";
 import ClientSearchPage from "./pages/ClientSearchPage";
 import ConditionsPage from "./pages/ConditionsPage";
@@ -117,6 +118,14 @@ const App = () => {
           path="/client/provider/:id"
           element={
             <RequireRole role="Client">
+              <ClientProviderProfilePage />
+            </RequireRole>
+          }
+        />
+        <Route
+          path="/client/service/:id"
+          element={
+            <RequireRole role="Client">
               <ClientProviderPage />
             </RequireRole>
           }
@@ -125,7 +134,7 @@ const App = () => {
           path="/provider/:id"
           element={
             <RequireRole role="Client">
-              <ClientProviderPage />
+              <ClientProviderProfilePage />
             </RequireRole>
           }
         />

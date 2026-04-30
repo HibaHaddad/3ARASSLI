@@ -2462,7 +2462,8 @@
   background: rgba(224, 247, 228, 0.94);
 }
 
-.provider-pack-role-card.declined span {
+.provider-pack-role-card.declined span,
+.provider-pack-role-card.refused span {
   color: #8f3153;
   background: rgba(255, 231, 238, 0.94);
 }

@@ -2,7 +2,10 @@ import React from "react";
 
 const formatCurrency = (value) => `${Number(value || 0).toFixed(0)} TND`;
 
-const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, responding }) => (
+const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, responding }) => {
+  const packLocked = activePack?.status === "validated";
+
+  return (
   <article className="provider-panel provider-chat-shell provider-pack-shell">
     <div className="provider-chat-sidebar provider-pack-sidebar">
       <div className="provider-panel-head">
@@ -88,8 +91,8 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
                   className={`provider-pack-role-card ${
                     item.providerStatus === "accepted"
                       ? "accepted"
-                      : item.providerStatus === "declined"
-                        ? "declined"
+                      : item.providerStatus === "refused"
+                        ? "refused"
                         : ""
                   }`}
                 >
@@ -100,7 +103,7 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
                   <span>
                     {item.providerStatus === "accepted"
                       ? "Accepte"
-                      : item.providerStatus === "declined"
+                      : item.providerStatus === "refused"
                         ? "Refuse"
                         : "En attente"}
                   </span>
@@ -110,19 +113,22 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
           </div>
 
           <div className="provider-pack-actions">
+            {packLocked ? (
+              <p className="provider-form-note">Ce pack est valide. Les reponses des prestataires sont maintenant verrouillees.</p>
+            ) : null}
             <button
               type="button"
               className="provider-primary-btn"
-              disabled={responding}
+              disabled={responding || packLocked}
               onClick={() => onRespond(activePack.id, "accepted")}
             >
-              {responding ? "Traitement..." : "Accept"}
+              {responding ? "Traitement..." : "Accepter"}
             </button>
             <button
               type="button"
               className="provider-secondary-btn"
-              disabled={responding}
-              onClick={() => onRespond(activePack.id, "declined")}
+              disabled={responding || packLocked}
+              onClick={() => onRespond(activePack.id, "refused")}
             >
               Refuser
             </button>
@@ -131,6 +137,7 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
       )}
     </div>
   </article>
-);
+  );
+};
 
 export default ProviderPacks;
