@@ -276,7 +276,7 @@ const ClientReservationsPage = () => {
     <ClientPageLayout
       kicker="Reservations & paiement"
       title="Suivez vos confirmations, paiements et documents en un seul endroit."
-      description={`${paidCount} reservation(s) payee(s), ${reservations.length} reservation(s) au total.`}
+      description={`${paidCount} réservation(s) payee(s), ${reservations.length} réservation(s) au total.`}
     >
       <section className="client-section">
         <div className="client-shell">

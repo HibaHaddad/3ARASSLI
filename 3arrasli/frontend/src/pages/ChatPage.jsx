@@ -342,7 +342,7 @@ const ChatPage = () => {
     <ClientPageLayout
       kicker="Chat client"
       title="Conversations mariage."
-      description="Un fil de discussion naturel pour confirmer les details, poser vos questions et avancer sereinement."
+      description="Un fil de discussion naturel pour confirmer les détails, poser vos questions et avancer sereinement."
     >
       <section className="client-section">
         <div className="client-shell">

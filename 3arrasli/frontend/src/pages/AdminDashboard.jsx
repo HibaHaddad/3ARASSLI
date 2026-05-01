@@ -198,6 +198,34 @@ const defaultPackForm = {
 const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
 const isMobileSidebarViewport = () => window.innerWidth <= 980;
 const paginateRows = (rows, page, pageSize) => rows.slice((page - 1) * pageSize, page * pageSize);
+const normalizeAdminConversationsPayload = (payload) => {
+  const source =
+    payload?.conversations ||
+    payload?.chats ||
+    payload?.items ||
+    payload?.data?.conversations ||
+    payload?.data?.chats ||
+    [];
+
+  return (Array.isArray(source) ? source : []).map((conversation, index) => {
+    const messages = Array.isArray(conversation?.messages) ? conversation.messages : [];
+    return {
+      id: conversation?.id || `${conversation?.clientId || "client"}-${conversation?.providerId || index}`,
+      clientId: conversation?.clientId ?? null,
+      providerId: conversation?.providerId ?? null,
+      client: conversation?.client || "Client",
+      provider: conversation?.provider || "Prestataire",
+      lastAt: conversation?.lastAt || "--",
+      excerpt: conversation?.excerpt || "",
+      messages: messages.map((message, messageIndex) => ({
+        id: message?.id || `${conversation?.id || index}-${messageIndex}`,
+        author: message?.author === "provider" ? "provider" : "client",
+        text: message?.text || message?.content || "",
+        time: message?.time || "--",
+      })),
+    };
+  });
+};
 
 const buildPackExpiryNotifications = (packs, previousById) => {
   const today = new Date();
@@ -595,7 +623,7 @@ const AdminDashboard = () => {
     setChatsLoading(true);
     try {
       const response = await getAdminChats();
-      const nextConversations = response.conversations || [];
+      const nextConversations = normalizeAdminConversationsPayload(response);
       setConversations(nextConversations);
       setActiveConversationId((currentId) => {
         if (nextConversations.some((conversation) => conversation.id === currentId)) {
@@ -1432,25 +1460,26 @@ const AdminDashboard = () => {
     {
       key: "title",
       header: "Contrat",
-      width: "37%",
+      width: "30%",
       render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "client",
       header: "Client",
-      width: "21%",
+      width: "20%",
       render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "provider",
       header: "Prestataire",
-      width: "22%",
+      width: "20%",
       render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "status",
       header: "Statut",
-      width: "10%",
+      width: "15%",
+      cellClassName: "admin-contract-status-cell",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
@@ -1521,7 +1550,7 @@ const AdminDashboard = () => {
     {
       key: "services",
       header: "Services inclus",
-      width: "39%",
+      width: "36%",
       render: (_, row) => (
         <span className="admin-cell-wrap">
           {row.items?.map((item) => `${item.serviceCategory}: ${item.providerName}`).join(" • ") || row.services}
@@ -1531,7 +1560,8 @@ const AdminDashboard = () => {
     {
       key: "status",
       header: "Statut",
-      width: "8%",
+      width: "11%",
+      cellClassName: "admin-pack-status-cell",
       render: (value) => {
         return (
           <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
@@ -1890,7 +1920,7 @@ const AdminDashboard = () => {
             emptyMessage="Aucun contrat disponible."
             wrapClassName="admin-contracts-table-wrap"
             tableClassName="admin-data-table-contracts"
-            actionsColumnWidth="150px"
+            actionsColumnWidth="15%"
             pagination={{
               page: contractsPage,
               totalPages: Math.max(1, Math.ceil(filteredContracts.length / 5)),
@@ -1899,7 +1929,11 @@ const AdminDashboard = () => {
               onPageChange: setContractsPage,
             }}
             renderActions={(row) => (
-              <button type="button" className="provider-ghost-btn admin-action-btn-nowrap" onClick={() => openContractPdf(row)}>
+              <button
+                type="button"
+                className="provider-ghost-btn admin-action-btn-nowrap admin-contract-action-btn"
+                onClick={() => openContractPdf(row)}
+              >
                 voir contrat
               </button>
             )}
@@ -2152,18 +2186,21 @@ const AdminDashboard = () => {
     }
 
     return (
-      <section className="provider-panel">
-        <div className="provider-panel-head provider-panel-head-inline">
-          <div>
-            <h3>Chat Supervision</h3>
-            <p>Lecture seule des conversations client-prestataire.</p>
+        <section className="provider-panel">
+          <div className="provider-panel-head provider-panel-head-inline">
+            <div>
+              <h3>Chat Supervision</h3>
+              <p>Lecture seule des conversations client-prestataire.</p>
+            </div>
+            <button type="button" className="provider-ghost-btn" onClick={() => loadConversations()}>
+              Actualiser
+            </button>
           </div>
-        </div>
 
         {chatsLoading ? (
           <div className="admin-status-card">Chargement des conversations...</div>
         ) : conversations.length === 0 ? (
-          <div className="admin-status-card">Aucune conversation a superviser.</div>
+          <div className="admin-status-card">Aucune conversation à superviser.</div>
         ) : (
           <div className="admin-chat-supervision">
             <section className="admin-chat-panel admin-chat-conversations-panel">
@@ -2230,7 +2267,7 @@ const AdminDashboard = () => {
               </div>
               <div className="provider-chat-messages admin-chat-messages-panel">
                 {activeConversation ? (
-                  activeConversation.messages.map((message) => (
+                  (activeConversation.messages || []).map((message) => (
                     <div
                       key={message.id}
                       className={`provider-message-bubble ${

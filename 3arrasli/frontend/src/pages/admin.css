@@ -1545,10 +1545,10 @@
 .admin-data-table-contracts td {
   overflow-wrap: break-word;
   word-break: normal;
-  padding: 10px 12px;
+  padding: 12px;
   font-size: 0.95rem;
-  line-height: 1.5;
-  vertical-align: top;
+  line-height: 1.45;
+  vertical-align: middle;
 }
 
 .admin-data-table-contracts td:nth-child(4) .admin-chip {
@@ -1571,6 +1571,19 @@
 .admin-data-table-contracts th:last-child,
 .admin-data-table-contracts td:last-child {
   white-space: nowrap;
+}
+
+.admin-data-table-contracts .admin-table-actions {
+  justify-content: flex-end;
+}
+
+.admin-contract-status-cell {
+  text-align: center;
+}
+
+.admin-contract-action-btn {
+  width: auto;
+  min-width: 132px;
 }
 
 .admin-cell-tight {
@@ -1621,6 +1634,10 @@
   vertical-align: top;
 }
 
+.admin-data-table-packs th:nth-child(5) {
+  white-space: nowrap;
+}
+
 .admin-data-table-packs td:nth-child(1) {
   white-space: nowrap;
   overflow: hidden;
@@ -1647,6 +1664,11 @@
   gap: 10px;
   flex-wrap: nowrap;
   width: 100%;
+}
+
+.admin-pack-status-cell {
+  text-align: center;
+  vertical-align: middle !important;
 }
 
 .admin-pack-name-cell {

@@ -140,7 +140,7 @@ const Home = ({ onLogoClick }) => {
               <h1 className="hero-title">Le plus beau debut pour imaginer un mariage inoubliable.</h1>
               <p className="hero-text">
                 Explorez une selection de prestataires raffines, composez une experience
-                romantique et donnez a votre grand jour un rendu elegant, fluide et memorablement
+                romantique et donnez à votre grand jour un rendu elegant, fluide et memorablement
                 moderne.
               </p>
 
@@ -160,7 +160,7 @@ const Home = ({ onLogoClick }) => {
               <div className="hero-editorial-card mini-card">
                 <span className="mini-card-label">Wedding mood</span>
                 <p>
-                  Des inspirations douces, un rythme plus fluide et une interface pensee comme une
+                  Des inspirations douces, un rythme plus fluide et une interface pensée comme une
                   vraie landing page luxe.
                 </p>
               </div>
@@ -199,8 +199,8 @@ const Home = ({ onLogoClick }) => {
             <span className="section-kicker">Comment ca marche</span>
             <h2>Un parcours plus visuel, plus rassurant et plus vivant</h2>
             <p>
-              Chaque etape est mise en scene comme un bloc fort pour guider l'utilisateur avec
-              clarte et sophistication.
+              Chaque étape est mise en scene comme un bloc fort pour guider l'utilisateur avec
+              clarté et sophistication.
             </p>
           </div>
 
@@ -229,10 +229,10 @@ const Home = ({ onLogoClick }) => {
           <div className="cta-panel">
             <div className="cta-copy">
               <span className="section-kicker section-kicker-light">Grand jour, grande allure</span>
-              <h2>Transformez vos idees en une celebration elegante et parfaitement rythmee.</h2>
+              <h2>Transformez vos idées en une célébration elegante et parfaitement rythmée.</h2>
               <p>
-                Lancez votre recherche, composez votre selection et donnez a votre mariage une
-                signature plus premium des le premier clic.
+                Lancez votre recherche, composez votre sélection et donnez à votre mariage une
+                signature plus premium dés le premier clic.
               </p>
             </div>
 
@@ -256,7 +256,7 @@ const Home = ({ onLogoClick }) => {
             <div>
               <h3>3arrasli</h3>
               <p>
-                Votre marketplace mariage en Tunisie, imaginee pour les couples a la recherche
+                Votre marketplace mariage en Tunisie, imaginée pour les couples à la recherche
                 d'une experience plus chic, plus contemporaine et plus rassurante.
               </p>
             </div>

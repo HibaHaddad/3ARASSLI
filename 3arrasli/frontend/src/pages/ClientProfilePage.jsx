@@ -146,7 +146,7 @@ const ClientProfilePage = () => {
 
   return (
     <ClientPageLayout
-      kicker="Profil client"
+      kicker="Profile client"
       title={`${firstName} espace personnel`}
       description="Mettez a jour vos coordonnees, votre photo et votre univers pour garder un compte client plus complet et plus elegant."
     >
@@ -159,7 +159,7 @@ const ClientProfilePage = () => {
               <aside className="client-profile-showcase">
                 <div className="client-profile-avatar-frame">
                   {profilePreview ? (
-                    <img src={profilePreview} alt={form.name || "Photo profil client"} />
+                    <img src={profilePreview} alt={form.name || "Photo de profile client"} />
                   ) : (
                     <div className="client-profile-avatar-empty">
                       {(form.name || "C").slice(0, 1).toUpperCase()}
@@ -168,7 +168,7 @@ const ClientProfilePage = () => {
                 </div>
                 <span className="client-section-label">Compte client</span>
                 <h2>{form.name || "Client 3arrasli"}</h2>
-                <p>{form.description || "Ajoutez une petite presentation pour personnaliser votre profil client."}</p>
+                <p>{form.description || "Ajoutez une petite presentation pour personnaliser votre profile client."}</p>
 
                 <div className="client-profile-pills">
                   <span>{form.city || "Ville a renseigner"}</span>
@@ -181,7 +181,7 @@ const ClientProfilePage = () => {
                 <div className="client-section-head client-profile-head">
                   <div>
                     <span className="section-kicker">Edition</span>
-                    <h2>Modifier mon profil</h2>
+                    <h2>Modifier mon profile</h2>
                   </div>
                   
                 </div>
@@ -214,7 +214,7 @@ const ClientProfilePage = () => {
                 </div>
 
                 <label className="client-field">
-                  <span>Photo de profil</span>
+                  <span>Photo de profile</span>
                   <div className="client-file-upload">
                     <input
                       id={profileFileInputId}

@@ -149,101 +149,105 @@ const Navbar = ({
           </span>
           <span className="auth-logo-copy">
             <strong>3arrasli.tn</strong>
-            <span>Wedding marketplace</span>
+            <span>
+              Wedding
+              <br />
+              Marketplace
+            </span>
           </span>
         </Link>
 
         <nav className="auth-nav-shell">
-          {hasRole(user, "Prestataire") ? (
-            <NotificationMenu
-              notifications={providerNotifications}
-              loading={providerNotificationsLoading}
-              error={providerNotificationsError}
-              title="Notifications prestataire"
-              emptyText="Aucune notification prestataire."
-              onNotificationClick={onProviderNotificationClick}
-            />
-          ) : null}
+          <div className="auth-nav-links">
+            {hasRole(user, "Prestataire") ? (
+              <NotificationMenu
+                notifications={providerNotifications}
+                loading={providerNotificationsLoading}
+                error={providerNotificationsError}
+                title="Notifications prestataire"
+                emptyText="Aucune notification prestataire."
+                onNotificationClick={onProviderNotificationClick}
+              />
+            ) : null}
 
-          {hasRole(user, "Admin") ? (
-            <div className="admin-notifications auth-admin-notifications">
-              <button
-                type="button"
-                className={`admin-notification-trigger ${notificationsOpen ? "active" : ""}`}
-                onClick={() => {
-                  setNotificationsOpen((prev) => !prev);
-                }}
-                aria-label={notificationLabel}
-                aria-expanded={notificationsOpen}
-              >
-                <span className="admin-notification-bell" aria-hidden="true">
-                  <BellIcon />
-                </span>
-                {unreadCount > 0 ? (
-                  <span className="admin-notification-count">{unreadCount}</span>
-                ) : null}
-              </button>
+            {hasRole(user, "Admin") ? (
+              <div className="admin-notifications auth-admin-notifications">
+                <button
+                  type="button"
+                  className={`admin-notification-trigger ${notificationsOpen ? "active" : ""}`}
+                  onClick={() => {
+                    setNotificationsOpen((prev) => !prev);
+                  }}
+                  aria-label={notificationLabel}
+                  aria-expanded={notificationsOpen}
+                >
+                  <span className="admin-notification-bell" aria-hidden="true">
+                    <BellIcon />
+                  </span>
+                  {unreadCount > 0 ? (
+                    <span className="admin-notification-count">{unreadCount}</span>
+                  ) : null}
+                </button>
 
-              {notificationsOpen ? (
-                <div className="admin-notification-panel">
-                  <div className="admin-notification-panel-head">
-                    <strong>Notifications</strong>
-                    <span>{notificationLabel}</span>
-                  </div>
+                {notificationsOpen ? (
+                  <div className="admin-notification-panel">
+                    <div className="admin-notification-panel-head">
+                      <strong>Notifications</strong>
+                      <span>{notificationLabel}</span>
+                    </div>
 
-                  {notifications.length === 0 ? (
-                    <p className="admin-notification-empty">Aucune notification pour le moment.</p>
-                  ) : (
-                    <div className="admin-notification-list">
-                      {notifications.map((notification) => (
-                        <div
-                          key={notification.id}
-                          className={`admin-notification-item ${notification.type} ${notification.seen ? "" : "unread"}`}
-                          role="button"
-                          tabIndex={0}
-                          onClick={() => {
-                            onNotificationClick?.(notification);
-                            setNotificationsOpen(false);
-                          }}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
+                    {notifications.length === 0 ? (
+                      <p className="admin-notification-empty">Aucune notification pour le moment.</p>
+                    ) : (
+                      <div className="admin-notification-list">
+                        {notifications.map((notification) => (
+                          <div
+                            key={notification.id}
+                            className={`admin-notification-item ${notification.type} ${notification.seen ? "" : "unread"}`}
+                            role="button"
+                            tabIndex={0}
+                            onClick={() => {
                               onNotificationClick?.(notification);
                               setNotificationsOpen(false);
-                            }
-                          }}
-                        >
-                          <div className="admin-notification-item-accent" aria-hidden="true" />
-                          <div className="admin-notification-item-body">
-                            <div className="admin-notification-item-meta">
-                              <span className="admin-notification-item-tag">
-                                {notification.seen ? "Lu" : "Non lu"}
-                              </span>
-                              <time>{notification.dateLabel || "A l'instant"}</time>
-                            </div>
-                            <strong>{notification.title || "Notification admin"}</strong>
-                            <p>{notification.message}</p>
-                          </div>
-                          <button
-                            type="button"
-                            className="provider-ghost-btn admin-toast-close"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              onDismissNotification?.(notification.id);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                onNotificationClick?.(notification);
+                                setNotificationsOpen(false);
+                              }
                             }}
                           >
-                            Fermer
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+                            <div className="admin-notification-item-accent" aria-hidden="true" />
+                            <div className="admin-notification-item-body">
+                              <div className="admin-notification-item-meta">
+                                <span className="admin-notification-item-tag">
+                                  {notification.seen ? "Lu" : "Non lu"}
+                                </span>
+                                <time>{notification.dateLabel || "A l'instant"}</time>
+                              </div>
+                              <strong>{notification.title || "Notification admin"}</strong>
+                              <p>{notification.message}</p>
+                            </div>
+                            <button
+                              type="button"
+                              className="provider-ghost-btn admin-toast-close"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                onDismissNotification?.(notification.id);
+                              }}
+                            >
+                              Fermer
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
 
-          <div className="auth-nav-links">
             {links.map((link) => (
               link.to ? (
                 <Link

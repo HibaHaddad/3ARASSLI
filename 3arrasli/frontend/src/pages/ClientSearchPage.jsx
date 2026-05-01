@@ -85,8 +85,8 @@ const ClientSearchPage = () => {
   return (
     <ClientPageLayout
       kicker="Marketplace mariage"
-      title="Recherchez les prestataires qui correspondent a votre journee."
-      description="Filtrez par ville, budget et type de service, puis ouvrez chaque fiche dans sa page dediee."
+      title="Recherchez les prestataires qui correspondent a votre journée."
+      description="Filtrez par ville, budget et type de service, puis ouvrez chaque fiche dans sa page dediée."
     >
       <section className="client-section client-search-top-section">
         <div className="client-shell">
@@ -143,7 +143,7 @@ const ClientSearchPage = () => {
                   Rechercher
                 </button>
                 <button type="button" className="client-btn client-btn-ghost" onClick={resetSearch}>
-                  Reinitialiser
+                  Réinitialiser
                 </button>
               </div>
             </div>

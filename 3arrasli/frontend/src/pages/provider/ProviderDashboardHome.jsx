@@ -189,7 +189,7 @@ const ProviderDashboardHome = ({
               <p>Vos prochaines dates libres et occupees.</p>
             </div>
             <button type="button" className="provider-ghost-btn" onClick={() => onGoToSection("calendar")}>
-              Gerer
+              Gérer
             </button>
           </div>
 

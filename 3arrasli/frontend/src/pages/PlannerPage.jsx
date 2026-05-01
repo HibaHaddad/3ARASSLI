@@ -107,13 +107,13 @@ const PlannerPage = () => {
     <ClientPageLayout
       kicker="Wedding planner"
       title="Votre planner mariage"
-      description="Suivez vos priorites, cochez les etapes importantes et gardez une vue claire sur l'avancement de votre organisation."
+      description="Suivez vos priorités, cochez les étapes importantes et gardez une vue claire sur l'avancement de votre organisation."
     >
       <section className="client-section client-planner-section">
         <div className="client-shell client-planner-layout">
           <div className="client-planner-copy">
             <span className="section-kicker">Checklist</span>
-            <h2>Une preparation plus claire et plus elegante.</h2>
+            <h2>Une préparation plus claire et plus élegante.</h2>
             <p>Ajoutez vos taches, filtrez l'avancement et gardez toujours sous les yeux ce qu'il reste a boucler.</p>
 
             <div className="client-planner-stats">
