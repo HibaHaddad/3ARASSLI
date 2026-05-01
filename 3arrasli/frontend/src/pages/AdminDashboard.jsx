@@ -18,7 +18,7 @@ import {
   updateAdminService,
   updateAdminReview,
 } from "../services/adminDashboard";
-import { createAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
+import { createAdminPack, deleteAdminPack, getAdminPacks, updateAdminPack } from "../services/adminPacks";
 import { adminSections } from "./admin/adminData";
 import "./provider.css";
 import "./admin.css";
@@ -157,6 +157,7 @@ const statusLabels = {
   hidden: "Masque",
   validated: "Valide",
   "needs-replacement": "A remplacer",
+  expired: "Expire",
 };
 
 const statusClass = (status) => {
@@ -190,15 +191,58 @@ const defaultPackForm = {
   name: "",
   description: "",
   price: "",
-  duration: "",
   expiresAt: "",
   items: [{ id: null, serviceCategory: "", serviceId: "", providerId: "", providerStatus: "pending" }],
 };
 
 const ADMIN_NOTIFICATIONS_STORAGE_KEY = "arrasli_admin_notifications";
 const isMobileSidebarViewport = () => window.innerWidth <= 980;
+const paginateRows = (rows, page, pageSize) => rows.slice((page - 1) * pageSize, page * pageSize);
 
-const mergeAdminNotifications = (systemNotifications, pendingProviders, previousNotifications) => {
+const buildPackExpiryNotifications = (packs, previousById) => {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  return (packs || [])
+    .map((pack) => {
+      const rawExpiresAt = pack.expiresAt || pack.expires_at;
+      if (!rawExpiresAt) {
+        return null;
+      }
+
+      const expiresAt = new Date(rawExpiresAt);
+      if (Number.isNaN(expiresAt.getTime())) {
+        return null;
+      }
+
+      expiresAt.setHours(0, 0, 0, 0);
+      const diffDays = Math.round((expiresAt.getTime() - today.getTime()) / 86400000);
+      if (diffDays > 2) {
+        return null;
+      }
+
+      const isExpired = diffDays < 0;
+      const notificationId = `pack-expiry-${pack.id}-${isExpired ? "expired" : "soon"}`;
+      const existing = previousById.get(notificationId);
+
+      return {
+        id: notificationId,
+        type: isExpired ? "pack-expired" : "pack-expiring",
+        seen: existing?.seen ?? false,
+        title: isExpired ? "Pack expire a prolonger" : "Pack bientot expire",
+        message: isExpired
+          ? `${pack.name} a expire le ${formatAppointmentDate(rawExpiresAt)}. Pensez a prolonger sa date de fin.`
+          : `${pack.name} expire le ${formatAppointmentDate(rawExpiresAt)}. Pensez a prolonger sa date de fin.`,
+        packId: pack.id,
+        packName: pack.name,
+        dateLabel: formatNotificationDate(rawExpiresAt),
+        createdAt: pack.updatedAt || pack.createdAt || rawExpiresAt,
+      };
+    })
+    .filter(Boolean);
+};
+
+const mergeAdminNotifications = (systemNotifications, pendingProviders, packs, previousNotifications) => {
   const previousById = new Map((previousNotifications || []).map((item) => [item.id, item]));
   const providerNotifications = pendingProviders.map((provider) => {
     const notificationId = `provider-request-${provider.id}`;
@@ -234,7 +278,9 @@ const mergeAdminNotifications = (systemNotifications, pendingProviders, previous
     };
   });
 
-  return [...providerNotifications, ...backendNotifications].sort(
+  const packExpiryNotifications = buildPackExpiryNotifications(packs, previousById);
+
+  return [...providerNotifications, ...packExpiryNotifications, ...backendNotifications].sort(
     (left, right) => new Date(right.createdAt || 0).getTime() - new Date(left.createdAt || 0).getTime()
   );
 };
@@ -268,8 +314,16 @@ const AdminDashboard = () => {
   const [providerSearch, setProviderSearch] = useState("");
   const [providerStatusFilter, setProviderStatusFilter] = useState("all");
   const [appointmentStatusFilter, setAppointmentStatusFilter] = useState("all");
+  const [contractSearch, setContractSearch] = useState("");
+  const [invoiceSearch, setInvoiceSearch] = useState("");
+  const [invoiceStatusFilter, setInvoiceStatusFilter] = useState("all");
+  const [packSearch, setPackSearch] = useState("");
+  const [packStatusFilter, setPackStatusFilter] = useState("all");
   const [chatSearch, setChatSearch] = useState("");
   const [chatProviderFilter, setChatProviderFilter] = useState("all");
+  const [contractsPage, setContractsPage] = useState(1);
+  const [billingPage, setBillingPage] = useState(1);
+  const [packsPage, setPacksPage] = useState(1);
 
   const [providerModalOpen, setProviderModalOpen] = useState(false);
   const [providerDetails, setProviderDetails] = useState(null);
@@ -339,8 +393,8 @@ const AdminDashboard = () => {
     });
   };
 
-  const syncProviderNotifications = (pendingProviders, systemNotifications = []) => {
-    setAdminNotifications((prev) => mergeAdminNotifications(systemNotifications, pendingProviders, prev));
+  const syncProviderNotifications = (pendingProviders, nextPacks = packs, systemNotifications = []) => {
+    setAdminNotifications((prev) => mergeAdminNotifications(systemNotifications, pendingProviders, nextPacks, prev));
   };
 
   const dismissNotification = (id) => {
@@ -363,6 +417,8 @@ const AdminDashboard = () => {
       setActiveSection("packs");
     } else if (notification.appointmentId || notification.target?.kind === "appointment") {
       setActiveSection("appointments");
+    } else if (notification.packId || String(notification.type || "").startsWith("pack-")) {
+      setActiveSection("packs");
     } else {
       setActiveSection("providers");
     }
@@ -372,12 +428,12 @@ const AdminDashboard = () => {
   };
 
   const loadAdminNotifications = async (options = {}) => {
-    const { silent = false, pendingProviders = null } = options;
+    const { silent = false, pendingProviders = null, nextPacks = packs } = options;
     try {
       const response = await getAdminNotifications();
       const nextPendingProviders =
         pendingProviders || providers.filter((provider) => provider.status === "pending-approval");
-      syncProviderNotifications(nextPendingProviders, response.notifications || []);
+      syncProviderNotifications(nextPendingProviders, nextPacks, response.notifications || []);
       return response.notifications || [];
     } catch (error) {
       if (!silent) {
@@ -519,8 +575,10 @@ const AdminDashboard = () => {
     setPacksLoading(true);
     try {
       const response = await getAdminPacks();
-      setPacks(response.packs || []);
+      const nextPacks = response.packs || [];
+      setPacks(nextPacks);
       setPackProviderOptions(response.providerOptions || []);
+      await loadAdminNotifications({ silent: true, nextPacks });
     } catch (error) {
       if (!silent) {
         showFeedback("error", error.response?.data?.message || "Impossible de charger les packs.");
@@ -645,6 +703,122 @@ const AdminDashboard = () => {
 
     return appointments.filter((appointment) => appointment.status === appointmentStatusFilter);
   }, [appointments, appointmentStatusFilter]);
+
+  const filteredContracts = useMemo(() => {
+    const normalizedSearch = contractSearch.trim().toLowerCase();
+
+    return contracts.filter((contract) => {
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const haystack = [
+        contract.title,
+        contract.client,
+        contract.provider,
+        contract.status,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+
+      return haystack.includes(normalizedSearch);
+    });
+  }, [contractSearch, contracts]);
+
+  const filteredInvoices = useMemo(() => {
+    const normalizedSearch = invoiceSearch.trim().toLowerCase();
+
+    return invoices.filter((invoice) => {
+      const matchesStatus = invoiceStatusFilter === "all" || invoice.status === invoiceStatusFilter;
+      if (!matchesStatus) {
+        return false;
+      }
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const haystack = [
+        invoice.id,
+        invoice.client,
+        invoice.status,
+        invoice.issuedAt,
+        String(invoice.amount || ""),
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+
+      return haystack.includes(normalizedSearch);
+    });
+  }, [invoiceSearch, invoiceStatusFilter, invoices]);
+
+  const filteredPacks = useMemo(() => {
+    const normalizedSearch = packSearch.trim().toLowerCase();
+
+    return packs.filter((pack) => {
+      const matchesStatus =
+        packStatusFilter === "all" ||
+        pack.status === packStatusFilter;
+      if (!matchesStatus) {
+        return false;
+      }
+
+      if (!normalizedSearch) {
+        return true;
+      }
+
+      const servicesLabel =
+        pack.items?.map((item) => `${item.serviceCategory} ${item.providerName}`).join(" ") || pack.services || "";
+
+      const haystack = [
+        pack.name,
+        pack.status,
+        pack.price,
+        pack.expiresAt,
+        servicesLabel,
+      ]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+
+      return haystack.includes(normalizedSearch);
+    });
+  }, [packSearch, packStatusFilter, packs]);
+
+  const paginatedContracts = useMemo(() => paginateRows(filteredContracts, contractsPage, 5), [filteredContracts, contractsPage]);
+  const paginatedInvoices = useMemo(() => paginateRows(filteredInvoices, billingPage, 6), [filteredInvoices, billingPage]);
+  const paginatedPacks = useMemo(() => paginateRows(filteredPacks, packsPage, 5), [filteredPacks, packsPage]);
+
+  useEffect(() => {
+    setContractsPage(1);
+  }, [contractSearch]);
+
+  useEffect(() => {
+    setBillingPage(1);
+  }, [invoiceSearch, invoiceStatusFilter]);
+
+  useEffect(() => {
+    setPacksPage(1);
+  }, [packSearch, packStatusFilter]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredContracts.length / 5));
+    if (contractsPage > maxPage) {
+      setContractsPage(maxPage);
+    }
+  }, [filteredContracts.length, contractsPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredInvoices.length / 6));
+    if (billingPage > maxPage) {
+      setBillingPage(maxPage);
+    }
+  }, [filteredInvoices.length, billingPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(1, Math.ceil(filteredPacks.length / 5));
+    if (packsPage > maxPage) {
+      setPacksPage(maxPage);
+    }
+  }, [filteredPacks.length, packsPage]);
 
   const appointmentsByProvider = useMemo(() => {
     const grouped = filteredAppointments.reduce((accumulator, appointment) => {
@@ -1127,7 +1301,6 @@ const AdminDashboard = () => {
       name: pack.name,
       description: pack.description || "",
       price: String(pack.price),
-      duration: pack.duration || "",
       expiresAt: formatDateInputValue(pack.expiresAt),
       items:
         pack.items?.map((item) => ({
@@ -1162,7 +1335,6 @@ const AdminDashboard = () => {
       name: packForm.name,
       description: packForm.description,
       price: Number(packForm.price),
-      duration: packForm.duration,
       expires_at: packForm.expiresAt,
       items: normalizedItems,
     };
@@ -1182,6 +1354,29 @@ const AdminDashboard = () => {
     } finally {
       setPackSubmitting(false);
     }
+  };
+
+  const removeExpiredPack = (packId) => {
+    openConfirm(
+      "Supprimer ce pack expire ?",
+      "Cette action supprimera definitivement ce pack expire de la base de donnees.",
+      "Supprimer",
+      async () => {
+        setPackSubmitting(true);
+        try {
+          const response = await deleteAdminPack(packId);
+          await loadPacks();
+          showFeedback("success", response.message || "Pack supprime avec succes.");
+          setPackModalOpen(false);
+          setEditingPackId(null);
+          setPackForm(defaultPackForm);
+        } catch (error) {
+          showFeedback("error", error.response?.data?.message || "Impossible de supprimer ce pack.");
+        } finally {
+          setPackSubmitting(false);
+        }
+      }
+    );
   };
 
   const togglePackStatus = (pack) => {
@@ -1235,57 +1430,30 @@ const AdminDashboard = () => {
 
   const contractColumns = [
     {
-      key: "id",
-      header: "Ref",
-      width: "10%",
-      cellClassName: "admin-cell-tight",
-      render: (value) => <span className="admin-cell-nowrap">{value}</span>,
-    },
-    {
       key: "title",
       header: "Contrat",
-      width: "12%",
-      cellClassName: "admin-cell-tight",
-      render: (value) => <span className="admin-cell-nowrap">{value || "-"}</span>,
+      width: "37%",
+      render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "client",
       header: "Client",
-      width: "12%",
-      cellClassName: "admin-cell-tight",
-      render: (value) => <span className="admin-cell-nowrap">{value || "-"}</span>,
+      width: "21%",
+      render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "provider",
       header: "Prestataire",
-      width: "14%",
-      render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
-    },
-    {
-      key: "details",
-      header: "Details",
       width: "22%",
-      render: (value) => <span className="admin-cell-wrap">{value}</span>,
+      render: (value) => <span className="admin-cell-wrap">{value || "-"}</span>,
     },
     {
       key: "status",
       header: "Statut",
-      width: "16%",
+      width: "10%",
       render: (value) => (
         <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
       ),
-    },
-    {
-      key: "provider_signed_at",
-      header: "Signature prestataire",
-      width: "14%",
-      render: (value) => <span className="admin-cell-nowrap">{value ? formatAppointmentDate(value) : "-"}</span>,
-    },
-    {
-      key: "client_signed_at",
-      header: "Signature client",
-      width: "14%",
-      render: (value) => <span className="admin-cell-nowrap">{value ? formatAppointmentDate(value) : "-"}</span>,
     },
   ];
 
@@ -1333,31 +1501,27 @@ const AdminDashboard = () => {
     {
       key: "name",
       header: "Pack",
+      width: "18%",
       render: (_, row) => (
-        <div className="admin-provider-inline-cell">
-          <strong>{row.name}</strong>
-          <small>{row.description || "Pack multi-prestataires"}</small>
-        </div>
+        <strong className="admin-pack-name-cell">{row.name}</strong>
       ),
     },
     {
       key: "price",
       header: "Prix",
+      width: "11%",
       render: (value) => formatCurrency(value),
     },
     {
       key: "expiresAt",
       header: "Fin",
+      width: "14%",
       render: (value) => <span className="admin-cell-nowrap">{formatAppointmentDate(value)}</span>,
-    },
-    {
-      key: "duration",
-      header: "Duree",
-      render: (value, row) => value || (row.expiresAt ? `Jusqu'au ${formatAppointmentDate(row.expiresAt)}` : "-"),
     },
     {
       key: "services",
       header: "Services inclus",
+      width: "39%",
       render: (_, row) => (
         <span className="admin-cell-wrap">
           {row.items?.map((item) => `${item.serviceCategory}: ${item.providerName}`).join(" • ") || row.services}
@@ -1367,9 +1531,12 @@ const AdminDashboard = () => {
     {
       key: "status",
       header: "Statut",
-      render: (value) => (
-        <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
-      ),
+      width: "8%",
+      render: (value) => {
+        return (
+          <span className={`admin-chip ${statusClass(value)}`}>{statusLabels[value] || value}</span>
+        );
+      },
     },
   ];
 
@@ -1705,18 +1872,35 @@ const AdminDashboard = () => {
             </div>
           </div>
 
+          <div className="admin-filter-bar">
+            <input
+              className="provider-input"
+              type="search"
+              value={contractSearch}
+              onChange={(event) => setContractSearch(event.target.value)}
+              placeholder="Rechercher un contrat, un client ou un prestataire"
+            />
+          </div>
+
           <DataTable
             columns={contractColumns}
-            rows={contracts}
+            rows={paginatedContracts}
             keyField="id"
             loading={contractsLoading}
             emptyMessage="Aucun contrat disponible."
             wrapClassName="admin-contracts-table-wrap"
             tableClassName="admin-data-table-contracts"
-            actionsColumnWidth="130px"
+            actionsColumnWidth="150px"
+            pagination={{
+              page: contractsPage,
+              totalPages: Math.max(1, Math.ceil(filteredContracts.length / 5)),
+              totalItems: filteredContracts.length,
+              totalItemsLabel: `${filteredContracts.length} contrat${filteredContracts.length > 1 ? "s" : ""}`,
+              onPageChange: setContractsPage,
+            }}
             renderActions={(row) => (
               <button type="button" className="provider-ghost-btn admin-action-btn-nowrap" onClick={() => openContractPdf(row)}>
-                PDF signe
+                voir contrat
               </button>
             )}
           />
@@ -1734,14 +1918,40 @@ const AdminDashboard = () => {
             </div>
           </div>
 
+          <div className="admin-filter-bar admin-filter-bar-billing">
+            <input
+              className="provider-input"
+              type="search"
+              value={invoiceSearch}
+              onChange={(event) => setInvoiceSearch(event.target.value)}
+              placeholder="Rechercher une facture ou un client"
+            />
+            <select
+              className="provider-select"
+              value={invoiceStatusFilter}
+              onChange={(event) => setInvoiceStatusFilter(event.target.value)}
+            >
+              <option value="all">Tous les statuts</option>
+              <option value="paid">Payee</option>
+              <option value="unpaid">Impayee</option>
+            </select>
+          </div>
+
           <DataTable
             columns={invoiceColumns}
-            rows={invoices}
+            rows={paginatedInvoices}
             keyField="id"
             loading={invoicesLoading}
             emptyMessage="Aucune facture trouvee."
             tableClassName="admin-data-table-billing"
             actionsColumnWidth="190px"
+            pagination={{
+              page: billingPage,
+              totalPages: Math.max(1, Math.ceil(filteredInvoices.length / 6)),
+              totalItems: filteredInvoices.length,
+              totalItemsLabel: `${filteredInvoices.length} facture${filteredInvoices.length > 1 ? "s" : ""}`,
+              onPageChange: setBillingPage,
+            }}
             renderActions={(row) => (
               <button
                 type="button"
@@ -1890,21 +2100,51 @@ const AdminDashboard = () => {
             </button>
           </div>
 
+          <div className="admin-filter-bar">
+            <input
+              className="provider-input"
+              type="search"
+              value={packSearch}
+              onChange={(event) => setPackSearch(event.target.value)}
+              placeholder="Rechercher un pack, un service ou un prestataire"
+            />
+            <select
+              className="provider-select"
+              value={packStatusFilter}
+              onChange={(event) => setPackStatusFilter(event.target.value)}
+            >
+              <option value="all">Tous les statuts</option>
+              <option value="pending">En attente</option>
+              <option value="validated">Valide</option>
+              <option value="expired">Expire</option>
+            </select>
+          </div>
+
           <DataTable
             columns={packColumns}
-            rows={packs}
+            rows={paginatedPacks}
             keyField="id"
             loading={packsLoading}
             emptyMessage="Aucun pack promo configure."
+            wrapClassName="admin-packs-table-wrap"
+            tableClassName="admin-data-table-packs"
+            actionsColumnWidth="240px"
+            pagination={{
+              page: packsPage,
+              totalPages: Math.max(1, Math.ceil(filteredPacks.length / 5)),
+              totalItems: filteredPacks.length,
+              totalItemsLabel: `${filteredPacks.length} pack${filteredPacks.length > 1 ? "s" : ""}`,
+              onPageChange: setPacksPage,
+            }}
             renderActions={(row) => (
-              <>
+              <div className="admin-pack-actions-row">
                 <button type="button" className="provider-ghost-btn" onClick={() => openEditPackModal(row)}>
                   Gerer
                 </button>
                 <button type="button" className="provider-secondary-btn" onClick={() => togglePackStatus(row)}>
                   Reaffecter
                 </button>
-              </>
+              </div>
             )}
           />
         </section>
@@ -2301,6 +2541,16 @@ const AdminDashboard = () => {
         actions={
           <>
             <button type="button" className="provider-ghost-btn" onClick={() => setPackModalOpen(false)}>Annuler</button>
+            {editingPackId && packForm.expiresAt && new Date(`${packForm.expiresAt}T00:00:00`).getTime() < new Date(new Date().setHours(0, 0, 0, 0)) ? (
+              <button
+                type="button"
+                className="provider-secondary-btn"
+                onClick={() => removeExpiredPack(editingPackId)}
+                disabled={packSubmitting}
+              >
+                Supprimer le pack
+              </button>
+            ) : null}
             <button type="button" className="provider-primary-btn" onClick={submitPack} disabled={packSubmitting}>
               {packSubmitting ? "Enregistrement..." : "Enregistrer"}
             </button>
@@ -2311,7 +2561,6 @@ const AdminDashboard = () => {
           <input className="provider-input" placeholder="Nom du pack" value={packForm.name} onChange={(event) => setPackForm((prev) => ({ ...prev, name: event.target.value }))} />
           <input className="provider-input" type="number" placeholder="Prix" value={packForm.price} onChange={(event) => setPackForm((prev) => ({ ...prev, price: event.target.value }))} />
           <input className="provider-input" type="date" value={packForm.expiresAt} onChange={(event) => setPackForm((prev) => ({ ...prev, expiresAt: event.target.value }))} />
-          <input className="provider-input" placeholder="Libelle de duree (optionnel)" value={packForm.duration} onChange={(event) => setPackForm((prev) => ({ ...prev, duration: event.target.value }))} />
           <textarea className="provider-textarea" placeholder="Description du pack" value={packForm.description} onChange={(event) => setPackForm((prev) => ({ ...prev, description: event.target.value }))} />
 
           <div className="admin-pack-builder">

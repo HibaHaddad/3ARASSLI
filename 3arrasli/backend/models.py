@@ -229,7 +229,6 @@ class Pack(db.Model):
     name = db.Column(db.String(180), nullable=False)
     description = db.Column(db.Text, nullable=True)
     price = db.Column(db.Float, nullable=False, default=0)
-    duration = db.Column(db.String(120), nullable=True)
     expires_at = db.Column(db.Date, nullable=True, index=True)
     status = db.Column(db.String(40), nullable=False, default="pending")
     created_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True, index=True)

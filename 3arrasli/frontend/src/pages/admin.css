@@ -13,7 +13,7 @@
 
 .admin-page-unified .provider-shell {
   align-items: stretch;
-  width: min(1680px, calc(100% - 24px));
+  width: min(1760px, calc(100% - 24px));
 }
 
 .admin-page-unified .provider-sidebar {
@@ -326,6 +326,10 @@
   grid-template-columns: 1fr 220px;
   gap: 12px;
   margin-bottom: 16px;
+}
+
+.admin-filter-bar-billing {
+  margin-top: 18px;
 }
 
 .admin-filter-tabs {
@@ -1109,6 +1113,34 @@
   width: 100%;
 }
 
+.admin-table-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 18px;
+  border-top: 1px solid rgba(184, 124, 145, 0.12);
+  background: rgba(255, 252, 249, 0.88);
+}
+
+.admin-table-pagination p {
+  margin: 0;
+  color: rgba(93, 59, 70, 0.78);
+  font-size: 0.9rem;
+}
+
+.admin-table-pagination-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.admin-table-pagination-actions button:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+}
+
 .admin-appointments-board {
   display: grid;
   gap: 18px;
@@ -1506,35 +1538,39 @@
   white-space: normal;
   word-break: normal;
   overflow-wrap: break-word;
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .admin-data-table-contracts td {
   overflow-wrap: break-word;
   word-break: normal;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  line-height: 1.5;
+  vertical-align: top;
 }
 
-.admin-data-table-contracts td:nth-child(1),
-.admin-data-table-contracts td:nth-child(2),
-.admin-data-table-contracts td:nth-child(3),
-.admin-data-table-contracts td:nth-child(7),
-.admin-data-table-contracts td:nth-child(8),
-.admin-data-table-contracts td:nth-child(9) {
-  white-space: nowrap;
-}
-
-.admin-data-table-contracts td:nth-child(6) .admin-chip {
+.admin-data-table-contracts td:nth-child(4) .admin-chip {
   max-width: 100%;
   white-space: nowrap;
 }
 
 .admin-contracts-table-wrap {
-  overflow-x: visible;
+  overflow-x: hidden;
   overflow-y: visible;
+  scrollbar-width: thin;
 }
 
 .admin-data-table-contracts {
+  width: 100%;
   min-width: 0;
-  table-layout: auto;
+  table-layout: fixed;
+}
+
+.admin-data-table-contracts th:last-child,
+.admin-data-table-contracts td:last-child {
+  white-space: nowrap;
 }
 
 .admin-cell-tight {
@@ -1574,6 +1610,52 @@
   text-overflow: ellipsis;
 }
 
+.admin-data-table-packs {
+  table-layout: fixed;
+  min-width: 0;
+  width: 100%;
+}
+
+.admin-data-table-packs th,
+.admin-data-table-packs td {
+  vertical-align: top;
+}
+
+.admin-data-table-packs td:nth-child(1) {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-data-table-packs td:nth-child(2),
+.admin-data-table-packs td:nth-child(3),
+.admin-data-table-packs td:nth-child(4),
+.admin-data-table-packs td:nth-child(6),
+.admin-data-table-packs td:nth-child(7) {
+  white-space: nowrap;
+}
+
+.admin-packs-table-wrap {
+  overflow-x: hidden;
+  overflow-y: visible;
+}
+
+.admin-pack-actions-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: nowrap;
+  width: 100%;
+}
+
+.admin-pack-name-cell {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .admin-cell-nowrap {
   display: inline-block;
   white-space: nowrap;
@@ -1582,7 +1664,7 @@
 .admin-table-actions {
   white-space: normal;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 8px;
   align-items: center;
 }
@@ -2264,5 +2346,14 @@
   .admin-toast-close {
     grid-column: 2;
     justify-self: start;
+  }
+
+  .admin-table-pagination {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-table-pagination-actions {
+    justify-content: stretch;
   }
 }

@@ -10,6 +10,7 @@ const DataTable = ({
   wrapClassName = "",
   tableClassName = "",
   actionsColumnWidth = "",
+  pagination = null,
 }) => {
   if (loading) {
     return <div className="admin-status-card">Chargement des donnees...</div>;
@@ -51,6 +52,34 @@ const DataTable = ({
           ))}
         </tbody>
       </table>
+
+      {pagination && pagination.totalPages > 1 ? (
+        <div className="admin-table-pagination">
+          <p>
+            {pagination.totalItemsLabel ||
+              `${pagination.totalItems} element${pagination.totalItems > 1 ? "s" : ""}`} - Page {pagination.page} /{" "}
+            {pagination.totalPages}
+          </p>
+          <div className="admin-table-pagination-actions">
+            <button
+              type="button"
+              className="provider-ghost-btn"
+              onClick={() => pagination.onPageChange(Math.max(1, pagination.page - 1))}
+              disabled={pagination.page <= 1}
+            >
+              Precedent
+            </button>
+            <button
+              type="button"
+              className="provider-ghost-btn"
+              onClick={() => pagination.onPageChange(Math.min(pagination.totalPages, pagination.page + 1))}
+              disabled={pagination.page >= pagination.totalPages}
+            >
+              Suivant
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

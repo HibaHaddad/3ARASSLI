@@ -11,6 +11,22 @@ import ClientModal from "./client/ClientModal";
 import "./client.css";
 
 const formatCurrency = (value) => `${Number(value || 0).toFixed(0)} TND`;
+const formatPackEndDate = (value) => {
+  if (!value) {
+    return "Date flexible";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return `Jusqu'au ${new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(parsed)}`;
+};
 const WORKING_HOURS = ["08:00", "09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00", "20:00"];
 const SERVICE_PLACEHOLDER_IMAGE = "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1400&q=85";
 
@@ -390,7 +406,7 @@ const ClientPacksPage = () => {
 
                   <div className="client-pack-meta">
                     <span className="client-pack-status">Valide</span>
-                    <span className="client-pack-meta-pill">{pack.duration || "Duree flexible"}</span>
+                    <span className="client-pack-meta-pill">{formatPackEndDate(pack.expiresAt)}</span>
                     <span className="client-pack-meta-pill">{pack.items?.length || 0} service(s)</span>
                   </div>
 

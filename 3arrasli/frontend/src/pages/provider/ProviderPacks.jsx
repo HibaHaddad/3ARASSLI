@@ -1,9 +1,37 @@
 import React from "react";
 
 const formatCurrency = (value) => `${Number(value || 0).toFixed(0)} TND`;
+const formatPackEndDate = (value) => {
+  if (!value) {
+    return "Date non definie";
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("fr-FR", {
+    day: "2-digit",
+    month: "long",
+    year: "numeric",
+  }).format(parsed);
+};
 
 const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, responding }) => {
-  const packLocked = activePack?.status === "validated";
+  const packLocked = ["validated", "expired"].includes(activePack?.status);
+  const getPackStatusLabel = (status) => {
+    if (status === "validated") {
+      return "Valide";
+    }
+    if (status === "needs-replacement") {
+      return "A revoir";
+    }
+    if (status === "expired") {
+      return "Expire";
+    }
+    return "En attente";
+  };
 
   return (
   <article className="provider-panel provider-chat-shell provider-pack-shell">
@@ -39,7 +67,7 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
                   <p>{pack.items?.length || 0} service(s)</p>
                 </div>
                 <span className="provider-chat-meta">
-                  <em>{pack.status === "validated" ? "Valide" : pack.status === "needs-replacement" ? "A revoir" : "En attente"}</em>
+                  <em>{getPackStatusLabel(pack.status)}</em>
                 </span>
               </button>
             ))
@@ -64,11 +92,7 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
               <p>{activePack.description || "Invitation a rejoindre un pack admin structure autour de plusieurs services."}</p>
             </div>
             <span className={`provider-status ${activePack.status === "validated" ? "validated" : ""}`}>
-              {activePack.status === "validated"
-                ? "Valide"
-                : activePack.status === "needs-replacement"
-                  ? "Refus detecte"
-                  : "En attente"}
+              {activePack.status === "needs-replacement" ? "Refus detecte" : getPackStatusLabel(activePack.status)}
             </span>
           </div>
 
@@ -79,8 +103,8 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
                 <strong>{formatCurrency(activePack.price)}</strong>
               </div>
               <div className="provider-pack-summary-card">
-                <span>Duree</span>
-                <strong>{activePack.duration || "Flexible"}</strong>
+                <span>Fin du pack</span>
+                <strong>{formatPackEndDate(activePack.expiresAt)}</strong>
               </div>
             </section>
 
@@ -114,7 +138,7 @@ const ProviderPacks = ({ packs, activePack, loading, onSelectPack, onRespond, re
 
           <div className="provider-pack-actions">
             {packLocked ? (
-              <p className="provider-form-note">Ce pack est valide. Les reponses des prestataires sont maintenant verrouillees.</p>
+              <p className="provider-form-note">{activePack?.status === "expired" ? "Ce pack a expire. Les reponses des prestataires sont maintenant verrouillees." : "Ce pack est valide. Les reponses des prestataires sont maintenant verrouillees."}</p>
             ) : null}
             <button
               type="button"

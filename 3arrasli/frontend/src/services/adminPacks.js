@@ -15,6 +15,11 @@ export const updateAdminPack = async (packId, payload) => {
   return response.data;
 };
 
+export const deleteAdminPack = async (packId) => {
+  const response = await api.delete(`/api/admin/packs/${packId}`);
+  return response.data;
+};
+
 export const replaceAdminPackProvider = async (packId, itemId, payload) => {
   const response = await api.patch(`/api/admin/packs/${packId}/items/${itemId}/replace`, payload);
   return response.data;

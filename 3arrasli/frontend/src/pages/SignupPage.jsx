@@ -5,11 +5,12 @@ import Spinner from "../components/Spinner";
 import api from "../services/api";
 import { getDashboardPathForUser, saveStoredUser } from "../services/auth";
 import { IMAGE_TOO_LARGE_MESSAGE, showToast, validateImageFileSize } from "../services/toast";
-import { serviceCategories } from "../data/categories";
+import { mergeServiceCategoryOptions, normalizeServiceCategoryKey, serviceCategories } from "../data/categories";
 import "./auth.css";
 
 const SignupPage = () => {
   const navigate = useNavigate();
+  const [providerCategoryOptions, setProviderCategoryOptions] = useState(() => mergeServiceCategoryOptions(serviceCategories));
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -20,6 +21,7 @@ const SignupPage = () => {
     city: "",
     website: "",
   });
+  const [customProviderCategory, setCustomProviderCategory] = useState("");
   const [providerFiles, setProviderFiles] = useState({
     profilePhoto: null,
     coverPhoto: null,
@@ -34,6 +36,36 @@ const SignupPage = () => {
   const [loading, setLoading] = useState(false);
 
   const isProviderRole = form.role === "Prestataire";
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadServiceCategories = async () => {
+      try {
+        const response = await api.get("/api/service-categories");
+        if (!isMounted) {
+          return;
+        }
+        setProviderCategoryOptions(
+          mergeServiceCategoryOptions([
+            ...serviceCategories,
+            ...(response.data?.categories || []),
+          ])
+        );
+      } catch (_error) {
+        if (!isMounted) {
+          return;
+        }
+        setProviderCategoryOptions(mergeServiceCategoryOptions(serviceCategories));
+      }
+    };
+
+    loadServiceCategories();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     const profilePhotoPreview = providerFiles.profilePhoto
@@ -64,6 +96,7 @@ const SignupPage = () => {
     }
 
     setForm((prev) => ({ ...prev, website: "", category: "", city: "" }));
+    setCustomProviderCategory("");
     setProviderFiles({
       profilePhoto: null,
       coverPhoto: null,
@@ -84,7 +117,18 @@ const SignupPage = () => {
 
   const onChange = (event) => {
     const { name, value } = event.target;
+    if (name === "category") {
+      setForm((prev) => ({ ...prev, [name]: value }));
+      if (value !== "__other__") {
+        setCustomProviderCategory("");
+      }
+      return;
+    }
     setForm((prev) => ({ ...prev, [name]: value }));
+  };
+
+  const onCustomCategoryChange = (event) => {
+    setCustomProviderCategory(event.target.value);
   };
 
   const onFileChange = (event) => {
@@ -111,15 +155,38 @@ const SignupPage = () => {
     event.preventDefault();
     setMessage("");
     setError("");
+    const normalizedCustomCategory = String(customProviderCategory || "").trim();
+    let providerCategoryValue = form.category;
 
     if (!form.name || !form.email || !form.password || !form.confirmPassword) {
       setError("Veuillez remplir tous les champs obligatoires.");
       return;
     }
 
+    if (isProviderRole && form.category === "__other__") {
+      const existingCategory = providerCategoryOptions.find(
+        (category) => normalizeServiceCategoryKey(category.value) === normalizeServiceCategoryKey(normalizedCustomCategory)
+      );
+
+      if (existingCategory) {
+        providerCategoryValue = existingCategory.value;
+        setForm((prev) => ({ ...prev, category: existingCategory.value }));
+        setCustomProviderCategory("");
+      } else {
+        providerCategoryValue = normalizedCustomCategory;
+        if (providerCategoryValue) {
+          setProviderCategoryOptions((prev) =>
+            mergeServiceCategoryOptions([...prev, { value: providerCategoryValue, label: providerCategoryValue }])
+          );
+          setForm((prev) => ({ ...prev, category: providerCategoryValue }));
+          setCustomProviderCategory("");
+        }
+      }
+    }
+
     if (
       isProviderRole &&
-      (!form.category || !form.city || !form.website || !providerFiles.profilePhoto || !providerFiles.coverPhoto)
+      (!providerCategoryValue || !form.city || !form.website || !providerFiles.profilePhoto || !providerFiles.coverPhoto)
     ) {
       setError("Veuillez remplir le service, la ville, le lien et ajouter les deux photos avant de demander l'acces.");
       return;
@@ -139,7 +206,7 @@ const SignupPage = () => {
       payload.append("role", form.role);
 
       if (isProviderRole) {
-        payload.append("category", form.category);
+        payload.append("category", providerCategoryValue);
         payload.append("city", form.city);
         payload.append("website", form.website);
         if (providerFiles.profilePhoto) {
@@ -171,6 +238,7 @@ const SignupPage = () => {
           city: "",
           website: "",
         });
+        setCustomProviderCategory("");
         setProviderFiles({
           profilePhoto: null,
           coverPhoto: null,
@@ -263,13 +331,27 @@ const SignupPage = () => {
                       onChange={onChange}
                     >
                       <option value="">Selectionner un service</option>
-                      {serviceCategories.map((category) => (
+                      {providerCategoryOptions.map((category) => (
                         <option key={category.value} value={category.value}>
                           {category.label}
                         </option>
                       ))}
+                      <option value="__other__">Autre</option>
                     </select>
                   </div>
+
+                  {form.category === "__other__" ? (
+                    <div className="auth-field">
+                      <label htmlFor="customCategory">Ajouter votre type de service</label>
+                      <input
+                        id="customCategory"
+                        name="customCategory"
+                        placeholder="Ex: Calligraphe, DJ oriental..."
+                        value={customProviderCategory}
+                        onChange={onCustomCategoryChange}
+                      />
+                    </div>
+                  ) : null}
 
                   <div className="auth-field">
                     <label htmlFor="city">Ville</label>

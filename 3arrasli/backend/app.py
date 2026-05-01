@@ -75,6 +75,18 @@ DEFAULT_CLIENT = {
 DEFAULT_DB_NAME = "ma_base"
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png"}
 MAX_IMAGE_SIZE = 2 * 1024 * 1024
+DEFAULT_SERVICE_CATEGORIES = [
+    "Photographe",
+    "Decoration",
+    "Traiteur",
+    "Salle",
+    "Beaute & preparation",
+    "Tenues & accessoires",
+    "Animation & ambiance",
+    "Medias & souvenirs",
+    "Logistique & transport",
+    "Gastronomie & extras",
+]
 STANDARD_SLOT_TIMES = [
     "08:00",
     "09:00",
@@ -998,6 +1010,35 @@ def serialize_provider_card(provider, services):
     }
 
 
+def normalize_service_category_key(value):
+    return " ".join(str(value or "").strip().lower().split())
+
+
+def get_available_service_categories():
+    categories = []
+    seen = set()
+
+    def append_category(raw_value):
+        value = str(raw_value or "").strip()
+        normalized_key = normalize_service_category_key(value)
+        if not normalized_key or normalized_key in seen:
+            return
+        seen.add(normalized_key)
+        categories.append(value)
+
+    for category in DEFAULT_SERVICE_CATEGORIES:
+        append_category(category)
+
+    provider_categories = db.session.query(User.category).filter(User.category.isnot(None), User.category != "").all()
+    service_categories = db.session.query(Service.category).filter(Service.category.isnot(None), Service.category != "").all()
+    service_types = db.session.query(Service.type).filter(Service.type.isnot(None), Service.type != "").all()
+
+    for (category,) in provider_categories + service_categories + service_types:
+        append_category(category)
+
+    return categories
+
+
 def build_provider_cards_from_services(services):
     provider_services = {}
     for service in services:
@@ -1212,17 +1253,6 @@ def purge_expired_packs(commit=True):
         return []
 
     expired_pack_ids = [pack.id for pack in expired_packs]
-    expired_item_ids = [item.id for pack in expired_packs for item in getattr(pack, "items", []) or []]
-    if expired_pack_ids:
-        Notification.query.filter(Notification.pack_id.in_(expired_pack_ids)).delete(synchronize_session=False)
-    if expired_item_ids:
-        Notification.query.filter(Notification.pack_item_id.in_(expired_item_ids)).delete(synchronize_session=False)
-
-    for pack in expired_packs:
-        db.session.delete(pack)
-
-    if commit:
-        db.session.commit()
     return expired_pack_ids
 
 
@@ -1251,19 +1281,20 @@ def serialize_pack_item(item):
 def serialize_pack(pack, include_items=True):
     items = [serialize_pack_item(item) for item in getattr(pack, "items", [])] if include_items else []
     validation_status = get_pack_status_from_items(getattr(pack, "items", []))
+    is_expired = is_pack_expired(pack)
+    display_status = "expired" if is_expired else validation_status
     provider_names = [item["providerName"] for item in items] if include_items else []
     service_names = [item["serviceCategory"] for item in items] if include_items else []
-    duration_label = pack.duration or (f"Jusqu'au {pack.expires_at.isoformat()}" if getattr(pack, "expires_at", None) else "")
     return {
         "id": pack.id,
         "name": pack.name,
         "description": pack.description or "",
         "price": pack.price,
-        "duration": duration_label,
         "expiresAt": pack.expires_at.isoformat() if getattr(pack, "expires_at", None) else None,
-        "isExpired": is_pack_expired(pack),
-        "status": validation_status,
-        "isVisibleToClient": validation_status == "validated",
+        "isExpired": is_expired,
+        "status": display_status,
+        "baseStatus": validation_status,
+        "isVisibleToClient": validation_status == "validated" and not is_expired,
         "services": ", ".join(service_names),
         "providers": ", ".join(provider_names),
         "items": items,
@@ -2014,8 +2045,6 @@ def ensure_pack_schema():
         statements = []
         if "description" not in columns:
             statements.append("ALTER TABLE packs ADD COLUMN description TEXT NULL")
-        if "duration" not in columns:
-            statements.append("ALTER TABLE packs ADD COLUMN duration VARCHAR(120) NULL")
         if "expires_at" not in columns:
             statements.append("ALTER TABLE packs ADD COLUMN expires_at DATE NULL")
         if "status" not in columns:
@@ -2027,6 +2056,9 @@ def ensure_pack_schema():
         for statement in statements:
             db.session.execute(text(statement))
         if statements:
+            db.session.commit()
+        if "duration" in columns:
+            db.session.execute(text("ALTER TABLE packs DROP COLUMN duration"))
             db.session.commit()
         db.session.execute(
             text(
@@ -2258,6 +2290,10 @@ def create_app():
                         db.session.commit()
 
         return send_from_directory(app.config["UPLOAD_ROOT"], filename)
+
+    @app.get("/api/service-categories")
+    def list_service_categories():
+        return jsonify({"success": True, "categories": get_available_service_categories()})
 
     def save_service_image(image_file):
         filename = secure_filename(image_file.filename or "")
@@ -4328,7 +4364,6 @@ def create_app():
     @app.get("/api/admin/packs")
     @auth_required(allowed_roles={"admin"})
     def list_admin_packs():
-        purge_expired_packs()
         packs = Pack.query.order_by(Pack.created_at.desc(), Pack.id.desc()).all()
         changed = False
         for pack in packs:
@@ -4352,7 +4387,6 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         name = str(payload.get("name") or "").strip()
         description = str(payload.get("description") or "").strip()
-        duration = str(payload.get("duration") or "").strip()
         expires_at = parse_date_value(payload.get("expires_at") or payload.get("expiresAt"))
         items_payload = payload.get("items") or []
 
@@ -4372,7 +4406,6 @@ def create_app():
             name=name,
             description=description or None,
             price=price,
-            duration=duration or None,
             expires_at=expires_at,
             status="pending",
             created_by=request.user_id,
@@ -4423,7 +4456,6 @@ def create_app():
         payload = request.get_json(silent=True) or {}
         name = str(payload.get("name") or "").strip()
         description = str(payload.get("description") or "").strip()
-        duration = str(payload.get("duration") or "").strip()
         expires_at = parse_date_value(payload.get("expires_at") or payload.get("expiresAt"))
         items_payload = payload.get("items") or []
 
@@ -4442,7 +4474,6 @@ def create_app():
         pack.name = name
         pack.description = description or None
         pack.price = price
-        pack.duration = duration or None
         pack.expires_at = expires_at
         pack.updated_at = datetime.utcnow()
         existing_items = {item.id: item for item in list(getattr(pack, "items", []) or [])}
@@ -4513,6 +4544,17 @@ def create_app():
         refresh_pack_status(pack)
         db.session.commit()
         return jsonify({"success": True, "message": "Pack mis a jour avec succes.", "pack": serialize_pack(pack)})
+
+    @app.delete("/api/admin/packs/<int:pack_id>")
+    @auth_required(allowed_roles={"admin"})
+    def delete_admin_pack(pack_id):
+        pack = Pack.query.get(pack_id)
+        if not pack:
+            return jsonify({"success": False, "message": "Pack introuvable."}), 404
+
+        db.session.delete(pack)
+        db.session.commit()
+        return jsonify({"success": True, "message": "Pack supprime avec succes."})
 
     @app.patch("/api/admin/packs/<int:pack_id>/items/<int:item_id>/replace")
     @auth_required(allowed_roles={"admin"})
@@ -4670,6 +4712,9 @@ def create_app():
         if not pack_item:
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
         refresh_pack_status(pack_item.pack)
+        if is_pack_expired(pack_item.pack):
+            db.session.commit()
+            return jsonify({"success": False, "message": "Ce pack a expire et n'est plus disponible."}), 409
         db.session.commit()
         return jsonify(
             {
@@ -4688,6 +4733,9 @@ def create_app():
             return jsonify({"success": False, "message": "Pack introuvable."}), 404
 
         refresh_pack_status(pack_item.pack)
+        if is_pack_expired(pack_item.pack):
+            db.session.commit()
+            return jsonify({"success": False, "message": "Ce pack a expire et ne peut plus recevoir de reponse."}), 409
         if str(getattr(pack_item.pack, "status", "") or "").strip().lower() == "validated":
             db.session.commit()
             return jsonify({"success": False, "message": "Ce pack est deja valide. Votre reponse ne peut plus etre modifiee."}), 409
@@ -4773,8 +4821,6 @@ def create_app():
 
         refresh_pack_status(pack)
         if is_pack_expired(pack):
-            db.session.delete(pack)
-            db.session.commit()
             return jsonify({"success": False, "message": "Ce pack a expire et n'est plus disponible."}), 409
         if pack.status != "validated":
             return jsonify({"success": False, "message": "Ce pack n'est pas encore valide pour reservation."}), 409
@@ -6646,7 +6692,7 @@ def ensure_contract_schema():
                 name="Pack Harmonie",
                 description="Selection coordonnee de prestataires pour une experience mariage fluide.",
                 price=sum(float(service.price or 0) for service, _provider_id in selected_items),
-                duration="Jusqu'au jour J",
+                expires_at=date.today() + timedelta(days=90),
                 status="validated",
             )
             db.session.add(demo_pack)

@@ -600,7 +600,25 @@ const ProviderDashboard = () => {
     const target = window.document.querySelector(
       `[data-slot-date="${calendarTargetSlot.date}"][data-slot-time="${calendarTargetSlot.time}"]`
     );
-    target?.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+    const calendarPanel = window.document.querySelector(".provider-weekly-calendar");
+    const gridShell = target?.closest(".provider-week-grid-shell");
+
+    calendarPanel?.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+
+    if (target && gridShell) {
+      const targetRect = target.getBoundingClientRect();
+      const shellRect = gridShell.getBoundingClientRect();
+      const nextLeft =
+        gridShell.scrollLeft + (targetRect.left - shellRect.left) - (shellRect.width / 2) + (targetRect.width / 2);
+      const nextTop =
+        gridShell.scrollTop + (targetRect.top - shellRect.top) - (shellRect.height / 2) + (targetRect.height / 2);
+
+      gridShell.scrollTo({
+        left: Math.max(0, nextLeft),
+        top: Math.max(0, nextTop),
+        behavior: "smooth",
+      });
+    }
   }, [activeSection, calendarDays, calendarTargetSlot]);
 
   const upcomingReservations = useMemo(
