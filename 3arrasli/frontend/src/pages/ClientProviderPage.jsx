@@ -667,14 +667,6 @@ const ClientProviderPage = () => {
                       <dt>Lieu</dt>
                       <dd>{service.provider_city || service.city || "Tunisie"}</dd>
                     </div>
-                    <div>
-                      <dt>Prix</dt>
-                      <dd>{service.price} TND</dd>
-                    </div>
-                    <div>
-                      <dt>Note</dt>
-                      <dd>{averageRating}/5</dd>
-                    </div>
                   </dl>
 
                   <div className="client-detail-actions client-provider-actions">
@@ -689,20 +681,6 @@ const ClientProviderPage = () => {
                     </Link>
                   </div>
 
-                  <div className="client-provider-notes">
-                    <div className="client-provider-note-card">
-                      <span className="client-section-label">Paiement</span>
-                      <p>
-                        {stripeConfig.enabled
-                          ? "Paiement carte via Stripe disponible avec redirection securisee."
-                          : "Stripe n'est pas encore configure pour ce projet."}
-                      </p>
-                    </div>
-                    <div className="client-provider-note-card">
-                      <span className="client-section-label">Documents</span>
-                      <p>Facture PDF, contrat PDF et signature electronique apres paiement confirme.</p>
-                    </div>
-                  </div>
                 </div>
               </div>
 
