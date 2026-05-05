@@ -749,6 +749,10 @@
   gap: 8px;
 }
 
+.auth-password-field {
+  position: relative;
+}
+
 .auth-field-split {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -783,6 +787,10 @@
     background var(--auth-transition);
 }
 
+.auth-password-field input {
+  padding-right: 62px;
+}
+
 .auth-form input::placeholder {
   color: rgba(110, 82, 92, 0.64);
 }
@@ -801,6 +809,53 @@
   box-shadow:
     0 0 0 4px rgba(238, 189, 202, 0.18),
     0 18px 32px rgba(88, 47, 61, 0.1);
+}
+
+.auth-password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 244, 246, 0.92);
+  color: var(--auth-rose-700);
+  cursor: pointer;
+  transition:
+    background var(--auth-transition),
+    color var(--auth-transition),
+    transform var(--auth-transition),
+    box-shadow var(--auth-transition);
+}
+
+.auth-password-toggle:hover {
+  background: rgba(249, 216, 223, 0.62);
+  color: #8c4a61;
+  transform: translateY(calc(-50% - 1px));
+}
+
+.auth-password-toggle:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(238, 189, 202, 0.2);
+}
+
+.auth-password-toggle svg {
+  width: 20px;
+  height: 20px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.auth-password-toggle circle {
+  fill: none;
 }
 
 .auth-provider-upload-grid {

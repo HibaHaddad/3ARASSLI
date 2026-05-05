@@ -8,6 +8,31 @@ import { IMAGE_TOO_LARGE_MESSAGE, showToast, validateImageFileSize } from "../se
 import { mergeServiceCategoryOptions, normalizeServiceCategoryKey, serviceCategories } from "../data/categories";
 import "./auth.css";
 
+const PasswordToggleButton = ({ visible, onClick, controlsId }) => (
+  <button
+    type="button"
+    className="auth-password-toggle"
+    onClick={onClick}
+    aria-label={visible ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+    aria-pressed={visible}
+    aria-controls={controlsId}
+  >
+    {visible ? (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 3l18 18" />
+        <path d="M10.6 10.7a2 2 0 0 0 2.7 2.7" />
+        <path d="M9.9 5.1A10.9 10.9 0 0 1 12 5c5.2 0 9.4 4.1 10 7-.2 1-1 2.5-2.4 3.9" />
+        <path d="M14.1 18.9A10.9 10.9 0 0 1 12 19C6.8 19 2.6 14.9 2 12c.2-1 1-2.5 2.4-3.9" />
+      </svg>
+    ) : (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Z" />
+        <circle cx="12" cy="12" r="3" />
+      </svg>
+    )}
+  </button>
+);
+
 const SignupPage = () => {
   const navigate = useNavigate();
   const [providerCategoryOptions, setProviderCategoryOptions] = useState(() => mergeServiceCategoryOptions(serviceCategories));
@@ -34,6 +59,8 @@ const SignupPage = () => {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const isProviderRole = form.role === "Prestataire";
 
@@ -293,17 +320,37 @@ const SignupPage = () => {
               <div className="auth-field-split">
                 <div className="auth-field">
                   <label htmlFor="password">Mot de passe</label>
-                  <input id="password" name="password" type="password" value={form.password} onChange={onChange} />
+                  <div className="auth-password-field">
+                    <input
+                      id="password"
+                      name="password"
+                      type={showPassword ? "text" : "password"}
+                      value={form.password}
+                      onChange={onChange}
+                    />
+                    <PasswordToggleButton
+                      visible={showPassword}
+                      onClick={() => setShowPassword((prev) => !prev)}
+                      controlsId="password"
+                    />
+                  </div>
                 </div>
                 <div className="auth-field">
                   <label htmlFor="confirmPassword">Confirmer mot de passe</label>
-                  <input
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    type="password"
-                    value={form.confirmPassword}
-                    onChange={onChange}
-                  />
+                  <div className="auth-password-field">
+                    <input
+                      id="confirmPassword"
+                      name="confirmPassword"
+                      type={showConfirmPassword ? "text" : "password"}
+                      value={form.confirmPassword}
+                      onChange={onChange}
+                    />
+                    <PasswordToggleButton
+                      visible={showConfirmPassword}
+                      onClick={() => setShowConfirmPassword((prev) => !prev)}
+                      controlsId="confirmPassword"
+                    />
+                  </div>
                 </div>
               </div>
               <div className="auth-field">

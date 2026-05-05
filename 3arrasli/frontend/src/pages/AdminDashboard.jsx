@@ -143,7 +143,7 @@ const statusLabels = {
   "pending-approval": "En attente",
   pending: "En attente",
   confirmed: "Confirme",
-  cancelled: "Annule",
+  cancelled: "Annulé",
   "pending-signature": "Signature en attente",
   signed: "Signe",
   pending_provider_signature: "En attente",
