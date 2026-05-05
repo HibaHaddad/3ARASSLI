@@ -357,6 +357,7 @@ const AdminDashboard = () => {
   const [providerDetails, setProviderDetails] = useState(null);
   const [serviceProviderModalOpen, setServiceProviderModalOpen] = useState(false);
   const [selectedServiceProvider, setSelectedServiceProvider] = useState(null);
+  const [activeServiceAlbumImages, setActiveServiceAlbumImages] = useState({});
   const [providersLoading, setProvidersLoading] = useState(true);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [appointmentsLoading, setAppointmentsLoading] = useState(false);
@@ -430,6 +431,28 @@ const AdminDashboard = () => {
       markAdminNotificationRead(id).catch(() => undefined);
     }
     setAdminNotifications((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const setServiceAlbumImage = (serviceId, imageIndex) => {
+    setActiveServiceAlbumImages((prev) => ({
+      ...prev,
+      [serviceId]: imageIndex,
+    }));
+  };
+
+  const moveServiceAlbumImage = (serviceId, imageCount, direction) => {
+    if (imageCount <= 1) {
+      return;
+    }
+
+    setActiveServiceAlbumImages((prev) => {
+      const currentIndex = prev[serviceId] || 0;
+      const nextIndex = (currentIndex + direction + imageCount) % imageCount;
+      return {
+        ...prev,
+        [serviceId]: nextIndex,
+      };
+    });
   };
 
   const handleNotificationClick = (notification) => {
@@ -2512,6 +2535,12 @@ const AdminDashboard = () => {
                 : service.image
                   ? [{ id: `fallback-${service.id}`, image_path: service.image, url: service.image }]
                   : [];
+              const galleryImages = gallery
+                .map((image) => resolveAssetUrl(image?.url || image?.image_path || image))
+                .filter(Boolean);
+              const activeImageIndex = Math.min(activeServiceAlbumImages[service.id] || 0, Math.max(galleryImages.length - 1, 0));
+              const activeImage = galleryImages[activeImageIndex];
+              const canSlideGallery = galleryImages.length > 1;
 
               return (
                 <article key={service.id} className="admin-service-detail-card">
@@ -2540,16 +2569,49 @@ const AdminDashboard = () => {
                     <p>{service.description || "Aucune description pour ce service."}</p>
                   </div>
 
-                  <div className="admin-service-album-grid">
-                    {gallery.length > 0 ? (
-                      gallery.map((image, index) => (
-                        <div key={image.id || `${service.id}-${index}`} className="admin-service-album-item">
-                          <img
-                            src={resolveAssetUrl(image.url || image.image_path)}
-                            alt={`${service.title} visuel ${index + 1}`}
-                          />
+                  <div className="admin-service-album">
+                    {activeImage ? (
+                      <>
+                        <div className="admin-service-album-stage">
+                          <img src={activeImage} alt={`${service.title} visuel ${activeImageIndex + 1}`} />
+                          {canSlideGallery ? (
+                            <>
+                              <button
+                                type="button"
+                                className="admin-service-album-nav prev"
+                                onClick={() => moveServiceAlbumImage(service.id, galleryImages.length, -1)}
+                                aria-label="Photo precedente"
+                              >
+                                &#10094;
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-service-album-nav next"
+                                onClick={() => moveServiceAlbumImage(service.id, galleryImages.length, 1)}
+                                aria-label="Photo suivante"
+                              >
+                                &#10095;
+                              </button>
+                            </>
+                          ) : null}
                         </div>
-                      ))
+
+                        {canSlideGallery ? (
+                          <div className="admin-service-album-strip">
+                            {galleryImages.map((imageSrc, index) => (
+                              <button
+                                key={`${service.id}-${imageSrc}-${index}`}
+                                type="button"
+                                className={index === activeImageIndex ? "active" : ""}
+                                onClick={() => setServiceAlbumImage(service.id, index)}
+                                aria-label={`Afficher la photo ${index + 1}`}
+                              >
+                                <img src={imageSrc} alt={`${service.title} miniature ${index + 1}`} />
+                              </button>
+                            ))}
+                          </div>
+                        ) : null}
+                      </>
                     ) : (
                       <div className="admin-service-album-empty">Aucun album photo pour ce service.</div>
                     )}
