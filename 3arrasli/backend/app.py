@@ -4147,10 +4147,14 @@ def create_app():
             if not sender or not receiver:
                 continue
 
-            if sender.role == "client" and receiver.role == "prestataire":
+            sender_role = str(getattr(sender, "role", "")).strip().lower()
+            receiver_role = str(getattr(receiver, "role", "")).strip().lower()
+            provider_roles = {"prestataire", "provider"}
+
+            if sender_role == "client" and receiver_role in provider_roles:
                 client = sender
                 provider = receiver
-            elif sender.role == "prestataire" and receiver.role == "client":
+            elif sender_role in provider_roles and receiver_role == "client":
                 client = receiver
                 provider = sender
             else:
