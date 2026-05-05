@@ -1,7 +1,9 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import { resolveAssetUrl } from "../services/assets";
 
 const ServiceCard = ({ service }) => {
+  const navigate = useNavigate();
   const serviceCategory = service.category || service.type || "Service mariage";
   const serviceDescription =
     service.description || "Prestataire recommande selon les meilleures notes clients.";
@@ -26,7 +28,9 @@ const ServiceCard = ({ service }) => {
         <p>{serviceDescription}</p>
         <div className="service-footer">
           <span className="service-detail">Disponibilite rapide</span>
-          <button type="button">Decouvrir</button>
+          <button type="button" onClick={() => navigate("/login")}>
+            Decouvrir
+          </button>
         </div>
       </div>
     </article>
